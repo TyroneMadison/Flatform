@@ -69,7 +69,8 @@
         }
       ],
       "category": "public.app-category.graphics-design",
-      "identity": "-"
+      "identity": "-",
+      "hardenedRuntime": false
     },
     "publish": {
       "provider": "github",
