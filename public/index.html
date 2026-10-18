@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tripo Studio</title>
+<script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@4.3.1/dist/model-viewer.min.js"></script>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --text:#e8eaf0; --muted:#8b93a7; --accent:#7c9cff; --bad:#ff7b7b; --good:#5fd38d; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:16px 20px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:12px; }
+  header h1 { margin:0; font-size:18px; }
+  header span { color:var(--muted); }
+  main { display:grid; grid-template-columns: minmax(0,1fr) 420px; gap:20px; padding:20px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  #drop { display:block; border:2px dashed var(--line); border-radius:12px; padding:28px; text-align:center; color:var(--muted); cursor:pointer; transition:.15s; }
+  #drop.over, #drop:hover { border-color:var(--accent); color:var(--text); }
+  #drop strong { color:var(--text); display:block; font-size:16px; margin-bottom:4px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:24px 0 10px; }
+  #grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(160px,1fr)); gap:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; cursor:pointer; text-align:left; color:inherit; font:inherit; padding:0; }
+  .card.sel { border-color:var(--accent); }
+  .card img { width:100%; aspect-ratio:1; object-fit:cover; display:block; background:#0b0d11; }
+  .card .meta { padding:8px 10px; }
+  .card .name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .status { font-size:12px; color:var(--muted); }
+  .status.failed { color:var(--bad); } .status.ready { color:var(--good); }
+  .bar { height:3px; background:var(--line); margin-top:6px; border-radius:2px; overflow:hidden; }
+  .bar i { display:block; height:100%; background:var(--accent); transition:width .4s; }
+  #empty { color:var(--muted); }
+  aside { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; align-self:start; position:sticky; top:20px; }
+  model-viewer { width:100%; height:340px; background:#0b0d11; border-radius:8px; }
+  #detail h3 { margin:12px 0 2px; font-size:16px; }
+  .exports { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:12px; }
+  .btn { display:block; text-align:center; padding:8px 6px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--text); font:inherit; font-size:13px; cursor:pointer; text-decoration:none; }
+  .btn:hover { border-color:var(--accent); }
+  .btn.ready { border-color:var(--good); color:var(--good); }
+  .btn.failed { border-color:var(--bad); color:var(--bad); }
+  .btn[disabled] { opacity:.6; cursor:wait; }
+  .del { margin-top:14px; width:100%; color:var(--bad); }
+  #toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#2b1c1f; border:1px solid var(--bad); color:var(--text); padding:10px 14px; border-radius:8px; display:none; max-width:90vw; }
+  .muted { color:var(--muted); }
+</style>
+</head>
+<body>
+<header><h1>Tripo Studio</h1><span>Image → 3D model → library → export</span></header>
+<main>
+  <section>
+    <label id="drop">
+      <strong>Drop images here, or click to choose</strong>
+      PNG or JPEG, up to 20 MB. Use a clear subject on a clean background. Each image becomes one model.
+      <input id="file" type="file" accept="image/png,image/jpeg" multiple hidden>
+    </label>
+    <h2>Library</h2>
+    <p id="empty">No models yet.</p>
+    <div id="grid"></div>
+  </section>
+  <aside id="detail"><p class="muted">Select a model to preview and export it.</p></aside>
+</main>
+<div id="toast" role="alert"></div>
+<script>
+const FORMATS = ['GLTF', 'FBX', 'USDZ', 'OBJ', 'STL', '3MF'];
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const fileUrl = (m, f) => `/files/${m.id}/${encodeURIComponent(f)}`;
+let models = [];
+let selectedId = null;
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+}
+
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => (t.style.display = 'none'), 6000);
+}
+
+async function upload(files) {
+  for (const f of files) {
+    if (!['image/png', 'image/jpeg'].includes(f.type)) { toast(`${f.name}: use a PNG or JPEG`); continue; }
+    try {
+      const name = encodeURIComponent(f.name.replace(/\.[^.]+$/, ''));
+      const m = await api(`/api/models?name=${name}`, { method: 'POST', headers: { 'Content-Type': f.type }, body: f });
+      models.unshift(m);
+      selectedId ??= m.id;
+      render();
+    } catch (e) { toast(`${f.name}: ${e.message}`); }
+  }
+}
+
+function renderGrid() {
+  $('#empty').hidden = models.length > 0;
+  $('#grid').innerHTML = models.map((m) => `
+    <button class="card ${m.id === selectedId ? 'sel' : ''}" data-id="${m.id}">
+      <img src="${fileUrl(m, m.thumb || m.source)}" alt="">
+      <div class="meta">
+        <div class="name">${esc(m.name)}</div>
+        <div class="status ${m.status}">${m.status === 'generating' ? `Generating… ${m.progress || 0}%` : esc(m.status === 'failed' ? m.error || 'failed' : 'Ready')}</div>
+        ${m.status === 'generating' ? `<div class="bar"><i style="width:${m.progress || 0}%"></i></div>` : ''}
+      </div>
+    </button>`).join('');
+}
+
+function exportButton(m, fmt) {
+  const e = m.exports?.[fmt];
+  const base = m.name.replace(/[^\w.-]+/g, '_');
+  if (e?.status === 'ready') return `<a class="btn ready" href="${fileUrl(m, e.file)}" download="${esc(base + e.file.slice(e.file.lastIndexOf('.')))}">⬇ ${fmt}</a>`;
+  if (e?.status === 'converting') return `<button class="btn" disabled>${fmt}…</button>`;
+  if (e?.status === 'failed') return `<button class="btn failed" data-fmt="${fmt}" title="${esc(e.error || '')}">Retry ${fmt}</button>`;
+  return `<button class="btn" data-fmt="${fmt}">${fmt}</button>`;
+}
+
+function renderDetail() {
+  const m = models.find((x) => x.id === selectedId);
+  const d = $('#detail');
+  if (!m) { d.innerHTML = '<p class="muted">Select a model to preview and export it.</p>'; delete d.dataset.view; return; }
+  // Re-create the viewer only when the model or its state changes, so the 3D view doesn't flicker on every poll.
+  const view = `${m.id}:${m.status}`;
+  if (d.dataset.view !== view) {
+    d.dataset.view = view;
+    d.innerHTML = `
+      ${m.status === 'ready'
+        ? `<model-viewer src="${fileUrl(m, m.glb)}" poster="${m.thumb ? fileUrl(m, m.thumb) : ''}" camera-controls auto-rotate shadow-intensity="1" exposure="1" alt="${esc(m.name)}"></model-viewer>`
+        : `<img src="${fileUrl(m, m.source)}" alt="" style="width:100%;border-radius:8px">`}
+      <h3>${esc(m.name)}</h3>
+      <div class="muted">${new Date(m.created_at).toLocaleString()}${m.credits != null ? ` · ${m.credits} credits` : ''}</div>
+      <div id="exp"></div>
+      <button class="btn del" id="del">Delete model</button>`;
+  }
+  const exp = m.status !== 'ready'
+    ? `<p class="status ${m.status}">${m.status === 'failed' ? esc(m.error || 'Generation failed') : 'Exports unlock when the model is ready.'}</p>`
+    : `<div class="exports"><a class="btn ready" href="${fileUrl(m, m.glb)}" download="${esc(m.name.replace(/[^\w.-]+/g, '_'))}.glb">⬇ GLB</a>${FORMATS.map((f) => exportButton(m, f)).join('')}</div>`;
+  // Only touch the buttons when they change, so a poll can't swap a button out from under a click.
+  const box = $('#exp');
+  if (box.lastHtml !== exp) { box.lastHtml = exp; box.innerHTML = exp; }
+}
+
+function render() { renderGrid(); renderDetail(); }
+
+$('#grid').addEventListener('click', (e) => {
+  const card = e.target.closest('.card');
+  if (card) { selectedId = card.dataset.id; render(); }
+});
+
+$('#detail').addEventListener('click', async (e) => {
+  const m = models.find((x) => x.id === selectedId);
+  const fmt = e.target.dataset?.fmt;
+  if (fmt && m) {
+    try {
+      m.exports[fmt] = { status: 'converting' };
+      renderDetail();
+      m.exports[fmt] = await api(`/api/models/${m.id}/exports/${fmt}`, { method: 'POST' });
+    } catch (err) { m.exports[fmt] = { status: 'failed', error: err.message }; toast(`${fmt}: ${err.message}`); }
+    renderDetail();
+  }
+  if (e.target.id === 'del' && m && confirm(`Delete "${m.name}" and all its files?`)) {
+    try {
+      await api(`/api/models/${m.id}`, { method: 'DELETE' });
+      models = models.filter((x) => x !== m);
+      selectedId = models[0]?.id ?? null;
+      render();
+    } catch (err) { toast(err.message); }
+  }
+});
+
+const drop = $('#drop');
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); upload(e.dataTransfer.files); });
+$('#file').addEventListener('change', (e) => { upload(e.target.files); e.target.value = ''; });
+
+async function poll() {
+  let errored = false;
+  for (const m of models.filter((x) => x.status === 'generating')) {
+    try { Object.assign(m, await api(`/api/models/${m.id}`)); } catch (e) { errored = true; toast(e.message); }
+  }
+  for (const m of models) {
+    for (const [fmt, e] of Object.entries(m.exports || {})) {
+      if (e.status !== 'converting' || !e.task_id) continue;
+      try { m.exports[fmt] = await api(`/api/models/${m.id}/exports/${fmt}`); } catch (err) { errored = true; toast(err.message); }
+    }
+  }
+  render();
+  setTimeout(poll, errored ? 10000 : 2500);
+}
+
+api('/api/models').then((list) => { models = list; selectedId = models[0]?.id ?? null; render(); poll(); })
+  .catch((e) => toast(e.message));
+</script>
+</body>
+</html>
