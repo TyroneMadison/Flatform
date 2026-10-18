@@ -240,6 +240,7 @@ export class Studio {
     this.scene.add(...Object.values(this.lights));
     this.pmrem = new THREE.PMREMGenerator(this.renderer);
     this.envs = {};
+    this.builds = 0; // a newer preset wins over one that is still loading its HDRI
     this.state = defaultScene();
     this.frame = 0;
     this.width = canvas.width;
@@ -375,16 +376,19 @@ export class Studio {
     this.scene.backgroundRotation.set(0, 0, 0);
     this.backdropTexture?.dispose();
     this.backdropTexture = null;
+    this.backdropEnv?.dispose();
+    this.backdropEnv = null;
     this.message = '';
   }
 
   async buildPreset() {
+    const build = ++this.builds;
     this.built = true;
     this.clearStage();
     const p = this.state.preset;
     if (p === 'gold') this.buildGold();
     else if (p === 'cyclorama') this.buildCyclorama();
-    else if (needsBackdrop(p)) await this.buildBackdrop();
+    else if (needsBackdrop(p)) await this.buildBackdrop(build);
     else this.scene.environment = this.env('room'); // transparent
     this.applyLights();
   }
@@ -458,7 +462,7 @@ export class Studio {
   }
 
   // d/e) Your HDRI (environment + ground-projected background) or your backdrop image.
-  async buildBackdrop() {
+  async buildBackdrop(build) {
     const file = this.state.backdrop;
     if (!file) {
       this.scene.background = new THREE.Color(0x0b0a09);
@@ -472,17 +476,20 @@ export class Studio {
     try {
       tex = ext === '.hdr' ? await new HDRLoader().loadAsync(url) : ext === '.exr' ? await new EXRLoader().loadAsync(url) : await new THREE.TextureLoader().loadAsync(url);
     } catch {
+      if (build !== this.builds) return;
       this.scene.environment = this.env('room');
       this.message = 'Could not load that backdrop';
       return;
     }
+    if (build !== this.builds) { tex.dispose(); return; } // another preset was picked while this one loaded
     this.backdropTexture = tex;
     const image = tex.image;
     const equirect = ext === '.hdr' || ext === '.exr' || Math.abs(image.width / image.height - 2) < 0.05;
     if (equirect) {
       tex.mapping = THREE.EquirectangularReflectionMapping;
       if (ext !== '.hdr' && ext !== '.exr') tex.colorSpace = THREE.SRGBColorSpace;
-      this.scene.environment = this.pmrem.fromEquirectangular(tex).texture;
+      this.backdropEnv = this.pmrem.fromEquirectangular(tex);
+      this.scene.environment = this.backdropEnv.texture;
       const sky = new GroundedSkybox(tex, 3, 90);
       sky.position.y = 3 - 0.01;
       this.stage.add(sky);

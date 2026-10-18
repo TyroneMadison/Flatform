@@ -362,11 +362,14 @@ async function renderInApp(slug, looks, turns, frames, manifests) {
       await studio.setState(sceneFor(model, look));
       await studio.load(fileUrl(model, model.glb));
       const sheets = turns.length ? makeSheets(look, turns) : null;
-      const uploads = new Set();
+      // Up to 4 frame uploads in flight. Every upload is kept so a failed one fails the render.
+      const uploads = [];
+      const inflight = new Set();
       const queue = async (p) => {
-        uploads.add(p);
-        p.finally(() => uploads.delete(p));
-        while (uploads.size >= 4) await Promise.race(uploads);
+        uploads.push(p);
+        inflight.add(p);
+        p.then(() => inflight.delete(p), () => inflight.delete(p));
+        while (inflight.size >= 4) await Promise.race(inflight).catch(() => {});
       };
       let poster;
       for (let i = 0; i < frames; i++) {

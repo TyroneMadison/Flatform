@@ -17,7 +17,13 @@ export function mount(el) {
 }
 
 const save = async (data) => {
-  try { state.settings = await send('/api/settings', 'POST', data); state.blender = await api('/api/blender'); } catch (e) { toast(e.message); }
+  try {
+    state.settings = await send('/api/settings', 'POST', data);
+    state.blender = await api('/api/blender');
+  } catch (e) {
+    toast(e.message);
+    $('#settings', root).dataset.html = ''; // redraw, so a refused change doesn't stay on screen
+  }
   refresh();
 };
 
@@ -28,7 +34,7 @@ async function onClick(e) {
   const act = t.dataset.act;
   if (act === 'key') openKeyDialog();
   if (act === 'refresh') { await refreshAccount(); toast(state.account?.error || 'Balance updated', state.account?.error ? 'error' : 'info'); }
-  if (act === 'region') save({ region: t.dataset.value });
+  if (act === 'region') { await save({ region: t.dataset.value }); refreshAccount(); } // the balance comes from the new region
   if (act === 'renderer') save({ renderer: t.dataset.value });
   if (act === 'output') {
     if (native) { const dir = await native.pickFolder(); if (dir) save({ outputRoot: dir }); } else showField('outputField');

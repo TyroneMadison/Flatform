@@ -2,7 +2,7 @@
 // Tripo's API has no cancel endpoint, so submitted jobs can't be cancelled; only photos still in
 // Flatform's own upload queue can be removed.
 import { $, esc, state, route, stepper, findModel, fileUrl, sourceType, STAGES, stageOf, statusText, addFiles, openPicker,
-  removeQueued, retryQueued, retryModel, creditsText, modelLabel, isGenerating, go } from '../app.js';
+  removeQueued, retryQueued, retryModel, creditsText, modelLabel, isGenerating, go, busy } from '../app.js';
 import { icon } from '../lib/icons.js';
 
 let root;
@@ -75,7 +75,7 @@ export function mount(el, { id }) {
     const { act, id: target } = b.dataset;
     if (act === 'remove') removeQueued(target);
     if (act === 'requeue') retryQueued(target);
-    if (act === 'retry') retryModel(findModel(target));
+    if (act === 'retry') busy(b, () => retryModel(findModel(target)));
   });
   update();
 }

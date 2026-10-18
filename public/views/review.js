@@ -1,5 +1,5 @@
 // 03 · Review: the source photo next to the 3D model, versions, regenerate, clean-up toggles, then into a scene.
-import { $, $$, esc, state, api, send, toast, go, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating } from '../app.js';
+import { $, $$, esc, state, api, send, toast, go, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy } from '../app.js';
 import { icon } from '../lib/icons.js';
 import { Studio, defaultScene } from '../lib/studio.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -65,8 +65,9 @@ export async function mount(el, { id }) {
     draw();
   });
   observer.observe($('#cv', el));
-  await studio.setState({ ...defaultScene(state.settings), ...m.scene, preset: 'transparent' });
-  await showVersion();
+  const s = studio;
+  await s.setState({ ...defaultScene(state.settings), ...m.scene, preset: 'transparent' });
+  if (studio === s) await showVersion(); // unless the screen was left meanwhile
 }
 
 export function unmount() {
@@ -107,13 +108,18 @@ async function showVersion() {
     return;
   }
   if (loadedGlb === m.glb || !studio) return;
+  const s = studio;
+  const glb = m.glb;
   msg.textContent = 'Loading model…';
   try {
-    await studio.load(fileUrl(m, m.glb));
-    loadedGlb = m.glb;
+    await s.load(fileUrl(m, glb));
+    if (studio !== s) return; // a newer screen owns the view now
+    loadedGlb = glb;
     msg.textContent = '';
     applyDisplay();
-  } catch (e) { msg.textContent = `Could not load the model: ${e.message}`; }
+  } catch (e) {
+    if (studio === s) msg.textContent = `Could not load the model: ${e.message}`;
+  }
   draw();
 }
 
@@ -168,7 +174,9 @@ async function onClick(e) {
     await showVersion();
   }
   if (t.dataset.act === 'regen') {
-    try { upsert(await api(`/api/models/${m.id}/versions`, { method: 'POST' })); go(`#/generate/${m.id}`); } catch (err) { toast(err.message); }
+    await busy(t, async () => {
+      try { upsert(await api(`/api/models/${m.id}/versions`, { method: 'POST' })); go(`#/generate/${m.id}`); } catch (err) { toast(err.message); }
+    });
   }
   if (t.dataset.act === 'better') $('#betterPhoto', root).click();
 }
@@ -191,10 +199,12 @@ async function onChange(e) {
     const file = t.files[0];
     t.value = '';
     const type = file.type || (/\.png$/i.test(file.name) ? 'image/png' : /\.hei[cf]$/i.test(file.name) ? 'image/heic' : 'image/jpeg');
-    try {
-      upsert(await api(`/api/models/${m.id}/versions`, { method: 'POST', headers: { 'Content-Type': type }, body: file }));
-      go(`#/generate/${m.id}`);
-    } catch (err) { toast(err.message); }
+    await busy($('[data-act=better]', root), async () => {
+      try {
+        upsert(await api(`/api/models/${m.id}/versions`, { method: 'POST', headers: { 'Content-Type': type }, body: file }));
+        go(`#/generate/${m.id}`);
+      } catch (err) { toast(err.message); }
+    });
   }
 }
 

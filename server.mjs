@@ -16,10 +16,11 @@ const PUBLIC = path.join(ROOT, 'public');
 const THREE = path.join(ROOT, 'node_modules', 'three');
 const VERSION = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 // The app page may only run its own files (and its inline import map). WebAssembly is for the Draco/Meshopt decoders.
+// GLTFLoader fetches a GLB's embedded textures from blob: URLs (and a .gltf's data: URIs), hence connect-src blob: data:.
 const IMPORT_MAP = readFileSync(path.join(PUBLIC, 'index.html'), 'utf8').match(/<script type="importmap">([\s\S]*?)<\/script>/)[1];
 const CSP = [
   "default-src 'self'", `script-src 'self' 'wasm-unsafe-eval' 'sha256-${createHash('sha256').update(IMPORT_MAP).digest('base64')}'`,
-  "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "worker-src 'self' blob:", "connect-src 'self'",
+  "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "worker-src 'self' blob:", "connect-src 'self' blob: data:",
   "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'",
 ].join('; ');
 const FORMATS = ['GLTF', 'FBX', 'USDZ', 'OBJ', 'STL', '3MF'];
@@ -146,10 +147,23 @@ export async function startServer({
     });
     const out = await res.json().catch(() => ({}));
     if (!res.ok || out.code !== 0) {
-      throw new HttpError(res.status === 401 ? 401 : 502, `Tripo: ${out.message || `HTTP ${res.status}`}${out.suggestion ? ` (${out.suggestion})` : ''}`);
+      const err = new HttpError(res.status === 401 ? 401 : 502, `Tripo: ${out.message || `HTTP ${res.status}`}${out.suggestion ? ` (${out.suggestion})` : ''}`);
+      err.upstream = res.status;
+      throw err;
     }
     return out.data;
   }
+
+  // Polls a task. A task Tripo no longer knows will never finish, so it counts as failed (and can be retried).
+  async function task(id) {
+    try {
+      return await tripo(`/tasks/${id}`);
+    } catch (e) {
+      if (e.upstream === 404) return { status: 'failed', missing: true };
+      throw e;
+    }
+  }
+  const failure = (t) => (t.missing ? 'Tripo has no record of this task' : `Tripo task ${t.status}`);
 
   // Docs show output.model_url; fall back to any other URL field in case a task type names it differently.
   const fileUrl = (output = {}) => output.model_url
@@ -273,7 +287,7 @@ export async function startServer({
   }
 
   async function refreshVersion(m, v) {
-    const t = await tripo(`/tasks/${v.task_id}`);
+    const t = await task(v.task_id);
     v.progress = t.progress ?? v.progress;
     v.tripo_status = t.status;
     if (t.status === 'success') {
@@ -285,7 +299,7 @@ export async function startServer({
         if (t.output.rendered_image_url) v.thumb = await download(t.output.rendered_image_url, dir, vname('preview', v.n), '.png');
         Object.assign(v, { status: 'ready', progress: 100, credits: t.credits_consumed });
       }
-    } else if (FAILED.includes(t.status)) Object.assign(v, { status: 'failed', error: `Tripo task ${t.status}` });
+    } else if (FAILED.includes(t.status)) Object.assign(v, { status: 'failed', error: failure(t) });
   }
 
   async function refreshModel(m) {
@@ -332,7 +346,7 @@ export async function startServer({
     const v = active(m);
     const e = v.exports[fmt];
     if (e?.status !== 'converting') return;
-    const t = await tripo(`/tasks/${e.task_id}`);
+    const t = await task(e.task_id);
     if (t.status === 'success') {
       const url = fileUrl(t.output);
       if (!url) Object.assign(e, { status: 'failed', error: 'Tripo returned no file URL' });
@@ -340,7 +354,7 @@ export async function startServer({
         Object.assign(e, { status: 'ready', file: await download(url, path.join(MODELS, m.id), `${vname('model', v.n)}-${fmt.toLowerCase()}`, '.' + fmt.toLowerCase()) });
         if (m.renders?.formats?.includes(fmt)) await copyToHandoff(m, e.file).catch((err) => console.error(err));
       }
-    } else if (FAILED.includes(t.status)) Object.assign(e, { status: 'failed', error: `Tripo task ${t.status}` });
+    } else if (FAILED.includes(t.status)) Object.assign(e, { status: 'failed', error: failure(t) });
     await save();
   }
 

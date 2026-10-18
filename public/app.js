@@ -156,6 +156,12 @@ export function openPicker(open = true) {
   picker.dataset.open = String(open);
   picker.click();
 }
+// Runs a button's action once at a time, so a double click can't start two paid Tripo tasks.
+export async function busy(button, action) {
+  if (button.disabled) return;
+  button.disabled = true;
+  try { await action(); } finally { button.disabled = false; }
+}
 export async function retryModel(m) {
   try {
     upsert(await api(`/api/models/${m.id}/retry`, { method: 'POST' }));

@@ -1,6 +1,6 @@
 // 06 · Library: search, filters, cards and the side panel with every action for one model.
 import { $, $$, esc, state, api, send, toast, go, findModel, upsert, fileUrl, thumbOf, statusText, statusClass, isGenerating,
-  isRendered, retryModel, confirmDialog, refresh, openPicker, FORMATS } from '../app.js';
+  isRendered, retryModel, confirmDialog, refresh, openPicker, busy, FORMATS } from '../app.js';
 import { icon } from '../lib/icons.js';
 
 const FILTERS = [['all', 'All'], ['ready', 'Ready'], ['generating', 'Generating'], ['failed', 'Failed'], ['rendered', 'Rendered'], ['needs', 'Needs render']];
@@ -55,15 +55,18 @@ async function onClick(e) {
   if (t.dataset.select) { selectedId = t.dataset.select; state.lastId = selectedId; return update(); }
   const m = findModel(t.dataset.id || selectedId);
   if (!m) return;
-  if (t.dataset.act === 'retry') return retryModel(m);
+  if (t.dataset.act === 'retry') return busy(t, () => retryModel(m));
   if (t.dataset.act === 'regen') {
-    try { upsert(await api(`/api/models/${m.id}/versions`, { method: 'POST' })); go(`#/generate/${m.id}`); } catch (err) { toast(err.message); }
+    await busy(t, async () => {
+      try { upsert(await api(`/api/models/${m.id}/versions`, { method: 'POST' })); go(`#/generate/${m.id}`); } catch (err) { toast(err.message); }
+    });
   }
   if (t.dataset.act === 'delete') {
     if (!(await confirmDialog({ title: `Delete “${m.name}”?`, text: 'This removes the model, every version and its files from this computer. Rendered handoff folders are not touched.', ok: 'Delete model' }))) return;
     try {
       await api(`/api/models/${m.id}`, { method: 'DELETE' });
-      state.models = state.models.filter((x) => x !== m);
+      state.models = state.models.filter((x) => x.id !== m.id); // by id: polling may have swapped the object
+      if (state.lastId === m.id) state.lastId = null;
       selectedId = state.models[0]?.id ?? null;
       refresh();
     } catch (err) { toast(err.message); }

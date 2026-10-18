@@ -87,8 +87,9 @@ export async function mount(el, { id }) {
   renderInspector();
   renderTimeline();
   bind();
+  let s;
   try {
-    studio = new Studio($('#cv', el));
+    s = studio = new Studio($('#cv', el));
   } catch {
     $('#hudMsg', el).textContent = 'The scene composer needs WebGL, which is not available here.';
     return;
@@ -96,13 +97,16 @@ export async function mount(el, { id }) {
   observer = new ResizeObserver(resize);
   observer.observe($('#vp', el));
   resize();
-  await studio.setState(scene);
-  studio.setFrame(frame);
+  await s.setState(scene);
+  if (studio !== s) return; // left the screen while the scene loaded
+  s.setFrame(frame);
   try {
-    await studio.load(fileUrl(m, m.glb));
-    $('#hudMsg', el).hidden = !studio.message;
-    $('#hudMsg', el).textContent = studio.message;
+    await s.load(fileUrl(m, m.glb));
+    if (studio !== s) return;
+    $('#hudMsg', el).hidden = !s.message;
+    $('#hudMsg', el).textContent = s.message;
   } catch (e) {
+    if (studio !== s) return;
     $('#hudMsg', el).textContent = `Could not load the model: ${e.message}`;
   }
   draw();

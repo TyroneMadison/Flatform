@@ -53,6 +53,10 @@ const fake = http.createServer(async (req, res) => {
     return ok({ task_id: `task_conv_${input}_${format}` });
   }
   const id = req.url.match(/^\/v3\/tasks\/(.+)$/)?.[1];
+  if (id?.startsWith('task_gone')) { // a task Tripo no longer has
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ code: 2001, message: 'Task not found' }));
+  }
   if (id) {
     polls[id] = (polls[id] || 0) + 1;
     if (polls[id] === 1) return ok({ task_id: id, status: 'running', progress: 40 });
@@ -138,8 +142,9 @@ test('API key: refused without one, wrong keys rejected, a valid key saved', asy
 });
 
 test('upload → generate → library → export (existing flow)', async () => {
-  // Rejects other image types before calling Tripo.
+  // Rejects other image types before calling Tripo (including names that only exist on Object.prototype).
   assert.equal((await app.j('/api/models', { method: 'POST', headers: { 'Content-Type': 'image/gif' }, body: 'x' })).status, 415);
+  assert.equal((await app.j('/api/models', { method: 'POST', headers: { 'Content-Type': 'constructor' }, body: 'x' })).status, 415);
 
   const created = await app.j('/api/models?name=Red%20Chair', { method: 'POST', headers: { 'Content-Type': 'image/png' }, body: 'png-bytes' });
   assert.equal(created.status, 201);
@@ -189,7 +194,9 @@ test('serves the app, fonts and three.js from local files', async () => {
   // The page may only load its own scripts (plus its inline import map) and only talk to this server.
   const csp = page.headers.get('content-security-policy');
   assert.match(csp, /script-src 'self' 'wasm-unsafe-eval' 'sha256-[\w+/=]+'/);
-  assert.match(csp, /connect-src 'self'/);
+  assert.match(csp, /connect-src 'self' blob: data:(;|$)/); // GLB textures load from blob: URLs; nothing remote
+  assert.match(csp, /img-src 'self' data: blob:(;|$)/);
+  assert.match(csp, /worker-src 'self' blob:(;|$)/); // the Draco decoder runs in a blob: worker
   assert.match(csp, /object-src 'none'/);
 });
 
@@ -307,13 +314,19 @@ test('old v0.2 library migrates and the model still opens', async () => {
     id: '6f1c3f4e-0000-4000-8000-000000000001', name: 'Audi R8 · front ¾', status: 'ready', progress: 100, task_id: 'task_old',
     created_at: '2026-10-01T10:00:00.000Z', source: 'source.jpg', exports: {}, glb: 'model.glb', thumb: 'preview.webp', credits: 30,
   };
+  // A second v0.2 entry was still generating, on a task Tripo has since forgotten.
+  const stuck = { id: '6f1c3f4e-0000-4000-8000-000000000002', name: 'Audi R8', status: 'generating', progress: 40, task_id: 'task_gone_1',
+    created_at: '2026-10-02T10:00:00.000Z', source: 'source.png', exports: {} };
   await mkdir(path.join(oldData, 'models', old.id), { recursive: true });
-  await writeFile(path.join(oldData, 'library.json'), JSON.stringify([old], null, 2));
+  await mkdir(path.join(oldData, 'models', stuck.id), { recursive: true });
+  await writeFile(path.join(oldData, 'models', stuck.id, 'source.png'), 'png');
+  await writeFile(path.join(oldData, 'library.json'), JSON.stringify([stuck, old], null, 2));
   for (const f of ['model.glb', 'preview.webp', 'source.jpg']) await writeFile(path.join(oldData, 'models', old.id, f), `old-${f}`);
   const before = seen.length;
   const oldApp = await startApp(oldData, { TRIPO_API_KEY: KEY });
 
-  const [m] = (await oldApp.j('/api/models')).body;
+  const [s, m] = (await oldApp.j('/api/models')).body;
+  assert.deepEqual([s.slug, s.status, s.activeVersion, s.versions.length], ['audi-r8', 'generating', 1, 1]);
   assert.equal(m.slug, 'audi-r8-front-3-4');
   assert.equal(m.activeVersion, 1);
   assert.deepEqual(m.versions, [{
@@ -325,8 +338,13 @@ test('old v0.2 library migrates and the model still opens', async () => {
   assert.equal(await (await fetch(`${oldApp.base}/files/${old.id}/model.glb`)).text(), 'old-model.glb');
   assert.equal(seen.length, before); // opening it never called Tripo
   const saved = JSON.parse(await readFile(path.join(oldData, 'library.json'), 'utf8'));
-  assert.equal(saved[0].versions.length, 1);
-  assert.equal(saved[0].glb, 'model.glb'); // v0.2 can still read it
+  assert.equal(saved[1].versions.length, 1);
+  assert.equal(saved[1].glb, 'model.glb'); // v0.2 can still read it
+
+  // The in-flight one is polled; Tripo no longer has its task, so it fails (and can be retried) instead of spinning forever.
+  const gone = (await oldApp.j(`/api/models/${stuck.id}`)).body;
+  assert.deepEqual([gone.status, gone.error], ['failed', 'Tripo has no record of this task']);
+  assert.equal((await oldApp.j(`/api/models/${stuck.id}/retry`, { method: 'POST' })).body.status, 'generating');
   await oldApp.stop();
 });
 
@@ -335,6 +353,8 @@ test('render file endpoint writes inside <root>/<slug>/ only', async () => {
   const lib = (await app.j('/api/models')).body;
   const audi = lib.find((m) => m.slug === 'audi-r8');
   assert.equal((await app.j(`/api/renders/${audi.id}/file?path=frames/studio/x_000.png`, { method: 'PUT', body: 'x' })).status, 409); // not started
+  assert.equal((await app.json(`/api/renders/${audi.id}/start`, 'POST', { looks: ['constructor'] })).status, 400);
+  assert.equal((await app.json(`/api/renders/${audi.id}/start`, 'POST', { looks: ['studio'], formats: ['PDF'] })).status, 400);
 
   const started = await app.json(`/api/renders/${audi.id}/start`, 'POST', { looks: ['studio', 'transparent'], formats: ['FBX'] });
   assert.equal(started.status, 200);
