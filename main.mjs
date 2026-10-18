@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startServer } from './server.mjs';
 import { createKeyStore } from './keys.mjs';
+import { updateOptions } from './updates.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
@@ -98,6 +99,8 @@ app.whenReady().then(async () => {
   const { port } = await startServer({
     dataDir: path.join(app.getPath('userData'), 'library'),
     keyStore,
+    // Looks for a newer release on GitHub; Download links open in the browser through the window-open handler below.
+    ...updateOptions(process.env),
     // Blender runs the render script as a separate program, so it can't be read from inside app.asar.
     // The three.js addons ship next to it because electron-builder leaves dependencies' examples/ folders out.
     ...(app.isPackaged && {

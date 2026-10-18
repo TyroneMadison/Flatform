@@ -15,6 +15,7 @@ import { PROVIDERS, VIEWS, normalize, tripoDirectBody, threeDAIRequest } from '.
 import { estimate } from './public/lib/pricing.js';
 import { threeDAIStudio, createLimiter, THREE_D_AI_BASE, HIGH } from './providers.mjs';
 import { createKeyStore } from './keys.mjs';
+import { createUpdater, parseVersion, updateOptions } from './updates.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -84,6 +85,8 @@ export function blenderCandidates(platform = process.platform) {
  * keyStore: keys.mjs createKeyStore() — get/source/set/remove(provider). Keys never reach the page.
  * apiBase: fixed Tripo endpoint (tests, TRIPO_BASE). Without it the Region setting picks one of REGIONS.
  * threeDAIBase: 3D AI Studio endpoint (tests, THREE_D_AI_STUDIO_BASE). rateWindowMs: its rate-limit window (tests).
+ * updateUrl, updateDelayMs: where and how soon after start to look for a newer release (updates.mjs updateOptions).
+ * Without updateUrl, as in tests, nothing ever asks GitHub.
  */
 export async function startServer({
   dataDir,
@@ -97,6 +100,8 @@ export async function startServer({
   // three.js addons (loaders, controls, decoders). electron-builder drops every dependency's examples/ folder,
   // so the packaged app ships this one as a resource file too.
   threeAddons = path.join(THREE, 'examples', 'jsm'),
+  updateUrl,
+  updateDelayMs,
 }) {
   const MODELS = path.join(dataDir, 'models');
   const BACKDROPS = path.join(dataDir, 'backdrops');
@@ -118,6 +123,7 @@ export async function startServer({
   const defaults = {
     region: 'global', model, texture: true, pbr: true, provider: 'tripo', setups: {},
     renderer: 'three', blenderPath: '', outputRoot: '', defaultScene: 'ring', alsoTransparent: true, backdrops: {},
+    updates: { autoCheck: true, skippedVersion: null },
   };
   const settings = { ...defaults, ...(existsSync(SETTINGS) ? JSON.parse(await readFile(SETTINGS, 'utf8')) : {}) };
   if (settings.defaultScene === 'gold') settings.defaultScene = 'ring';
@@ -623,10 +629,16 @@ export async function startServer({
         next.defaultScene = body.defaultScene;
       } else if (k === 'outputRoot') next.outputRoot = body.outputRoot === '' ? '' : await checkOutputRoot(body.outputRoot);
       else if (k === 'blenderPath') next.blenderPath = body.blenderPath === '' ? '' : await checkBlenderPath(body.blenderPath);
-      else throw new HttpError(400, `Unknown setting: ${k}`);
+      else if (k === 'updates') {
+        // Only the automatic check is set here; a skipped version comes from POST /api/update/skip.
+        if (typeof body.updates?.autoCheck !== 'boolean' || Object.keys(body.updates).length !== 1) throw new HttpError(400, 'updates must be { autoCheck: true or false }');
+        next.updates = { ...settings.updates, autoCheck: body.updates.autoCheck };
+      } else throw new HttpError(400, `Unknown setting: ${k}`);
     }
+    const replan = next.updates.autoCheck !== settings.updates.autoCheck;
     Object.assign(settings, next);
     await writeAtomic(SETTINGS, settings);
+    if (replan) updater.start(); // on: a check in a few seconds; off: none until it's on again
     return settingsView();
   }
 
@@ -635,6 +647,17 @@ export async function startServer({
     ...settings, apiBase: apiBase(), regions: REGIONS, version: VERSION, libraryDir: dataDir,
     suggestedOutputRoot: suggestedOutputRoot(), platform: process.platform, keys: keySources(),
   });
+
+  // ---- Update checks (updates.mjs): this server asks GitHub, never the page ----
+
+  const updater = createUpdater({ current: VERSION, url: updateUrl, delayMs: updateDelayMs, settings: () => settings.updates });
+  // "Skip this version": its banner never shows again; a newer version's does. Settings still offers it.
+  async function skipVersion(version) {
+    if (typeof version !== 'string' || !parseVersion(version)) throw new HttpError(400, 'That is not a version number');
+    settings.updates = { ...settings.updates, skippedVersion: version };
+    await writeAtomic(SETTINGS, settings);
+    return updater.view();
+  }
 
   // ---- Backdrops and HDRIs (shared by every car; kept in the library folder) ----
 
@@ -844,6 +867,11 @@ export async function startServer({
       if ('apiKey' in body) return send(res, 200, await saveKey('tripo', body.apiKey)); // the v0.3 key dialog
       return send(res, 200, await saveSettings(body));
     }
+    if (area === 'update' && !sub) {
+      if (!id && method === 'GET') return send(res, 200, updater.view());
+      if (id === 'check' && method === 'POST') return send(res, 200, await updater.check());
+      if (id === 'skip' && method === 'POST') return send(res, 200, await skipVersion((await readJson(req)).version));
+    }
     if (area === 'blender' && !id && method === 'GET') {
       const found = findBlender();
       return send(res, 200, { found: Boolean(found), path: found, configured: settings.blenderPath });
@@ -911,9 +939,11 @@ export async function startServer({
   }));
   await new Promise((ok) => server.listen(port, '127.0.0.1', ok));
   if (aiJobs().length) wakePoller(2000); // jobs that were running when the app closed
+  updater.start();
   const close = () => {
     stopped = true;
     clearTimeout(pollTimer);
+    updater.stop();
     return new Promise((ok) => server.close(ok));
   };
   return { server, port: server.address().port, close };
@@ -927,6 +957,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
     ...(process.env.TRIPO_BASE && { apiBase: process.env.TRIPO_BASE }),
     ...(process.env.TRIPO_MODEL && { model: process.env.TRIPO_MODEL }),
     ...(process.env.THREE_D_AI_STUDIO_BASE && { threeDAIBase: process.env.THREE_D_AI_STUDIO_BASE }),
+    ...updateOptions(process.env), // GitHub, or FLATFORM_UPDATE_URL and FLATFORM_UPDATE_DELAY_MS (screenshots, tests)
     keyStore: createKeyStore({ env: process.env }), // keys pasted here live in memory only; put them in .env to keep them
   });
   console.log(`Flatform on http://localhost:${port}`);

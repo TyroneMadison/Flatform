@@ -1,6 +1,6 @@
-// 07 · Settings: providers and keys, rendering, the output folder, about. Only non-secret values are stored in
-// settings.json; keys go to the OS keychain and never come back to this page: it only learns whether one is saved.
-import { $, esc, state, api, send, toast, refresh, native, fmt, fmtBalance, saveKey, confirmDialog, arrowRadios } from '../app.js';
+// 07 · Settings: providers and keys, rendering, the output folder, updates and about. Only non-secret values are stored
+// in settings.json; keys go to the OS keychain and never come back to this page: it only learns whether one is saved.
+import { $, esc, state, api, send, toast, refresh, native, fmt, fmtBalance, saveKey, confirmDialog, arrowRadios, refreshUpdate } from '../app.js';
 import { PROVIDERS } from '../lib/engines.js';
 import { icon } from '../lib/icons.js';
 
@@ -11,6 +11,7 @@ const results = {}; // provider → { ok, text } from the last Test or key chang
 let root;
 let section;
 let replacing = null; // provider whose key field is open for a new key
+let checking = false; // "Check for updates" is waiting for GitHub
 
 export function mount(el, { id }) {
   root = el;
@@ -98,6 +99,13 @@ async function onClick(e) {
     } else showField('blenderField');
   }
   if (act === 'show-library') native?.showItemInFolder(s.libraryDir).catch((err) => toast(err.message));
+  if (act === 'check-update' && !checking) {
+    checking = true;
+    redraw();
+    await refreshUpdate(true);
+    checking = false;
+    redraw();
+  }
 }
 
 function showField(id) {
@@ -110,6 +118,7 @@ async function onChange(e) {
   const t = e.target;
   if (t.name === 'alsoTransparent') save({ alsoTransparent: t.checked });
   if (t.name === 'defaultScene') save({ defaultScene: t.value });
+  if (t.name === 'autoCheck') save({ updates: { autoCheck: t.checked } });
   if (t.name === 'region') { await save({ region: t.value }); if (state.settings.keys?.tripo !== 'none') test('tripo'); } // the balance comes from the new region
 }
 
@@ -205,13 +214,29 @@ function outputHtml() {
   </div>`;
 }
 
+// The last check's result. Skipping a version only hides the banner; this still offers it.
+function updateStatus() {
+  const u = state.update;
+  if (checking) return 'Checking…';
+  const at = u?.checkedAt ? ` · last checked ${new Date(u.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
+  if (u?.newer) return `<b>Flatform ${esc(u.latest)} is ready</b><a class="btn sm pri" href="${esc(u.downloadUrl)}" target="_blank" rel="noopener">${icon('download')}<span>Download</span></a>`;
+  if (u?.failed) return `Couldn't check right now${at}`;
+  return u?.checkedAt ? `✓ You're up to date${at}` : 'Not checked yet';
+}
+
 function aboutHtml() {
   const s = state.settings;
-  return `<div class="card glass"><h2 class="label">About</h2>
-    <div class="field"><span class="flabel">Library location</span><div class="inp mono" title="${esc(s.libraryDir)}">${esc(s.libraryDir)}</div>
-      <button class="btn ghostbtn" type="button" data-act="show-library" ${native ? '' : 'disabled title="Available in the desktop app"'}>${icon('folder')}<span>Show</span></button></div>
+  return `<div class="card glass"><h2 class="label">Updates</h2>
     <div class="field"><span class="flabel">Version</span><div class="inp">Flatform ${esc(s.version)}</div>
       <a class="btn ghostbtn" href="${RELEASES}" target="_blank" rel="noopener">${icon('external')}<span>Releases</span></a></div>
+    <div class="field"><span class="flabel">Latest</span><span class="ures" role="status">${updateStatus()}</span>
+      <button class="btn ghostbtn" type="button" data-act="check-update">${icon('retry')}<span>Check for updates</span></button></div>
+    <label class="tg"><span>Check for updates automatically<small>A few seconds after Flatform starts, then every 6 hours</small></span><input class="sw" type="checkbox" role="switch" id="autoCheck" name="autoCheck" ${s.updates?.autoCheck ? 'checked' : ''}></label>
+    <p class="fine">Flatform only asks GitHub which version is the newest. Download opens the installer on GitHub in your browser; nothing is downloaded or installed on its own.</p>
+  </div>
+  <div class="card glass"><h2 class="label">About</h2>
+    <div class="field"><span class="flabel">Library location</span><div class="inp mono" title="${esc(s.libraryDir)}">${esc(s.libraryDir)}</div>
+      <button class="btn ghostbtn" type="button" data-act="show-library" ${native ? '' : 'disabled title="Available in the desktop app"'}>${icon('folder')}<span>Show</span></button></div>
     <p class="fine">Unofficial app for the Tripo and 3D AI Studio APIs; not affiliated with either. You pay them directly in credits.</p>
   </div>`;
 }
