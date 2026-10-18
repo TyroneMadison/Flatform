@@ -1,8 +1,8 @@
 {
   "name": "flatform",
   "productName": "Flatform",
-  "version": "0.2.0",
-  "description": "Drop images, get 3D models from the Tripo API, keep a library, export to any 3D format",
+  "version": "0.3.0",
+  "description": "Drop a photo, get a 3D car from the Tripo API, stage it in a studio and render 360/180 turntables for the web",
   "author": "Tyrone Madison",
   "license": "MIT",
   "private": true,
@@ -14,11 +14,14 @@
   "scripts": {
     "app": "electron .",
     "web": "node --env-file=.env server.mjs",
-    "test": "node test.mjs",
+    "test": "node --test test.mjs test/pipeline.test.mjs",
     "dist": "electron-builder --publish never"
   },
+  "dependencies": {
+    "heic-convert": "2.1.0",
+    "three": "0.186.1"
+  },
   "devDependencies": {
-    "@google/model-viewer": "4.3.1",
     "electron": "44.5.1",
     "electron-builder": "26.15.3"
   },
@@ -31,13 +34,20 @@
     "files": [
       "main.mjs",
       "server.mjs",
+      "preload.cjs",
       "public/**/*",
-      "package.json"
+      "package.json",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md"
     ],
     "extraResources": [
       {
-        "from": "node_modules/@google/model-viewer/dist/model-viewer.min.js",
-        "to": "model-viewer.min.js"
+        "from": "render/blender_turntable.py",
+        "to": "render/blender_turntable.py"
+      },
+      {
+        "from": "node_modules/three/examples/jsm",
+        "to": "three/examples/jsm"
       }
     ],
     "directories": {
@@ -45,6 +55,7 @@
       "output": "dist"
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -59,6 +70,7 @@
       "allowToChangeInstallationDirectory": true
     },
     "mac": {
+      "icon": "build/icon.icns",
       "target": [
         {
           "target": "dmg",
