@@ -1,10 +1,81 @@
 {
   "name": "tripo-studio",
+  "productName": "Tripo Studio",
+  "version": "0.1.0",
+  "description": "Drop images, get 3D models from the Tripo API, keep a library, export to any 3D format",
+  "author": "Tyrone Madison",
+  "license": "MIT",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "main": "main.mjs",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "start": "node --env-file=.env server.mjs",
-    "test": "node test.mjs"
+    "app": "electron .",
+    "web": "node --env-file=.env server.mjs",
+    "test": "node test.mjs",
+    "dist": "electron-builder --publish never"
+  },
+  "devDependencies": {
+    "@google/model-viewer": "4.3.1",
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  },
+  "allowScripts": {
+    "electron@44.5.1": true
+  },
+  "build": {
+    "appId": "io.github.tyronemadison.tripostudio",
+    "productName": "Tripo Studio",
+    "files": [
+      "main.mjs",
+      "server.mjs",
+      "public/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/@google/model-viewer/dist/model-viewer.min.js",
+        "to": "model-viewer.min.js"
+      }
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.graphics-design",
+      "identity": "-",
+      "hardenedRuntime": false
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "TyroneMadison",
+      "repo": "tripo-studio"
+    }
   }
 }
