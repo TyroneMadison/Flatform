@@ -1,4 +1,4 @@
-// Tripo Studio server: drag-drop image → Tripo 3D model → local library → export.
+// Flatform server: drag-drop image → Tripo 3D model → local library → export.
 // Used two ways: `npm run web` (key from .env) or embedded by the Electron app (main.mjs).
 import http from 'node:http';
 import { readFile, writeFile, rename, mkdir, rm } from 'node:fs/promises';
@@ -230,5 +230,5 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
     ...(process.env.TRIPO_MODEL && { model: process.env.TRIPO_MODEL }),
     keyStore: { get: () => key, set: (k) => { key = k; } }, // in memory only; put it in .env to keep it
   });
-  console.log(`Tripo Studio on http://localhost:${port}`);
+  console.log(`Flatform on http://localhost:${port}`);
 }

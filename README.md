@@ -1,4 +1,4 @@
-# Tripo Studio
+# Flatform
 
 Unofficial desktop app for the [Tripo 3D API](https://developers.tripo3d.com). Not affiliated with Tripo or VAST.
 
@@ -8,8 +8,8 @@ Drop images and get 3D models. Each model is saved to a library on your computer
 
 Download the latest release from the [Releases page](https://github.com/TyroneMadison/Flatform/releases):
 
-- **Windows:** `Tripo Studio Setup x.y.z.exe`. The app isn't code-signed yet, so Windows SmartScreen may warn you. Click **More info**, then **Run anyway**.
-- **Mac:** use `Tripo Studio-x.y.z-arm64.dmg` for Apple Silicon or `Tripo Studio-x.y.z.dmg` for Intel, and drag the app into Applications. The app isn't notarized yet, so macOS blocks the first launch. Open it once, then go to **System Settings → Privacy & Security** and click **Open Anyway**.
+- **Windows:** `Flatform-Setup-x.y.z.exe`. The app isn't code-signed yet, so Windows SmartScreen may warn you. Click **More info**, then **Run anyway**.
+- **Mac:** use `Flatform-x.y.z-arm64.dmg` for Apple Silicon or `Flatform-x.y.z.dmg` for Intel, and drag the app into Applications. The app isn't notarized yet, so macOS blocks the first launch. Open it once, then go to **System Settings → Privacy & Security** and click **Open Anyway**.
 
 On first launch, paste a Tripo API key from https://developers.tripo3d.com/en/keys. The key is encrypted by your operating system (Windows DPAPI or macOS Keychain) and is only sent to Tripo. You pay Tripo directly in credits; this app adds no fees.
 
@@ -18,7 +18,7 @@ On first launch, paste a Tripo API key from https://developers.tripo3d.com/en/ke
 - `main.mjs` (Electron) starts the app server on a random local port and shows it in a window.
 - `server.mjs` uploads the image (`POST /v3/files`), starts `image-to-model` (v3.1, textured PBR), and polls the task. When a task succeeds, it downloads the GLB and preview into the library right away, because Tripo's result URLs expire after 5 minutes.
 - Exports call `POST /v3/models/convert` and are cached next to the GLB.
-- The library is stored in the app's data folder: `%APPDATA%\Tripo Studio\library` on Windows, `~/Library/Application Support/Tripo Studio/library` on Mac.
+- The library is stored in the app's data folder: `%APPDATA%\Flatform\library` on Windows, `~/Library/Application Support/Flatform/library` on Mac.
 
 ## Develop
 

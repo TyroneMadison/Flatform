@@ -49,7 +49,7 @@ const fake = http.createServer(async (req, res) => {
 });
 const fakePort = await listen(fake);
 
-const data = await mkdtemp(path.join(tmpdir(), 'tripo-studio-'));
+const data = await mkdtemp(path.join(tmpdir(), 'flatform-'));
 const appPort = 5900 + Math.floor(Math.random() * 90);
 const app = spawn(process.execPath, [path.join(ROOT, 'server.mjs')], {
   env: { ...process.env, TRIPO_BASE: `http://127.0.0.1:${fakePort}/v3`, TRIPO_API_KEY: '', DATA_DIR: data, PORT: String(appPort) },

@@ -27,7 +27,7 @@ jobs:
             exit 1
           fi
       - name: Create draft release
-        run: gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Tripo Studio ${GITHUB_REF_NAME#v}"
+        run: gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Flatform ${GITHUB_REF_NAME#v}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -55,7 +55,7 @@ jobs:
           CSC_FOR_PULL_REQUEST: true # sign PR builds too, so they match releases
       - uses: actions/upload-artifact@v4
         with:
-          name: tripo-studio-${{ runner.os }}
+          name: flatform-${{ runner.os }}
           path: |
             dist/*.exe
             dist/*.dmg
