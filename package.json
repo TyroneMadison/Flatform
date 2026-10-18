@@ -1,7 +1,7 @@
 {
   "name": "flatform",
   "productName": "Flatform",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Drop images, get 3D models from the Tripo API, keep a library, export to any 3D format",
   "author": "Tyrone Madison",
   "license": "MIT",
@@ -26,7 +26,8 @@
     "electron@44.5.1": true
   },
   "build": {
-    "appId": "io.github.tyronemadison.tripostudio",    "productName": "Flatform",
+    "appId": "io.github.tyronemadison.tripostudio",
+    "productName": "Flatform",
     "files": [
       "main.mjs",
       "server.mjs",
