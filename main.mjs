@@ -1,6 +1,6 @@
 // Electron shell: runs the app server inside the app and shows it in a window.
 import { app, BrowserWindow, safeStorage, shell } from 'electron';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import { startServer } from './server.mjs';
 
@@ -18,11 +18,26 @@ const keyStore = {
   },
 };
 
+// The app used to be called "Tripo Studio". Move its library and saved key once so an upgrade keeps them.
+// (On a Mac the old key can't be decrypted under the new name, so the app asks for it again.)
+function migrateOldData() {
+  const oldDir = path.join(app.getPath('appData'), 'Tripo Studio');
+  const dir = app.getPath('userData');
+  for (const name of ['library', 'tripo-key.bin']) {
+    const from = path.join(oldDir, name);
+    const to = path.join(dir, name);
+    if (existsSync(from) && !existsSync(to)) {
+      mkdirSync(dir, { recursive: true });
+      renameSync(from, to);
+    }
+  }
+}
+
 let win;
 function createWindow(port) {
   win = new BrowserWindow({
     width: 1280, height: 820, minWidth: 720, minHeight: 520,
-    backgroundColor: '#0f1115', title: 'Tripo Studio', autoHideMenuBar: true,
+    backgroundColor: '#0f1115', title: 'Flatform', autoHideMenuBar: true,
     webPreferences: { contextIsolation: true, sandbox: true },
   });
   const origin = `http://127.0.0.1:${port}`;
@@ -43,6 +58,7 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(async () => {
+  migrateOldData();
   if (existsSync(keyFile())) {
     try { apiKey = safeStorage.decryptString(readFileSync(keyFile())); } catch { /* unreadable key: ask again */ }
   }
@@ -51,7 +67,7 @@ app.whenReady().then(async () => {
     keyStore,
     ...(app.isPackaged && { viewerPath: path.join(process.resourcesPath, 'model-viewer.min.js') }),
   });
-  console.log(`Tripo Studio server on 127.0.0.1:${port}`);
+  console.log(`Flatform server on 127.0.0.1:${port}`);
   createWindow(port);
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(port); });
 });
