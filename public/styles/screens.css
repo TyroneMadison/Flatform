@@ -293,7 +293,7 @@
 .r .l { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
 .r .c { width: 312px; flex: none; display: flex; justify-content: flex-end; }
 .plus { font: normal 11.5px var(--mono); color: var(--accent); }
-.info { position: relative; flex: none; display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--dim); font: 600 9px var(--sans); color: var(--dim); cursor: help; }
+.info { position: relative; flex: none; display: inline-grid; place-items: center; width: 15px; height: 15px; padding: 0; border-radius: 50%; border: 1px solid var(--dim); background: none; font: 600 9px var(--sans); color: var(--dim); cursor: help; }
 .info:hover, .info:focus-visible { border-color: var(--accent); color: var(--accent-hi); }
 .tipbox { display: none; position: absolute; left: -6px; bottom: calc(100% + 8px); width: 260px; padding: 9px 11px; border-radius: 9px; z-index: 20;
   background: #1f1513; border: 1px solid #503f3a; box-shadow: 0 10px 30px rgba(0, 0, 0, .65); font: 400 12px/1.45 var(--sans); color: var(--text); text-align: left; }

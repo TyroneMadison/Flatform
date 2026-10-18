@@ -69,6 +69,7 @@ export function threeDAIStudio({ base = THREE_D_AI_BASE, key, limiter = createLi
         method: json ? 'POST' : 'GET',
         headers: { Authorization: `Bearer ${apiKey}`, ...(json && { 'Content-Type': 'application/json' }) },
         body: json ? JSON.stringify(json) : undefined,
+        signal: AbortSignal.timeout(json ? 5 * 60000 : 60000), // a submission carries up to four photos
       }), priority);
       const out = await res.json().catch(() => ({}));
       if (res.status === 429 && attempt < 2) { limiter.pause(); continue; } // nothing was charged; try again after a window
@@ -93,6 +94,9 @@ export function threeDAIStudio({ base = THREE_D_AI_BASE, key, limiter = createLi
       return { balance, rateLimit };
     },
     // Result files are on a storage host; only calls to the API host itself count towards the limit.
-    fetchAsset: (url) => (new URL(url).origin === new URL(base).origin ? limiter.run(() => fetch(url)) : fetch(url)),
+    fetchAsset(url) {
+      const get = () => fetch(url, { signal: AbortSignal.timeout(15 * 60000) }); // a 5M-face GLB is big
+      return new URL(url).origin === new URL(base).origin ? limiter.run(get) : get();
+    },
   };
 }
