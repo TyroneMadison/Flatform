@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tripo Studio</title>
-<script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@4.3.1/dist/model-viewer.min.js"></script>
+<script type="module" src="/vendor/model-viewer.js"></script>
 <style>
   :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --text:#e8eaf0; --muted:#8b93a7; --accent:#7c9cff; --bad:#ff7b7b; --good:#5fd38d; }
   * { box-sizing: border-box; }
@@ -41,10 +41,30 @@
   .del { margin-top:14px; width:100%; color:var(--bad); }
   #toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#2b1c1f; border:1px solid var(--bad); color:var(--text); padding:10px 14px; border-radius:8px; display:none; max-width:90vw; }
   .muted { color:var(--muted); }
+  header .right { margin-left:auto; display:flex; gap:10px; align-items:center; }
+  #credits { color:var(--muted); }
+  dialog { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:12px; padding:20px; width:min(440px, 92vw); }
+  dialog::backdrop { background:rgba(0,0,0,.6); }
+  dialog h3 { margin:0 0 6px; }
+  dialog a { color:var(--accent); }
+  dialog input { width:100%; margin:12px 0 6px; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:#0b0d11; color:var(--text); font:inherit; }
+  dialog .row { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
+  #keyError { color:var(--bad); min-height:1.4em; font-size:13px; }
 </style>
 </head>
 <body>
-<header><h1>Tripo Studio</h1><span>Image → 3D model → library → export</span></header>
+<header><h1>Tripo Studio</h1><span>Image → 3D model → library → export</span>
+  <div class="right"><span id="credits"></span><button class="btn" id="keyBtn">API key</button></div>
+</header>
+<dialog id="keyDialog">
+  <form id="keyForm" method="dialog">
+    <h3>Connect your Tripo account</h3>
+    <div class="muted">Paste an API key from <a href="https://developers.tripo3d.com/en/keys" target="_blank">developers.tripo3d.com/en/keys</a>. It is stored encrypted on this computer and is only sent to Tripo.</div>
+    <input id="keyInput" type="password" placeholder="tsk_…" autocomplete="off" spellcheck="false" required>
+    <div id="keyError"></div>
+    <div class="row"><button class="btn" type="button" id="keyCancel">Cancel</button><button class="btn ready" type="submit">Save key</button></div>
+  </form>
+</dialog>
 <main>
   <section>
     <label id="drop">
@@ -191,8 +211,33 @@ async function poll() {
   setTimeout(poll, errored ? 10000 : 2500);
 }
 
+const openKeyDialog = () => { if (!$('#keyDialog').open) $('#keyDialog').showModal(); };
+function showAccount(a) {
+  $('#credits').textContent = a.hasKey ? `${Math.floor(a.balance)} credits` : 'No API key';
+  if (!a.hasKey) openKeyDialog();
+}
+const refreshAccount = () => api('/api/account').then(showAccount).catch((e) => {
+  $('#credits').textContent = '';
+  if (/key/i.test(e.message)) openKeyDialog();
+  else toast(e.message);
+});
+
+$('#keyBtn').addEventListener('click', () => { $('#keyError').textContent = ''; openKeyDialog(); });
+$('#keyCancel').addEventListener('click', () => $('#keyDialog').close());
+$('#keyForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('#keyError').textContent = 'Checking…';
+  try {
+    showAccount(await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey: $('#keyInput').value }) }));
+    $('#keyInput').value = '';
+    $('#keyDialog').close();
+  } catch (err) { $('#keyError').textContent = err.message; }
+});
+
 api('/api/models').then((list) => { models = list; selectedId = models[0]?.id ?? null; render(); poll(); })
   .catch((e) => toast(e.message));
+refreshAccount();
+setInterval(refreshAccount, 60000);
 </script>
 </body>
 </html>

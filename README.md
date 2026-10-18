@@ -1,25 +1,38 @@
 # Tripo Studio
 
-Unofficial desktop client for the [Tripo 3D API](https://developers.tripo3d.com). Not affiliated with Tripo or VAST.
+Unofficial desktop app for the [Tripo 3D API](https://developers.tripo3d.com). Not affiliated with Tripo or VAST.
 
-Drop images and get 3D models from Tripo's official API. Each model is saved to a local library, previewed in 3D, and can be exported to GLB, GLTF, FBX, USDZ, OBJ, STL, or 3MF.
+Drop images and get 3D models. Each model is saved to a library on your computer, previewed in 3D, and can be exported to GLB, GLTF, FBX, USDZ, OBJ, STL, or 3MF for Blender, Unity, Unreal, Maya, AR or 3D printing.
 
-## Run
+## Install
 
-1. Create an API key at https://developers.tripo3d.com/en/keys and add credits.
-2. Copy `.env.example` to `.env` and set `TRIPO_API_KEY`.
-3. Run `npm start`, then open http://localhost:5173
+Download the latest release from the [Releases page](https://github.com/TyroneMadison/tripo-studio/releases):
 
-Needs Node 22 or later. There are no npm dependencies.
+- **Windows:** `Tripo Studio Setup x.y.z.exe`. The app isn't code-signed yet, so Windows SmartScreen may warn you. Click **More info**, then **Run anyway**.
+- **Mac:** use the `arm64` `.dmg` for Apple Silicon or the `x64` `.dmg` for Intel. The app isn't notarized yet, so the first time you open it, right-click the app and choose **Open**.
+
+On first launch, paste a Tripo API key from https://developers.tripo3d.com/en/keys. The key is encrypted by your operating system (Windows DPAPI or macOS Keychain) and is only sent to Tripo. You pay Tripo directly in credits; this app adds no fees.
 
 ## How it works
 
-- `server.mjs` uploads the image (`POST /v3/files`), starts `image-to-model` (v3.1, textured PBR), and polls the task.
-- The moment a task succeeds, the server downloads the GLB and preview into `data/models/<id>/`, because Tripo's result URLs expire after 5 minutes.
+- `main.mjs` (Electron) starts the app server on a random local port and shows it in a window.
+- `server.mjs` uploads the image (`POST /v3/files`), starts `image-to-model` (v3.1, textured PBR), and polls the task. When a task succeeds, it downloads the GLB and preview into the library right away, because Tripo's result URLs expire after 5 minutes.
 - Exports call `POST /v3/models/convert` and are cached next to the GLB.
-- `data/library.json` is the library.
-- The API key stays on the server, and the server listens only on 127.0.0.1.
+- The library is stored in the app's data folder: `%APPDATA%\Tripo Studio\library` on Windows, `~/Library/Application Support/Tripo Studio/library` on Mac.
 
-`npm test` runs the whole flow against a fake Tripo API. It uses no credits.
+## Develop
 
-You pay Tripo directly in credits; this app adds no fees.
+```bash
+npm install
+npm run app      # desktop app
+npm test         # whole flow against a fake Tripo API, uses no credits
+npm run dist     # build the installer for this OS into dist/
+```
+
+`npm run web` runs it as a local website instead. Put `TRIPO_API_KEY` in `.env` (see `.env.example`), then open http://localhost:5173.
+
+Releases: push a tag like `v0.1.0`. GitHub Actions builds Windows and Mac and attaches them to a draft release.
+
+## License
+
+MIT

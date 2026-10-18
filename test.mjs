@@ -20,7 +20,11 @@ const fake = http.createServer(async (req, res) => {
   seen.push(`${req.method} ${req.url}`);
   const ok = (data) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ code: 0, data })); };
   if (req.url.startsWith('/cdn/')) { res.writeHead(200); return res.end(`bytes:${req.url}`); }
-  assert.equal(req.headers.authorization, 'Bearer test-key');
+  if (req.headers.authorization !== 'Bearer tsk_test_key_0001') {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ code: 2, message: 'Invalid API key' }));
+  }
+  if (req.url === '/v3/account/balance') return ok({ balance: 1500, frozen: 0 });
   if (req.url === '/v3/files') { assert.match(body, /name="file"/); return ok({ file_token: 'file_1' }); }
   if (req.url === '/v3/generation/image-to-model') {
     assert.equal(JSON.parse(body).input, 'file_1');
@@ -48,7 +52,7 @@ const fakePort = await listen(fake);
 const data = await mkdtemp(path.join(tmpdir(), 'tripo-studio-'));
 const appPort = 5900 + Math.floor(Math.random() * 90);
 const app = spawn(process.execPath, [path.join(ROOT, 'server.mjs')], {
-  env: { ...process.env, TRIPO_BASE: `http://127.0.0.1:${fakePort}/v3`, TRIPO_API_KEY: 'test-key', DATA_DIR: data, PORT: String(appPort) },
+  env: { ...process.env, TRIPO_BASE: `http://127.0.0.1:${fakePort}/v3`, TRIPO_API_KEY: '', DATA_DIR: data, PORT: String(appPort) },
   stdio: ['ignore', 'pipe', 'inherit'],
 });
 await new Promise((ok) => app.stdout.once('data', ok));
@@ -56,6 +60,19 @@ const base = `http://127.0.0.1:${appPort}`;
 const j = async (p, opts) => { const r = await fetch(base + p, opts); return { status: r.status, body: await r.json() }; };
 
 try {
+  // Requests addressed to another host name are refused (DNS rebinding guard).
+  const foreign = await new Promise((ok) => http.get({ host: '127.0.0.1', port: appPort, path: '/api/models', headers: { Host: 'evil.example:80' } }, (r) => { r.resume(); ok(r.statusCode); }));
+  assert.equal(foreign, 403);
+
+  // No key yet: generation is refused, a wrong key is rejected, a valid key is saved.
+  assert.deepEqual((await j('/api/account')).body, { hasKey: false });
+  assert.equal((await j('/api/models', { method: 'POST', headers: { 'Content-Type': 'image/png' }, body: 'x' })).status, 401);
+  const setKey = (apiKey) => j('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey }) });
+  assert.equal((await setKey('tsk_wrong_key_123')).status, 401);
+  assert.equal((await setKey('x')).status, 400);
+  assert.deepEqual((await setKey(' tsk_test_key_0001 ')).body, { hasKey: true, balance: 1500, frozen: 0 });
+  assert.equal((await j('/api/account')).body.balance, 1500);
+
   // Rejects non-PNG/JPEG before calling Tripo.
   assert.equal((await j('/api/models', { method: 'POST', headers: { 'Content-Type': 'image/gif' }, body: 'x' })).status, 415);
 
