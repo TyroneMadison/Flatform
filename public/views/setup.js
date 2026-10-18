@@ -151,7 +151,7 @@ function pick(slot = '') {
 // ---- right: provider, presets, groups ----
 const radio = (on, attrs, inner, cls = '') => `<button type="button" role="radio" class="${cls}${on ? ' on' : ''}" aria-checked="${on}" tabindex="${on ? 0 : -1}" ${attrs}>${inner}</button>`;
 const plain = (html) => html.replace(/<[^>]+>/g, '');
-const info = (html) => `<span class="info" tabindex="0" role="note" aria-label="${esc(plain(html))}">i<span class="tip" aria-hidden="true">${html}</span></span>`;
+const info = (html) => `<span class="info" tabindex="0" role="note" aria-label="${esc(plain(html))}">i<span class="tipbox" aria-hidden="true">${html}</span></span>`;
 const row = (id, label, control, tip = '') => `<div class="r"><div class="l"><span id="su-l-${id}">${label}</span>${tip}</div><div class="c">${control}</div></div>`;
 
 function panelHtml() {

@@ -22,7 +22,7 @@ export function mount(el, { id }) {
     <div class="gen-left">
       <figure class="srcphoto glass">
         <div class="photo">${model?.source ? `<img src="${fileUrl(model, model.source)}" alt="Source photo of ${esc(model.name)}">` : ''}</div>
-        <figcaption class="cap"><b>Source photo</b><span>${model ? `${esc(model.name)} · ${sourceType(model.source)}` : 'Nothing selected'}</span></figcaption>
+        <figcaption class="cap"><b>${model?.views ? 'Front view' : 'Source photo'}</b><span>${model ? `${esc(model.name)} · ${sourceType(model.source)}${model.views ? ` · ${Object.keys(model.views).length} views` : ''}` : 'Nothing selected'}</span></figcaption>
       </figure>
       <div class="stages glass">
         <h2 class="label">Progress</h2>

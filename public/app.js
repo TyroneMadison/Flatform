@@ -350,7 +350,7 @@ function renderFrame() {
 }
 
 // ---- routing ----
-const VIEWS = ['drop', 'setup', 'generate', 'review', 'compose', 'render', 'library', 'settings'];
+const SCREENS = ['drop', 'setup', 'generate', 'review', 'compose', 'render', 'library', 'settings'];
 export let route = { name: 'drop', id: null };
 let current = null;
 let navToken = 0;
@@ -358,7 +358,7 @@ export const go = (hash) => (location.hash === hash ? navigate() : (location.has
 
 async function navigate() {
   const [, name = 'drop', id = null] = location.hash.match(/^#\/(\w+)(?:\/([\w-]+))?/) || [];
-  if (!VIEWS.includes(name)) return go('#/drop');
+  if (!SCREENS.includes(name)) return go('#/drop');
   const token = ++navToken;
   const mod = await import(`./views/${name}.js`);
   if (token !== navToken) return;

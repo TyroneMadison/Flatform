@@ -241,13 +241,14 @@ export function summary(config, group) {
   const parts = optionSpecs(engine).filter((s) => s.group === group && s.key in o).map((s) => s.brief?.(o[s.key], o)).filter(Boolean);
   if (group === 'quality' && e.provider === '3daistudio') parts.unshift(e.label);
   if (group === 'input') {
-    const photos = mode === 'views' ? 'Front + up to 3 views' : e.views ? 'Single photo or 2–4 views' : 'Single photo';
+    const photos = mode === 'views' ? `Front + 1–3 more views${e.viewsPlus ? `, +${e.viewsPlus}` : ''}` : e.views ? 'Single photo or 2–4 views' : 'Single photo';
     parts.unshift(e.views && mode === 'single' && e.provider === '3daistudio' ? `${photos}${e.viewsPlus ? `, views +${e.viewsPlus}` : ', same price'}` : photos);
   }
   if (group === 'output') parts.unshift(e.provider === '3daistudio' ? 'GLB · kept 24 h, Flatform saves it at once' : 'GLB');
   if (group === 'seeds' && !parts.length) parts.push('Random each run');
   if (group === 'mesh' && !parts.length) parts.push('Engine defaults');
-  return parts.join(' · ');
+  const text = parts.join(' · ');
+  return /^v\d/.test(text) ? text : text.charAt(0).toUpperCase() + text.slice(1); // "v3.1 · …" stays as it is
 }
 
 // Label of a value, with its surcharge.

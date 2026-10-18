@@ -313,6 +313,7 @@ export async function startServer({
     const { path: route, body } = threeDAIRequest(setup, uris);
     const { task_id } = await ai.submit(route, body);
     if (typeof task_id !== 'string' || !task_id) throw new HttpError(502, '3D AI Studio: no task id in the reply');
+    if (wallet.at) wallet.balance -= estimate(setup).credits; // charged on submission, so the balance is right without asking
     wakePoller();
     return task_id;
   }
