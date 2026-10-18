@@ -1,0 +1,10 @@
+{
+  "name": "tripo-studio",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node --env-file=.env server.mjs",
+    "test": "node test.mjs"
+  }
+}
