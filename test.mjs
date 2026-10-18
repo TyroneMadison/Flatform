@@ -73,17 +73,25 @@ const fake = http.createServer(async (req, res) => {
 });
 const fakePort = await listen(fake);
 
+// Fake GitHub releases API: every app here asks it for updates (FLATFORM_UPDATE_URL) instead of api.github.com.
+const github = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ tag_name: 'v99.0.0', draft: false, prerelease: false, html_url: 'https://github.com/TyroneMadison/Flatform/releases/tag/v99.0.0', body: 'Faster renders.', assets: [] }));
+});
+const githubPort = await listen(github);
+
 const temps = [];
 const tempDir = async () => { const d = await mkdtemp(path.join(tmpdir(), 'flatform-')); temps.push(d); return d; };
 const apps = [];
 
 // Runs `node server.mjs` like `npm run web` does, on a free port, pointed at the fake Tripo. Keys from the real
-// environment are blanked and 3D AI Studio points at the fake too, so nothing can reach a real provider.
+// environment are blanked and 3D AI Studio and GitHub point at fakes too, so nothing can reach a real service.
 async function startApp(dataDir, env = {}) {
   const child = spawn(process.execPath, [path.join(ROOT, 'server.mjs')], {
     env: {
       ...process.env, TRIPO_BASE: `http://127.0.0.1:${fakePort}/v3`, TRIPO_API_KEY: '', TRIPO_MODEL: '',
-      THREE_D_AI_STUDIO_BASE: `http://127.0.0.1:${fakePort}/3das`, THREE_D_AI_STUDIO_KEY: '', DATA_DIR: dataDir, PORT: '0', ...env,
+      THREE_D_AI_STUDIO_BASE: `http://127.0.0.1:${fakePort}/3das`, THREE_D_AI_STUDIO_KEY: '', DATA_DIR: dataDir, PORT: '0',
+      FLATFORM_UPDATE_URL: `http://127.0.0.1:${githubPort}/repos/TyroneMadison/Flatform/releases/latest`, FLATFORM_UPDATE_DELAY_MS: '', ...env,
     },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
@@ -125,6 +133,7 @@ async function settle(app, id) {
 after(async () => {
   for (const app of apps) await app.stop();
   fake.close();
+  github.close();
   for (const d of temps) await rm(d, { recursive: true, force: true });
 });
 
@@ -533,6 +542,14 @@ test('setup screen: a Tripo preset goes out as multipart with its options', asyn
   assert.deepEqual([v2.body.activeVersion, v2.body.source, v2.body.versions[1].estimate], [2, 'source.png', 20]);
   assert.deepEqual(generationBodies.at(-1), { input: `file_${uploads.length}`, model: 'v3.1-20260211', texture: false, pbr: false });
   for (const m of [created.body, four.body]) await settle(app, m.id);
+});
+
+test('updates: npm run web asks FLATFORM_UPDATE_URL (here the fake GitHub) a moment after it starts', async () => {
+  const web = await startApp(await tempDir(), { FLATFORM_UPDATE_DELAY_MS: '0' });
+  let u;
+  for (let i = 0; i < 100 && !(u = (await web.j('/api/update')).body).checkedAt; i++) await new Promise((ok) => setTimeout(ok, 50));
+  assert.deepEqual([u.latest, u.newer, u.notes, u.downloadUrl], ['99.0.0', true, 'Faster renders.', 'https://github.com/TyroneMadison/Flatform/releases/tag/v99.0.0']);
+  await web.stop();
 });
 
 test('delete removes the model and its files', async () => {

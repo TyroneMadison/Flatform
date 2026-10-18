@@ -33,7 +33,7 @@ img { display: block; }
 [hidden] { display: none !important; }
 
 /* ---- window frame ---- */
-.win { height: 100vh; display: grid; grid-template-rows: 38px minmax(0, 1fr); }
+.win { height: 100vh; display: grid; grid-template-rows: 38px auto minmax(0, 1fr); }
 .titlebar {
   position: relative; display: flex; align-items: center; justify-content: center; padding: 0 16px;
   background: #050404; border-bottom: 1px solid #1d1716; -webkit-app-region: drag; user-select: none;
@@ -42,7 +42,15 @@ img { display: block; }
 .tt img { width: 18px; height: 18px; }
 /* Stays clear of the window buttons the system draws over the title bar (Windows: right, macOS: left). */
 .tr { position: absolute; right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px); font-size: 12px; color: rgba(239, 231, 227, .6); }
-.body { display: grid; grid-template-columns: 84px minmax(0, 1fr); min-height: 0; }
+/* "Flatform X.Y.Z is ready": its own row under the title bar, so it never covers the step bar or a screen's buttons. */
+.update {
+  display: flex; align-items: center; gap: 10px; padding: 7px 16px 7px 20px; border-bottom: 1px solid var(--line-4);
+  background: linear-gradient(90deg, rgba(255, 122, 102, .16), rgba(255, 122, 102, .02) 60%), #0b0908;
+}
+.update::before { content: ''; width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--accent); box-shadow: 0 0 10px var(--glow); }
+.ut { flex: 1; min-width: 0; font-size: 12.5px; color: var(--soft); }
+.ut b { font: 600 14px var(--display); letter-spacing: -.01em; color: var(--accent-hi); margin-right: 10px; }
+.body { grid-row: 3; display: grid; grid-template-columns: 84px minmax(0, 1fr); min-height: 0; }
 .rail { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px 0 14px; background: #090807; border-right: 1px solid var(--line); }
 .lgimg { width: 44px; height: 44px; margin-bottom: 14px; filter: drop-shadow(0 4px 10px rgba(0, 0, 0, .6)); }
 #railLinks { display: flex; flex-direction: column; gap: 6px; }

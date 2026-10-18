@@ -6,9 +6,9 @@
 
 **Turn a photo into a 3D model, drop it into any scene, and render it.**
 
-[![Download for Windows](https://img.shields.io/badge/Download-Windows-FF7A66?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/TyroneMadison/Flatform/releases/latest/download/Flatform-Setup-0.4.0.exe)
-[![Download for Mac (Apple Silicon)](https://img.shields.io/badge/Download-Mac%20(Apple%20Silicon)-FF7A66?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/TyroneMadison/Flatform/releases/latest/download/Flatform-0.4.0-arm64.dmg)
-[![Download for Mac (Intel)](https://img.shields.io/badge/Download-Mac%20(Intel)-E2523E?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/TyroneMadison/Flatform/releases/latest/download/Flatform-0.4.0.dmg)
+[![Download for Windows](https://img.shields.io/badge/Download-Windows-FF7A66?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/TyroneMadison/Flatform/releases/latest)
+[![Download for Mac (Apple Silicon)](https://img.shields.io/badge/Download-Mac%20(Apple%20Silicon)-FF7A66?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/TyroneMadison/Flatform/releases/latest)
+[![Download for Mac (Intel)](https://img.shields.io/badge/Download-Mac%20(Intel)-E2523E?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/TyroneMadison/Flatform/releases/latest)
 
 <sub>All versions are on the <a href="https://github.com/TyroneMadison/Flatform/releases">Releases page</a>.</sub>
 
@@ -57,6 +57,7 @@ Make still pictures, a full 360° spin, or a 180° half turn. Flatform puts ever
 - 🔁 360° and 180° spins, stills, and sprite sheets for the web
 - 📚 A **library** of every model you've made, with search
 - 🔒 Your keys stay **encrypted on your computer**
+- 🔔 Tells you when a **new version** is out
 
 <img src="docs/screenshots/library.png" alt="The library with several car models" width="100%">
 
@@ -107,16 +108,18 @@ You only have to do this once.
 - The server only answers requests addressed to its own host, refuses any state-changing request from another origin, and serves the page with a strict Content-Security-Policy. Library and settings writes are atomic.
 - The front end is plain ES modules (`public/app.js`, `public/views/*.js`, `public/lib/*.js`, `public/styles/*.css`), no build step. `public/lib/pipeline.js` holds the turntable and handoff rules shared by the app, the server and the tests.
 - three.js is served from local files: `three/build` from inside the app, and the addons (`three/examples/jsm`: loaders, controls, Draco/Meshopt decoders) as an extra resource next to it, because electron-builder leaves every dependency's `examples/` folder out of the package. `render/blender_turntable.py` ships the same way so Blender can read it.
+- `updates.mjs` looks for a newer version a few seconds after start and every 6 hours (unless turned off in Settings → About): one unauthenticated `GET https://api.github.com/repos/TyroneMadison/Flatform/releases/latest` from the server, drafts and prereleases ignored, failures silent. The page reads `GET /api/update` and shows a banner. Download opens this computer's installer (or the release page) in the browser, and only `https://github.com/TyroneMadison/Flatform/…` links are ever opened. Nothing is downloaded or installed on its own.
+- For screenshots, point `FLATFORM_UPDATE_URL` at a fake release served from 127.0.0.1 (plain http is only accepted there) and set `FLATFORM_UPDATE_DELAY_MS=0` to check right away.
 - The library lives in the app's data folder: `%APPDATA%\Flatform\library` on Windows, `~/Library/Application Support/Flatform/library` on Mac. Libraries from earlier versions are upgraded in place on first launch (each old model becomes version 1, and every older version is marked as made with Tripo).
 
-Fonts: Sora, Plus Jakarta Sans and IBM Plex Mono are bundled in `public/fonts` under the SIL Open Font License (texts included). Nothing is loaded from the internet except the two providers' APIs and their result files. See `THIRD_PARTY_NOTICES.md` for every third-party component.
+Fonts: Sora, Plus Jakarta Sans and IBM Plex Mono are bundled in `public/fonts` under the SIL Open Font License (texts included). Nothing is loaded from the internet except the two providers' APIs and their result files, and GitHub's latest-release info for the update check. See `THIRD_PARTY_NOTICES.md` for every third-party component.
 
 ### Build and test
 
 ```bash
 npm install
 npm run app      # desktop app
-npm test         # server, providers, pricing and pipeline tests against a fake Tripo, a fake 3D AI Studio and a fake Blender; no credits, no network
+npm test         # server, providers, pricing, pipeline and update tests against a fake Tripo, 3D AI Studio, GitHub and Blender; no credits, no network
 npm run dist     # build the installer for this OS into dist/
 ```
 

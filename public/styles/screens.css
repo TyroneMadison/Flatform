@@ -357,6 +357,8 @@
 .field .seg { grid-column: span 2; }
 .field select.inp, .field input.inp { grid-column: span 2; }
 .pathform input.inp { grid-column: auto; }
+.ures { display: flex; align-items: center; gap: 12px; min-width: 0; color: var(--soft); }
+.ures b { color: var(--accent-hi); font-weight: 600; }
 
 /* narrower windows (the desktop app's minimum is 1100 px) */
 @media (max-width: 1320px) {

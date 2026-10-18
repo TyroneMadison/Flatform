@@ -16,6 +16,7 @@ export const state = {
   accounts: {}, // provider → { hasKey, balance, frozen, rateLimit } or { error }
   settings: null, // non-secret settings + version, paths, which keys are set
   blender: null, // { found, path }
+  update: null, // the server's last update check: { current, latest, newer, skipped, notes, downloadUrl, checkedAt, failed, … }
   queue: [], // jobs waiting in Flatform's own upload queue (not sent to a provider yet)
   pending: { photos: [], views: {}, modelId: null }, // photos waiting on the setup screen for Generate
   frames: {}, // composer turntable frame per model, so "Render still" uses the current angle
@@ -304,6 +305,35 @@ export async function refreshAccount(provider = state.settings?.provider || 'tri
   refresh();
 }
 
+// ---- updates: the server asks GitHub (a few seconds after it starts, then every 6 hours); the page shows the result ----
+let laterAt; // "Later" hides the banner until GitHub answers again, or the app starts again
+// check: ask GitHub now (Settings → Check for updates) instead of reading the server's last answer.
+export async function refreshUpdate(check = false) {
+  try {
+    state.update = await api(check ? '/api/update/check' : '/api/update', check ? { method: 'POST' } : {});
+  } catch {
+    if (check) state.update = { ...state.update, failed: true };
+  }
+  showUpdate();
+  refresh();
+}
+function showUpdate() {
+  const u = state.update;
+  const bar = $('#update');
+  const show = Boolean(u?.newer && !u.skipped && u.checkedAt !== laterAt);
+  if (show) {
+    $('#updateTitle').textContent = `Flatform ${u.latest} is ready`;
+    $('#updateNote').textContent = u.notes;
+    $('#updateDownload').href = u.downloadUrl; // checked by the server: only github.com/TyroneMadison/Flatform/ links
+    if (bar.hidden) announce(`Flatform ${u.latest} is ready to download`);
+  } else if (bar.contains(document.activeElement)) $('#view').focus();
+  bar.hidden = !show;
+}
+function updateLater() {
+  laterAt = state.update?.checkedAt;
+  showUpdate();
+}
+
 // ---- the frame: rail, title bar status, stepper ----
 const FLOW = [['drop', 'Drop'], ['generate', 'Generate'], ['review', 'Review'], ['compose', 'Compose'], ['render', 'Render']];
 export function stepper(active, m) {
@@ -407,6 +437,15 @@ $('#keyForm').addEventListener('submit', async (e) => {
   } catch (err) { $('#keyError').textContent = err.message; }
 });
 $('#keyDialog').addEventListener('close', () => { $('#keyInput').value = ''; });
+// The Download link opens in the browser (the desktop app hands https links to it); the bar's job is then done.
+$('#updateDownload').addEventListener('click', updateLater);
+$('#updateLater').addEventListener('click', updateLater);
+$('#updateSkip').addEventListener('click', async () => {
+  try { state.update = await send('/api/update/skip', 'POST', { version: state.update.latest }); } catch (e) { toast(e.message); }
+  showUpdate();
+  refresh();
+});
+$('#update').addEventListener('keydown', (e) => { if (e.key === 'Escape') updateLater(); });
 $('#filePicker').addEventListener('change', (e) => { addFiles(e.target.files, { quick: e.target.dataset.quick === 'true' }); e.target.value = ''; });
 // Dropping a file outside a drop zone must not open it in the window.
 window.addEventListener('dragover', (e) => e.preventDefault());
@@ -428,5 +467,8 @@ window.addEventListener('hashchange', navigate);
   await navigate();
   refreshAccount();
   setInterval(() => refreshAccount(), 60000);
+  refreshUpdate();
+  setTimeout(refreshUpdate, 20000); // the server's first check runs a few seconds after it starts
+  setInterval(refreshUpdate, 15 * 60000);
   poll();
 })();
