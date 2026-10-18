@@ -1,25 +1,14 @@
 // Electron shell: runs the app server inside the app and shows it in a window.
 import { app, BrowserWindow, safeStorage, shell, ipcMain, dialog } from 'electron';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startServer } from './server.mjs';
+import { createKeyStore } from './keys.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
 if (!app.requestSingleInstanceLock()) app.quit();
-
-// The Tripo API key is encrypted by the OS (Windows DPAPI / macOS Keychain) before it touches disk.
-const keyFile = () => path.join(app.getPath('userData'), 'tripo-key.bin');
-let apiKey;
-const keyStore = {
-  get: () => apiKey,
-  set(key) {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('This system cannot store the key securely');
-    writeFileSync(keyFile(), safeStorage.encryptString(key));
-    apiKey = key;
-  },
-};
 
 // The app used to be called "Tripo Studio". Move its library and saved key once so an upgrade keeps them.
 // (On a Mac the old key can't be decrypted under the new name, so the app asks for it again.)
@@ -74,7 +63,7 @@ function createWindow(port) {
     backgroundColor: '#070605', title: 'Flatform', autoHideMenuBar: true,
     // The page draws the 38 px title bar; the system window buttons sit on top of it.
     titleBarStyle: 'hidden',
-    titleBarOverlay: process.platform === 'darwin' ? true : { color: '#050404', symbolColor: '#d4af6a', height: 38 },
+    titleBarOverlay: process.platform === 'darwin' ? true : { color: '#050404', symbolColor: '#ff9a88', height: 38 },
     trafficLightPosition: { x: 16, y: 12 },
     webPreferences: { contextIsolation: true, sandbox: true, preload: path.join(ROOT, 'preload.cjs') },
   });
@@ -97,9 +86,15 @@ app.on('second-instance', () => {
 
 app.whenReady().then(async () => {
   migrateOldData();
-  if (existsSync(keyFile())) {
-    try { apiKey = safeStorage.decryptString(readFileSync(keyFile())); } catch { /* unreadable key: ask again */ }
-  }
+  // API keys are encrypted by the OS (Windows DPAPI / macOS Keychain) before they touch disk. The Tripo key saved by
+  // v0.3 (userData/tripo-key.bin) is moved into the per-provider store on first launch; see keys.mjs.
+  const keyStore = createKeyStore({
+    dir: app.getPath('userData'),
+    encrypt: (text) => safeStorage.encryptString(text),
+    decrypt: (data) => safeStorage.decryptString(data),
+    canEncrypt: () => safeStorage.isEncryptionAvailable(),
+    env: process.env,
+  });
   const { port } = await startServer({
     dataDir: path.join(app.getPath('userData'), 'library'),
     keyStore,

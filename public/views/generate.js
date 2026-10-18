@@ -1,8 +1,9 @@
 // 02 · Generate: staged progress for one model, the "forming" preview and the queue of every job.
-// Tripo's API has no cancel endpoint, so submitted jobs can't be cancelled; only photos still in
-// Flatform's own upload queue can be removed.
-import { $, esc, state, route, stepper, findModel, fileUrl, sourceType, STAGES, stageOf, statusText, addFiles, openPicker,
-  removeQueued, retryQueued, retryModel, creditsText, modelLabel, isGenerating, go, busy } from '../app.js';
+// Neither Tripo nor 3D AI Studio has a cancel endpoint, so submitted jobs can't be cancelled; only photos still in
+// Flatform's own upload queue can be removed. Photos dropped on the queue skip the setup screen and use the last setup.
+import { $, esc, state, route, stepper, findModel, fileUrl, sourceType, stagesOf, stageOf, statusText, addFiles, openPicker,
+  removeQueued, retryQueued, retryModel, creditsText, engineLabel, providerOf, savedSetup, setupLabel, costOf, isGenerating, go, busy } from '../app.js';
+import { PROVIDERS } from '../lib/engines.js';
 import { icon } from '../lib/icons.js';
 
 let root;
@@ -21,17 +22,19 @@ export function mount(el, { id }) {
     <div class="gen-left">
       <figure class="srcphoto glass">
         <div class="photo">${model?.source ? `<img src="${fileUrl(model, model.source)}" alt="Source photo of ${esc(model.name)}">` : ''}</div>
-        <figcaption class="cap"><b>Source photo</b><span>${model ? `${esc(model.name)} · ${sourceType(model.source)}` : 'Nothing selected'}</span></figcaption>
+        <figcaption class="cap"><b>${model?.views ? 'Front view' : 'Source photo'}</b><span>${model ? `${esc(model.name)} · ${sourceType(model.source)}${model.views ? ` · ${Object.keys(model.views).length} views` : ''}` : 'Nothing selected'}</span></figcaption>
       </figure>
       <div class="stages glass">
         <h2 class="label">Progress</h2>
         <ol class="stl" id="stages"></ol>
-        <p class="fine">Tripo links expire after 5 minutes. Flatform saves the model locally the moment it's ready.</p>
+        <p class="fine">${model && providerOf(model) === '3daistudio'
+          ? '3D AI Studio keeps results for 24 hours and allows 3 requests a minute, so Flatform checks twice a minute and saves the model the moment it is ready.'
+          : "Tripo's links expire after 5 minutes. Flatform saves the model locally the moment it's ready."}</p>
       </div>
     </div>
     <div class="forming glass">
       <div class="fhud tl"><span class="pulse" aria-hidden="true"></span><span id="fhudText">Generating 3D model</span></div>
-      <div class="fhud tr">${esc(modelLabel())}</div>
+      <div class="fhud tr">${model ? esc(engineLabel(model)) : ''}</div>
       <div class="fstage-wrap">${model?.source ? `
         <div class="fstage" id="fstage">
           <img class="fghost" src="${fileUrl(model, model.source)}" alt="">
@@ -49,7 +52,7 @@ export function mount(el, { id }) {
       <h2 class="label">Queue</h2>
       <div class="qlist" id="qlist"></div>
       <p class="fine" id="credits"></p>
-      <button class="qadd" type="button" id="qadd">${icon('plus')} Drop more photos to queue them</button>
+      <button class="qadd" type="button" id="qadd">${icon('plus')}<span>Drop more photos to queue them<small id="qaddSetup"></small></span></button>
     </aside>
   </section>`;
 
@@ -65,10 +68,10 @@ export function mount(el, { id }) {
   observer = new ResizeObserver(fit);
   observer.observe($('.fstage-wrap', el));
   const add = $('#qadd', el);
-  add.addEventListener('click', () => openPicker(false));
+  add.addEventListener('click', () => openPicker({ quick: true }));
   add.addEventListener('dragover', (e) => { e.preventDefault(); add.classList.add('hot'); });
   add.addEventListener('dragleave', () => add.classList.remove('hot'));
-  add.addEventListener('drop', (e) => { e.preventDefault(); add.classList.remove('hot'); addFiles(e.dataTransfer.files, { open: false }); });
+  add.addEventListener('drop', (e) => { e.preventDefault(); add.classList.remove('hot'); addFiles(e.dataTransfer.files, { quick: true }); });
   el.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-act]');
     if (!b) return;
@@ -87,6 +90,7 @@ export function update() {
     const stage = stageOf(m);
     const failed = m.status === 'failed';
     const pct = m.status === 'ready' ? 100 : m.progress || 0;
+    const STAGES = stagesOf(m);
     $('#stages', root).innerHTML = STAGES.map((s, i) => {
       const cls = i < stage ? 'done' : i === stage && !failed ? 'on' : '';
       return `<li class="${cls}"><b>${i < stage ? icon('check', 12) : ''}</b>${s}${i === stage && failed ? ' <span class="st fail">· failed</span>' : ''}</li>`;
@@ -97,7 +101,7 @@ export function update() {
     $('#pbar', root).setAttribute('aria-valuenow', pct);
     $('#pbar i', root).style.width = `${pct}%`;
     $('#fhudText', root).textContent = failed ? 'Generation failed' : m.status === 'ready' ? '3D model ready' : 'Generating 3D model';
-    $('#fbNote', root).textContent = failed ? 'Retry sends the same photo to Tripo again as a new task.'
+    $('#fbNote', root).textContent = failed ? `Retry sends the same photos and setup to ${PROVIDERS[providerOf(m)].name} again as a new job.`
       : m.status === 'ready' ? 'Check it from every side before you place it in a scene.' : 'You can keep working. This job runs in the background.';
     $('#fstage', root)?.style.setProperty('--p', `${m.status === 'ready' ? 100 : Math.max(4, pct)}%`);
     root.querySelector('.forming').classList.toggle('done', m.status === 'ready');
@@ -108,12 +112,16 @@ export function update() {
     // Move on to Review by itself when the model you're watching finishes.
     if (m.status === 'ready' && !shownReady) { shownReady = true; setTimeout(() => { if (route.name === 'generate' && route.id === m.id) go(`#/review/${m.id}`); }, 1200); }
   } else {
-    $('#stageName', root).textContent = state.queue.length ? 'Sending your photo to Tripo…' : 'Nothing is generating right now';
+    const sending = state.queue.find((q) => q.status === 'uploading');
+    $('#stageName', root).textContent = sending ? `Sending ${sending.name} to ${PROVIDERS[sending.setup.provider].name}…`
+      : state.queue.length ? 'Waiting to send…' : 'Nothing is generating right now';
   }
 
+  // 3D AI Studio allows 3 requests a minute, so a submission can wait a little for its turn.
   const local = state.queue.map((q) => `
     <div class="qi${q.status === 'error' ? ' qfail' : ''}">
-      <div class="qt"><b>${esc(q.name)}</b><span>${q.status === 'uploading' ? 'Uploading to Tripo…' : q.status === 'error' ? esc(q.error) : 'Waiting to upload'}</span></div>
+      <div class="qt"><b>${esc(q.name)}</b><span>${q.status === 'uploading' ? `Sending to ${PROVIDERS[q.setup.provider].name}${q.setup.provider === '3daistudio' ? ' (3 requests a minute, may wait a moment)' : ''}…`
+        : q.status === 'error' ? esc(q.error) : 'Waiting to send'}</span></div>
       ${q.status === 'error' ? `<button class="btn sm pri" type="button" data-act="requeue" data-id="${q.qid}">${icon('retry')}<span>Retry</span></button>` : ''}
       ${q.status !== 'uploading' ? `<button class="btn sm ghostbtn" type="button" data-act="remove" data-id="${q.qid}" aria-label="Remove ${esc(q.name)} from the queue">${icon('close')}<span>Remove</span></button>` : ''}
     </div>`).join('');
@@ -123,8 +131,10 @@ export function update() {
         ${x.status === 'failed' ? '' : `<div class="pbar"><i style="width:${x.progress || 0}%"></i></div>`}</div>
       ${x.status === 'failed' ? `<button class="btn sm pri" type="button" data-act="retry" data-id="${x.id}">${icon('retry')}<span>Retry</span></button>` : ''}
     </div>`).join('');
-  const html = local + jobs || '<p class="muted qempty">No jobs. Photos you drop wait here until Tripo has them.</p>';
+  const html = local + jobs || '<p class="muted qempty">No jobs. Photos you drop wait here until they are sent.</p>';
   const q = $('#qlist', root);
   if (q.dataset.html !== html) { q.dataset.html = html; q.innerHTML = html; }
-  $('#credits', root).textContent = creditsText();
+  const next = savedSetup();
+  $('#credits', root).textContent = creditsText(m ? providerOf(m) : next.provider);
+  $('#qaddSetup', root).textContent = `${setupLabel(next)} · ${costOf(next)} credits each`;
 }

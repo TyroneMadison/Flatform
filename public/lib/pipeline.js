@@ -140,12 +140,12 @@ export function viewerHtml({ name, manifests }) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(name)} · spin viewer</title>
 <style>
-  body { margin:0; padding:32px; background:#0b0a09; color:#ece5d6; font:15px/1.5 system-ui, sans-serif; }
-  h1 { margin:0 0 4px; font-weight:600; } h2 { margin:0; font-size:16px; } p { margin:2px 0 12px; color:#a99c82; }
+  body { margin:0; padding:32px; background:#0b0a09; color:#efe7e3; font:15px/1.5 system-ui, sans-serif; }
+  h1 { margin:0 0 4px; font-weight:600; } h2 { margin:0; font-size:16px; } p { margin:2px 0 12px; color:#ab9d96; }
   section { margin:32px 0; }
-  .frame { border:1px solid #2a241b; border-radius:6px; overflow:hidden; }
+  .frame { border:1px solid #2a2220; border-radius:6px; overflow:hidden; }
   .frame.transparent { background:conic-gradient(#e5e7eb 25%, #fff 0 50%, #e5e7eb 0 75%, #fff 0) 0 0 / 20px 20px; }
-  [data-flatform-spin]:focus-visible { outline:2px solid #f0c66b; outline-offset:-2px; }
+  [data-flatform-spin]:focus-visible { outline:2px solid #ff7a66; outline-offset:-2px; }
 </style>
 </head>
 <body>

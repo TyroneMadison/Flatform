@@ -1,8 +1,9 @@
-// Flatform server: photo → Tripo 3D model → local library → scene → turntable renders → handoff folder.
-// Used two ways: `npm run web` (key from .env) or embedded by the Electron app (main.mjs).
+// Flatform server: photos → 3D model (Tripo direct or 3D AI Studio) → local library → scene → turntable renders →
+// handoff folder. Used two ways: `npm run web` (keys from .env) or embedded by the Electron app (main.mjs).
 import http from 'node:http';
 import { readFile, writeFile, rename, mkdir, rm, copyFile, stat } from 'node:fs/promises';
 import { createReadStream, createWriteStream, existsSync, statSync, readFileSync, readdirSync } from 'node:fs';
+import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
@@ -10,6 +11,10 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP } from './public/lib/pipeline.js';
+import { PROVIDERS, VIEWS, normalize, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
+import { estimate } from './public/lib/pricing.js';
+import { threeDAIStudio, createLimiter, THREE_D_AI_BASE, HIGH } from './providers.mjs';
+import { createKeyStore } from './keys.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -26,7 +31,8 @@ const CSP = [
 const FORMATS = ['GLTF', 'FBX', 'USDZ', 'OBJ', 'STL', '3MF'];
 const IMAGE_TYPES = { 'image/png': '.png', 'image/jpeg': '.jpg' };
 const HEIC_TYPES = ['image/heic', 'image/heif'];
-const MAX_IMAGE = 20 * 1024 * 1024; // Tripo's upload limit for images
+const MAX_IMAGE = 20 * 1024 * 1024; // Tripo's and 3D AI Studio's limit for images
+const MAX_FORM = VIEWS.length * MAX_IMAGE + 1024 * 1024; // four views and the setup
 const MAX_RENDER_FILE = 128 * 1024 * 1024; // a 6144 px PNG sprite sheet fits easily
 const MAX_BACKDROP = 256 * 1024 * 1024; // 4K EXR HDRIs are big
 const RENDER_TYPES = ['.png', '.webp', '.json', '.js', '.html', '.md', '.glb'];
@@ -34,9 +40,13 @@ const BACKDROP_TYPES = ['.jpg', '.jpeg', '.png', '.hdr', '.exr'];
 const FAILED = ['failed', 'cancelled', 'banned'];
 // Global keys work on .ai; .com (the host the docs show) is the China region and rejects global keys.
 const REGIONS = { global: 'https://openapi.tripo3d.ai/v3', china: 'https://openapi.tripo3d.com/v3' };
-const SCENES = ['gold', 'transparent', 'cyclorama', 'miami', 'custom'];
+const SCENES = ['ring', 'transparent', 'cyclorama', 'miami', 'custom']; // 'ring' was called 'gold' before v0.4
 // Version fields mirrored at the top level of each library entry, so v0.2 readers and the UI see the active version.
-const VERSION_FIELDS = ['task_id', 'status', 'progress', 'tripo_status', 'glb', 'thumb', 'credits', 'error', 'exports', 'source'];
+const VERSION_FIELDS = ['task_id', 'status', 'progress', 'tripo_status', 'glb', 'thumb', 'credits', 'error', 'exports', 'source',
+  'provider', 'engine', 'mode', 'views', 'upstream_status', 'note'];
+const RESULTS_KEPT = 24 * 60 * 60 * 1000; // 3D AI Studio deletes results after 24 hours
+const EXPIRED = '3D AI Studio keeps results for 24 hours and this job is older, so its model is gone. Retry to generate it again.';
+const KEY_FORMAT = /^[\x21-\x7e]{10,300}$/; // printable, no spaces; it goes into an Authorization header
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.md': 'text/markdown; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
@@ -71,8 +81,9 @@ export function blenderCandidates(platform = process.platform) {
 
 /**
  * Starts the app server on 127.0.0.1.
- * keyStore: { get(): string|undefined, set(key): void|Promise } — where the Tripo API key lives.
+ * keyStore: keys.mjs createKeyStore() — get/source/set/remove(provider). Keys never reach the page.
  * apiBase: fixed Tripo endpoint (tests, TRIPO_BASE). Without it the Region setting picks one of REGIONS.
+ * threeDAIBase: 3D AI Studio endpoint (tests, THREE_D_AI_STUDIO_BASE). rateWindowMs: its rate-limit window (tests).
  */
 export async function startServer({
   dataDir,
@@ -80,6 +91,8 @@ export async function startServer({
   apiBase: fixedApiBase,
   model = 'v3.1-20260211',
   keyStore,
+  threeDAIBase = THREE_D_AI_BASE,
+  rateWindowMs, // default: a minute plus slack, see providers.mjs
   blenderScript = path.join(ROOT, 'render', 'blender_turntable.py'), // the packaged app ships it as a resource file
   // three.js addons (loaders, controls, decoders). electron-builder drops every dependency's examples/ folder,
   // so the packaged app ships this one as a resource file too.
@@ -103,10 +116,11 @@ export async function startServer({
   }
 
   const defaults = {
-    region: 'global', model, texture: true, pbr: true,
-    renderer: 'three', blenderPath: '', outputRoot: '', defaultScene: 'gold', alsoTransparent: true, backdrops: {},
+    region: 'global', model, texture: true, pbr: true, provider: 'tripo', setups: {},
+    renderer: 'three', blenderPath: '', outputRoot: '', defaultScene: 'ring', alsoTransparent: true, backdrops: {},
   };
   const settings = { ...defaults, ...(existsSync(SETTINGS) ? JSON.parse(await readFile(SETTINGS, 'utf8')) : {}) };
+  if (settings.defaultScene === 'gold') settings.defaultScene = 'ring';
   const apiBase = () => fixedApiBase || REGIONS[settings.region] || REGIONS.global;
 
   // ponytail: whole library in one JSON file rewritten on each change; move to SQLite past a few thousand models
@@ -120,6 +134,7 @@ export async function startServer({
     return m;
   }
   // v0.2 entries were one flat generation. Make that version 1 and give every model a unique slug.
+  // Before v0.4 every version came from Tripo, and the gold-ring studio preset was called 'gold'.
   let migrated = false;
   for (const m of library) {
     if (!Array.isArray(m.versions)) {
@@ -133,12 +148,28 @@ export async function startServer({
       m.slug = uniqueSlug(m.name, library.map((x) => x.slug).filter(Boolean));
       migrated = true;
     }
+    for (const v of m.versions) if (!v.provider) { v.provider = 'tripo'; migrated = true; }
+    if (m.scene?.preset === 'gold') {
+      m.scene.preset = 'ring';
+      if (existsSync(path.join(MODELS, m.id))) await writeAtomic(path.join(MODELS, m.id, 'scene.json'), m.scene);
+      migrated = true;
+    }
     mirror(m);
+  }
+  // A 3D AI Studio job older than a day can never be downloaded any more.
+  for (const m of library) {
+    for (const v of m.versions) {
+      if (v.provider === '3daistudio' && v.status === 'generating' && Date.now() - Date.parse(v.submitted_at || v.created_at) > RESULTS_KEPT) {
+        Object.assign(v, { status: 'failed', error: EXPIRED });
+        mirror(m);
+        migrated = true;
+      }
+    }
   }
   if (migrated) await save();
   const slugsExcept = (m) => library.filter((x) => x !== m).map((x) => x.slug);
 
-  async function tripo(route, { json, body, key = keyStore.get() } = {}) {
+  async function tripo(route, { json, body, key = keyStore.get('tripo') } = {}) {
     if (!key) throw new HttpError(401, 'Add your Tripo API key first');
     const res = await fetch(apiBase() + route, {
       method: json || body ? 'POST' : 'GET',
@@ -214,11 +245,11 @@ export async function startServer({
     }
   }
 
-  // Photos come in as PNG, JPEG or HEIC. HEIC is converted to JPEG here because Tripo and browsers can't read it.
-  async function readImage(req) {
-    let type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  // Photos come in as PNG, JPEG or HEIC. HEIC is converted to JPEG here because the providers and browsers can't read it.
+  async function toImage(image, type) {
+    type = String(type || '').split(';')[0].trim().toLowerCase();
     if (!Object.hasOwn(IMAGE_TYPES, type) && !HEIC_TYPES.includes(type)) throw new HttpError(415, 'Use a PNG, JPEG or HEIC image');
-    let image = await readBody(req, MAX_IMAGE, 'Image too large (max 20 MB)');
+    if (image.length > MAX_IMAGE) throw new HttpError(413, 'Image too large (max 20 MB)');
     if (HEIC_TYPES.includes(type)) {
       const { default: convert } = await import('heic-convert');
       try { image = Buffer.from(await convert({ buffer: image, format: 'JPEG', quality: 0.92 })); } catch {
@@ -229,46 +260,117 @@ export async function startServer({
     return { image, type };
   }
 
-  async function generate(image, type) {
-    const form = new FormData();
-    form.append('file', new Blob([image], { type }), 'image' + IMAGE_TYPES[type]);
-    const { file_token } = await tripo('/files', { body: form });
-    const { task_id } = await tripo('/generation/image-to-model', {
-      json: { input: file_token, model: settings.model, texture: settings.texture, pbr: settings.texture && settings.pbr },
-    });
+  // What a generation was made with before v0.4 (and what a bare photo upload still gets): Tripo direct with the
+  // model and texture settings. Sends exactly the request v0.3 did.
+  const legacySetup = () => normalize({
+    provider: 'tripo', engine: 'tripo-direct',
+    options: { model: settings.model, texture: !settings.texture ? 'none' : settings.pbr ? 'pbr' : 'color' },
+  });
+  const setupOf = (v) => (v.engine ? normalize({ provider: v.provider, engine: v.engine, mode: v.mode, options: v.options }) : legacySetup());
+
+  /**
+   * The setup and photos of a request. Either multipart (fields "setup" and "name", files front/left/back/right),
+   * or one raw image with its own Content-Type (the v0.3 API: Tripo direct with the saved defaults).
+   * Without any body: { setup: null, views: {} }, so the caller reuses what it had.
+   */
+  async function readInput(req) {
+    const contentType = String(req.headers['content-type'] || '');
+    if (!contentType) return { setup: null, views: {} };
+    if (!/^multipart\/form-data/i.test(contentType)) return { setup: legacySetup(), views: { front: await toImage(await readBody(req, MAX_IMAGE, 'Image too large (max 20 MB)'), contentType) } };
+    let form;
+    try { form = await new Response(await readBody(req, MAX_FORM, 'Photos too large (max 20 MB each)'), { headers: { 'Content-Type': contentType } }).formData(); } catch (e) {
+      throw e.status ? e : new HttpError(400, 'Bad form');
+    }
+    let setup;
+    try { setup = normalize(JSON.parse(String(form.get('setup')))); } catch { throw new HttpError(400, 'Unknown provider or engine'); }
+    const views = {};
+    for (const view of VIEWS) {
+      const file = form.get(view);
+      if (file && typeof file === 'object') views[view] = await toImage(Buffer.from(await file.arrayBuffer()), file.type);
+    }
+    return { setup, views, name: form.get('name') };
+  }
+
+  // Checks a setup has the photos it needs. views: { front, left, back, right } of { image, type }.
+  function checkViews(setup, views) {
+    if (!views.front) throw new HttpError(400, setup.mode === 'views' ? 'Add the front view' : 'Add a photo');
+    if (setup.mode === 'views' && Object.keys(views).length < 2) throw new HttpError(400, 'Add the front view and at least one more');
+    if (setup.mode === 'single') for (const v of VIEWS.slice(1)) delete views[v];
+    if (setup.provider === '3daistudio' && !keyStore.get('3daistudio')) throw new HttpError(401, 'Add your 3D AI Studio API key first');
+  }
+
+  // Starts a generation with the provider. Returns its task id.
+  async function submit(setup, views) {
+    if (setup.provider === 'tripo') {
+      const { image, type } = views.front;
+      const form = new FormData();
+      form.append('file', new Blob([image], { type }), 'image' + IMAGE_TYPES[type]);
+      const { file_token } = await tripo('/files', { body: form });
+      const { task_id } = await tripo('/generation/image-to-model', { json: tripoDirectBody(setup.options, file_token) });
+      return task_id;
+    }
+    const uris = Object.fromEntries(Object.entries(views).map(([view, { image, type }]) => [view, `data:${type};base64,${image.toString('base64')}`]));
+    const { path: route, body } = threeDAIRequest(setup, uris);
+    const { task_id } = await ai.submit(route, body);
+    if (typeof task_id !== 'string' || !task_id) throw new HttpError(502, '3D AI Studio: no task id in the reply');
+    if (wallet.at) wallet.balance -= estimate(setup).credits; // charged on submission, so the balance is right without asking
+    wakePoller();
     return task_id;
   }
 
-  const newVersion = (n, task_id, source) => ({
-    n, created_at: new Date().toISOString(), task_id, status: 'generating', tripo_status: 'queued', progress: 0, source, exports: {},
-  });
+  // Saves a version's photos: source{-vN}.ext for the front (or only) photo, source{-vN}-left.ext and so on.
+  async function saveViews(m, n, views) {
+    const names = {};
+    for (const [view, { image, type }] of Object.entries(views)) {
+      names[view] = vname('source', n) + (view === 'front' ? '' : `-${view}`) + IMAGE_TYPES[type];
+      await writeFile(path.join(MODELS, m.id, names[view]), image);
+    }
+    return names;
+  }
+  async function readViews(m, v) {
+    const names = v.views || { front: v.source };
+    const views = {};
+    for (const [view, file] of Object.entries(names)) views[view] = { image: await readFile(path.join(MODELS, m.id, file)), type: typeOf(file) };
+    return views;
+  }
 
-  async function createModel(req, name) {
-    const { image, type } = await readImage(req);
-    const task_id = await generate(image, type);
-    const source = 'source' + IMAGE_TYPES[type];
-    const m = {
-      id: randomUUID(), name: cleanName(name), created_at: new Date().toISOString(), activeVersion: 1,
-      versions: [newVersion(1, task_id, source)],
+  const newVersion = (n, setup, task_id, names) => {
+    const now = new Date().toISOString();
+    return {
+      n, created_at: now, submitted_at: now, provider: setup.provider, engine: setup.engine, mode: setup.mode, options: setup.options,
+      estimate: estimate(setup).credits, task_id, status: 'generating', progress: 0,
+      ...(setup.provider === 'tripo' ? { tripo_status: 'queued' } : { upstream_status: 'PENDING' }),
+      source: names.front, ...(setup.mode === 'views' && { views: names }), exports: {},
     };
+  };
+
+  async function createModel(req, queryName) {
+    const { setup, views, name } = await readInput(req);
+    if (!setup) throw new HttpError(400, 'Add a photo');
+    checkViews(setup, views);
+    const task_id = await submit(setup, views);
+    const m = { id: randomUUID(), name: cleanName(name ?? queryName), created_at: new Date().toISOString(), activeVersion: 1, versions: [] };
     m.slug = uniqueSlug(m.name, slugsExcept(m));
     await mkdir(path.join(MODELS, m.id), { recursive: true });
-    await writeFile(path.join(MODELS, m.id, source), image);
+    m.versions.push(newVersion(1, setup, task_id, await saveViews(m, 1, views)));
     library.unshift(mirror(m));
     await save();
     return m;
   }
 
-  // Regenerate: a new Tripo task from a new photo (request body) or the active version's photo. Old versions stay.
+  // Regenerate: a new task, with a new setup and/or new photos when the request has them, otherwise the active
+  // version's. Old versions stay.
   async function addVersion(req, m) {
     const n = Math.max(...m.versions.map((v) => v.n)) + 1;
-    const fresh = Boolean(req.headers['content-type']);
-    const { image, type } = fresh ? await readImage(req)
-      : { image: await readFile(path.join(MODELS, m.id, active(m).source)), type: typeOf(active(m).source) };
-    const task_id = await generate(image, type);
-    const source = fresh ? vname('source', n) + IMAGE_TYPES[type] : active(m).source;
-    if (fresh) await writeFile(path.join(MODELS, m.id, source), image);
-    m.versions.push(newVersion(n, task_id, source));
+    const input = await readInput(req);
+    const setup = input.setup || setupOf(active(m));
+    const fresh = Boolean(input.views.front);
+    const views = fresh ? input.views : await readViews(m, active(m));
+    checkViews(setup, views);
+    const task_id = await submit(setup, views);
+    const names = fresh ? await saveViews(m, n, views)
+      : Object.fromEntries(Object.keys(views).map((view) => [view, (active(m).views || { front: active(m).source })[view]]));
+    m.versions.push(newVersion(n, setup, task_id, names));
     m.activeVersion = n;
     mirror(m);
     await save();
@@ -278,9 +380,12 @@ export async function startServer({
   async function retry(m) {
     const v = active(m);
     if (v.status !== 'failed') throw new HttpError(409, 'Only a failed model can be retried');
-    const task_id = await generate(await readFile(path.join(MODELS, m.id, v.source)), typeOf(v.source));
-    Object.assign(v, newVersion(v.n, task_id, v.source));
-    delete v.error;
+    const setup = setupOf(v);
+    const views = await readViews(m, v);
+    checkViews(setup, views);
+    const task_id = await submit(setup, views);
+    for (const k of ['error', 'note', 'checked_at', 'tripo_status', 'upstream_status']) delete v[k];
+    Object.assign(v, newVersion(v.n, setup, task_id, v.views || { front: v.source }));
     mirror(m);
     await save();
     return m;
@@ -302,13 +407,120 @@ export async function startServer({
     } else if (FAILED.includes(t.status)) Object.assign(v, { status: 'failed', error: failure(t) });
   }
 
+  // Tripo tasks are checked when the page asks. 3D AI Studio jobs are checked by the poller below instead.
   async function refreshModel(m) {
-    const pending = m.versions.filter((v) => v.status === 'generating');
+    const pending = m.versions.filter((v) => v.status === 'generating' && v.provider === 'tripo');
     if (!pending.length) return;
     for (const v of pending) await refreshVersion(m, v);
     mirror(m);
     await save();
   }
+
+  // ---- 3D AI Studio: every call goes through one limiter (3 a minute) ----
+
+  const ai = threeDAIStudio({ base: threeDAIBase, key: () => keyStore.get('3daistudio'), limiter: createLimiter(rateWindowMs ? { windowMs: rateWindowMs } : {}) });
+  // Status checks run in the background, at most two a minute between them, so the third request of each minute
+  // is free for a Generate click or a key test. The oldest-checked job goes first, so with more jobs waiting each
+  // one is checked less often.
+  const pollGap = Math.ceil(ai.limiter.windowMs / 2);
+  const aiJobs = () => library.flatMap((m) => m.versions.filter((v) => v.provider === '3daistudio' && v.status === 'generating').map((v) => ({ m, v })));
+  let pollTimer = null;
+  let stopped = false;
+  function wakePoller(delay = pollGap) {
+    if (pollTimer || stopped) return;
+    pollTimer = setTimeout(pollNext, delay);
+    pollTimer.unref?.();
+  }
+  async function pollNext() {
+    const [job] = aiJobs().sort((a, b) => String(a.v.checked_at || '').localeCompare(String(b.v.checked_at || '')));
+    if (job) await once(`ai:${job.v.task_id}`, () => checkAiJob(job.m, job.v)).catch((e) => console.error(e.message));
+    pollTimer = null;
+    if (aiJobs().length) wakePoller();
+  }
+
+  async function checkAiJob(m, v) {
+    if (v.status !== 'generating') return;
+    if (Date.now() - Date.parse(v.submitted_at || v.created_at) > RESULTS_KEPT) return finishAiJob(m, v, { status: 'failed', error: EXPIRED });
+    v.checked_at = new Date().toISOString();
+    let s;
+    try {
+      s = await ai.status(v.task_id);
+    } catch (e) {
+      if (e.upstream === 410) return finishAiJob(m, v, { status: 'failed', error: EXPIRED });
+      if (e.upstream === 404) return finishAiJob(m, v, { status: 'failed', error: '3D AI Studio has no record of this job' });
+      if (e.status === 401) return finishAiJob(m, v, { note: 'Waiting for a working 3D AI Studio key' });
+      throw e; // offline or rate limited: try again on its next turn
+    }
+    delete v.note;
+    v.upstream_status = s.status;
+    if (Number.isFinite(s.progress)) v.progress = Math.max(0, Math.min(100, Math.round(s.progress)));
+    if (s.status === 'FAILED') {
+      return finishAiJob(m, v, { status: 'failed', error: `3D AI Studio: ${String(s.failure_reason || 'generation failed').slice(0, 300)}. The credits are refunded.` });
+    }
+    if (s.status !== 'FINISHED') return finishAiJob(m, v, {});
+    // Download at once: the links stop working after 24 hours. A failed download is tried again on the next turn.
+    const results = Array.isArray(s.results) ? s.results : [];
+    const glb = results.find((r) => r?.asset_type === '3D_MODEL') || results.find((r) => /\.glb(\?|$)/i.test(r?.asset || ''));
+    const image = results.find((r) => r !== glb && /IMAGE|THUMBNAIL/i.test(r?.asset_type || ''));
+    if (!glb?.asset) return finishAiJob(m, v, { status: 'failed', error: '3D AI Studio returned no model' });
+    const dir = path.join(MODELS, m.id);
+    const done = { glb: await downloadAsset(glb.asset, dir, vname('model', v.n), ['.glb']), status: 'ready', progress: 100, credits: v.estimate };
+    if (image?.asset) done.thumb = await downloadAsset(image.asset, dir, vname('preview', v.n), ['.png', '.jpg', '.jpeg', '.webp']).catch(() => undefined);
+    wallet.at = 0; // the balance changed
+    return finishAiJob(m, v, done);
+  }
+  async function finishAiJob(m, v, changes) {
+    if (!library.includes(m)) return; // deleted meanwhile
+    Object.assign(v, changes);
+    if (v.status === 'failed') wallet.at = 0; // refunded
+    mirror(m);
+    await save();
+  }
+
+  // Streams a result file into the model folder under a fixed name and extension.
+  async function downloadAsset(url, dir, base, exts) {
+    if (!/^https?:\/\//i.test(url)) throw new Error('Bad result URL');
+    const res = await ai.fetchAsset(url);
+    if (!res.ok || !res.body) throw new Error(`Download failed: HTTP ${res.status}`);
+    const ext = path.extname(new URL(url).pathname).toLowerCase();
+    const name = base + (exts.includes(ext) ? ext : exts[0]);
+    const tmp = path.join(dir, `${name}.${randomUUID()}.tmp`);
+    try {
+      await pipeline(Readable.fromWeb(res.body), createWriteStream(tmp));
+      await rename(tmp, path.join(dir, name));
+    } catch (e) {
+      await rm(tmp, { force: true });
+      throw e;
+    }
+    return name;
+  }
+
+  // ---- accounts and keys ----
+
+  const wallet = { at: 0 }; // last 3D AI Studio balance; it costs one of the 3 requests a minute, so it's kept a while
+  async function account(provider, fresh) {
+    if (!keyStore.get(provider)) return { hasKey: false };
+    if (provider === 'tripo') return { hasKey: true, ...(await tripo('/account/balance')) };
+    if (fresh || Date.now() - wallet.at > 5 * 60 * 1000) {
+      Object.assign(wallet, await ai.wallet({ priority: fresh ? HIGH : undefined }), { at: Date.now() });
+    }
+    return { hasKey: true, balance: wallet.balance, rateLimit: wallet.rateLimit, checkedAt: new Date(wallet.at).toISOString() };
+  }
+
+  // Saves a key only after the provider accepted it on its free balance check.
+  async function saveKey(provider, key) {
+    key = String(key ?? '').trim();
+    if (!KEY_FORMAT.test(key)) throw new HttpError(400, `That does not look like a ${PROVIDERS[provider].name} API key`);
+    const balance = provider === 'tripo' ? await tripo('/account/balance', { key }) : await ai.wallet({ apiKey: key, priority: HIGH });
+    await keyStore.set(provider, key);
+    if (provider === '3daistudio') { Object.assign(wallet, balance, { at: Date.now() }); wakePoller(1000); } // jobs waiting for a key
+    return { hasKey: true, ...balance };
+  }
+  const keySources = () => Object.fromEntries(Object.keys(PROVIDERS).map((p) => [p, keyStore.source(p)]));
+  const providerParam = (p) => {
+    if (!Object.hasOwn(PROVIDERS, p)) throw new HttpError(404, 'Unknown provider');
+    return p;
+  };
 
   async function patchModel(m, body) {
     const allowed = ['name', 'activeVersion', 'scene'];
@@ -332,9 +544,11 @@ export async function startServer({
     return m;
   }
 
+  const TRIPO_ONLY = 'Other formats are converted by Tripo, which only works on models made with Tripo direct. GLB works everywhere.';
   async function startExport(m, fmt) {
     const v = active(m);
     if (v.status !== 'ready') throw new HttpError(409, 'Model is not ready yet');
+    if (v.provider !== 'tripo') throw new HttpError(409, TRIPO_ONLY);
     if (['converting', 'ready'].includes(v.exports[fmt]?.status)) return v.exports[fmt];
     const { task_id } = await tripo('/models/convert', { json: { input: v.task_id, format: fmt } });
     v.exports[fmt] = { status: 'converting', task_id };
@@ -389,6 +603,17 @@ export async function startServer({
       } else if (k === 'model') {
         if (typeof body.model !== 'string' || !/^[\w.-]{1,64}$/.test(body.model)) throw new HttpError(400, 'That does not look like a Tripo model version');
         next.model = body.model;
+      } else if (k === 'provider') {
+        if (!Object.hasOwn(PROVIDERS, body.provider)) throw new HttpError(400, 'Unknown provider');
+        next.provider = body.provider;
+      } else if (k === 'setups') {
+        // The setup last used with each provider, for the setup screen and the quick queue.
+        if (!body.setups || typeof body.setups !== 'object' || Array.isArray(body.setups)) throw new HttpError(400, 'Bad setups');
+        next.setups = { ...settings.setups };
+        for (const [p, setup] of Object.entries(body.setups)) {
+          if (!Object.hasOwn(PROVIDERS, p)) throw new HttpError(400, 'Unknown provider');
+          try { next.setups[p] = normalize({ ...setup, provider: p }); } catch { throw new HttpError(400, 'Unknown provider or engine'); }
+        }
       } else if (['texture', 'pbr', 'alsoTransparent'].includes(k)) bool(k);
       else if (k === 'renderer') {
         if (!['three', 'blender'].includes(body.renderer)) throw new HttpError(400, 'Renderer must be three or blender');
@@ -405,9 +630,10 @@ export async function startServer({
     return settingsView();
   }
 
+  // keys: where each provider's key comes from ('saved', 'env' or 'none'), never the key.
   const settingsView = () => ({
     ...settings, apiBase: apiBase(), regions: REGIONS, version: VERSION, libraryDir: dataDir,
-    suggestedOutputRoot: suggestedOutputRoot(), platform: process.platform,
+    suggestedOutputRoot: suggestedOutputRoot(), platform: process.platform, keys: keySources(),
   });
 
   // ---- Backdrops and HDRIs (shared by every car; kept in the library folder) ----
@@ -447,6 +673,7 @@ export async function startServer({
     if (v.status !== 'ready') throw new HttpError(409, 'Model is not ready yet');
     if (!Array.isArray(looks) || !looks.every(isLook)) throw new HttpError(400, 'Unknown look');
     if (!Array.isArray(formats) || formats.some((f) => !FORMATS.includes(f))) throw new HttpError(400, 'Unknown model format');
+    if (formats.length && v.provider !== 'tripo') throw new HttpError(409, TRIPO_ONLY);
     if (!settings.outputRoot) throw new HttpError(409, 'Choose an output folder first');
     const outDir = path.join(await checkOutputRoot(settings.outputRoot).catch((e) => { throw new HttpError(409, e.message); }), m.slug);
     for (const sub of [...looks.map((l) => path.join('frames', l)), 'web', 'stills', 'models']) await mkdir(path.join(outDir, sub), { recursive: true });
@@ -597,19 +824,25 @@ export async function startServer({
     }
 
     const [, area, id, sub, extra] = parts;
+    // Balance per provider (Tripo by default). ?fresh asks 3D AI Studio now instead of the last answer.
     if (area === 'account' && !id && method === 'GET') {
-      if (!keyStore.get()) return send(res, 200, { hasKey: false });
-      return send(res, 200, { hasKey: true, ...(await tripo('/account/balance')) });
+      return send(res, 200, await account(providerParam(url.searchParams.get('provider') || 'tripo'), url.searchParams.has('fresh')));
+    }
+    // Keys go in and can be removed; nothing ever reads one back.
+    if (area === 'keys' && id && !sub) {
+      const provider = providerParam(id);
+      if (method === 'PUT') return send(res, 200, { ...(await saveKey(provider, (await readJson(req)).key)), keys: keySources() });
+      if (method === 'DELETE') {
+        await keyStore.remove(provider);
+        if (provider === '3daistudio') wallet.at = 0;
+        return send(res, 200, { keys: keySources() });
+      }
     }
     if (area === 'settings' && !id && method === 'GET') return send(res, 200, settingsView());
     if (area === 'settings' && !id && method === 'POST') {
-      const body = await readJson(req);
-      if (!('apiKey' in body)) return send(res, 200, await saveSettings(body));
-      const key = String(body.apiKey || '').trim();
-      if (!/^[\w-]{10,200}$/.test(key)) throw new HttpError(400, 'That does not look like a Tripo API key');
-      const balance = await tripo('/account/balance', { key }); // only save keys Tripo accepts
-      await keyStore.set(key);
-      return send(res, 200, { hasKey: true, ...balance });
+      const body = await readJson(req, 64 * 1024);
+      if ('apiKey' in body) return send(res, 200, await saveKey('tripo', body.apiKey)); // the v0.3 key dialog
+      return send(res, 200, await saveSettings(body));
     }
     if (area === 'blender' && !id && method === 'GET') {
       const found = findBlender();
@@ -677,18 +910,24 @@ export async function startServer({
     else res.destroy();
   }));
   await new Promise((ok) => server.listen(port, '127.0.0.1', ok));
-  return { server, port: server.address().port };
+  if (aiJobs().length) wakePoller(2000); // jobs that were running when the app closed
+  const close = () => {
+    stopped = true;
+    clearTimeout(pollTimer);
+    return new Promise((ok) => server.close(ok));
+  };
+  return { server, port: server.address().port, close };
 }
 
-// `node server.mjs`: browser version, key from TRIPO_API_KEY.
+// `node server.mjs`: browser version, keys from TRIPO_API_KEY and THREE_D_AI_STUDIO_KEY.
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
-  let key = process.env.TRIPO_API_KEY;
   const { port } = await startServer({
     dataDir: path.resolve(process.env.DATA_DIR || path.join(ROOT, 'data')),
     port: Number(process.env.PORT || 5173),
     ...(process.env.TRIPO_BASE && { apiBase: process.env.TRIPO_BASE }),
     ...(process.env.TRIPO_MODEL && { model: process.env.TRIPO_MODEL }),
-    keyStore: { get: () => key, set: (k) => { key = k; } }, // in memory only; put it in .env to keep it
+    ...(process.env.THREE_D_AI_STUDIO_BASE && { threeDAIBase: process.env.THREE_D_AI_STUDIO_BASE }),
+    keyStore: createKeyStore({ env: process.env }), // keys pasted here live in memory only; put them in .env to keep them
   });
   console.log(`Flatform on http://localhost:${port}`);
 }

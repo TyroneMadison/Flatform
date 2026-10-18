@@ -17,6 +17,7 @@ const listen = (server) => new Promise((ok) => server.listen(0, '127.0.0.1', () 
 const polls = {};
 const seen = [];
 const uploads = [];
+const generationBodies = [];
 const failing = new Set();
 let generations = 0;
 let failNext = false;
@@ -43,6 +44,7 @@ const fake = http.createServer(async (req, res) => {
   if (req.url === '/v3/generation/image-to-model') {
     const n = ++generations;
     const task = n === 1 ? 'task_gen' : `task_gen${n}`;
+    generationBodies.push(JSON.parse(body));
     assert.equal(JSON.parse(body).input, `file_${uploads.length}`);
     if (failNext) { failing.add(task); failNext = false; }
     return ok({ task_id: task });
@@ -75,10 +77,14 @@ const temps = [];
 const tempDir = async () => { const d = await mkdtemp(path.join(tmpdir(), 'flatform-')); temps.push(d); return d; };
 const apps = [];
 
-// Runs `node server.mjs` like `npm run web` does, on a free port, pointed at the fake Tripo.
+// Runs `node server.mjs` like `npm run web` does, on a free port, pointed at the fake Tripo. Keys from the real
+// environment are blanked and 3D AI Studio points at the fake too, so nothing can reach a real provider.
 async function startApp(dataDir, env = {}) {
   const child = spawn(process.execPath, [path.join(ROOT, 'server.mjs')], {
-    env: { ...process.env, TRIPO_BASE: `http://127.0.0.1:${fakePort}/v3`, TRIPO_API_KEY: '', DATA_DIR: dataDir, PORT: '0', ...env },
+    env: {
+      ...process.env, TRIPO_BASE: `http://127.0.0.1:${fakePort}/v3`, TRIPO_API_KEY: '', TRIPO_MODEL: '',
+      THREE_D_AI_STUDIO_BASE: `http://127.0.0.1:${fakePort}/3das`, THREE_D_AI_STUDIO_KEY: '', DATA_DIR: dataDir, PORT: '0', ...env,
+    },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   const port = await new Promise((ok, fail) => {
@@ -271,7 +277,7 @@ test('rename keeps slugs unique', async () => {
 });
 
 test('scene state is saved per model', async () => {
-  const scene = { preset: 'gold', turn: 30, lens: 50, camera: 'front34' };
+  const scene = { preset: 'ring', turn: 30, lens: 50, camera: 'front34' };
   assert.deepEqual((await app.json(`/api/models/${id}`, 'PATCH', { scene })).body.scene, scene);
   assert.deepEqual(JSON.parse(await readFile(path.join(data, 'models', id, 'scene.json'), 'utf8')), scene);
   assert.equal((await app.json(`/api/models/${id}`, 'PATCH', { scene: [1] })).status, 400);
@@ -308,6 +314,45 @@ test('settings persist and the region is validated', async () => {
   assert.equal((await app.json('/api/settings', 'POST', { region: 'global', pbr: true })).body.region, 'global');
 });
 
+test('keys: saved, replaced and removed per provider, never sent back to the page', async () => {
+  // This app was restarted with TRIPO_API_KEY in its environment.
+  const leaks = (res) => JSON.stringify(res.body).includes(KEY) || JSON.stringify(res.body).includes('tsk_');
+  const settings = await app.j('/api/settings');
+  assert.deepEqual(settings.body.keys, { tripo: 'env', '3daistudio': 'none' });
+  assert.equal(leaks(settings), false);
+  const account = await app.j('/api/account?provider=tripo');
+  assert.deepEqual(account.body, { hasKey: true, balance: 1500, frozen: 0 });
+  assert.deepEqual((await app.j('/api/account?provider=3daistudio')).body, { hasKey: false });
+  assert.equal((await app.j('/api/account?provider=constructor')).status, 404);
+
+  const saved = await app.json('/api/keys/tripo', 'PUT', { key: KEY });
+  assert.equal(saved.status, 200);
+  assert.equal(leaks(saved), false);
+  assert.deepEqual(saved.body.keys, { tripo: 'saved', '3daistudio': 'none' });
+  assert.equal((await app.json('/api/keys/tripo', 'PUT', { key: 'tsk_wrong_key_123' })).status, 401); // checked with Tripo first
+  const short = await app.json('/api/keys/3daistudio', 'PUT', { key: 'abc' });
+  assert.deepEqual([short.status, short.body.error.includes('abc')], [400, false]);
+  assert.equal((await app.json('/api/keys/3daistudio', 'PUT', { key: 'not-a-3das-key-0001' })).status, 401); // the fake refuses it
+  assert.equal((await app.json('/api/keys/meshy', 'PUT', { key: KEY })).status, 404);
+  assert.equal((await app.json('/api/keys/tripo', 'PUT', { key: KEY }, { Origin: 'http://evil.example' })).status, 403);
+  assert.equal((await app.j('/api/keys/tripo', { method: 'DELETE', headers: { Origin: 'http://evil.example' } })).status, 403);
+
+  const removed = await app.j('/api/keys/tripo', { method: 'DELETE' });
+  assert.deepEqual(removed.body.keys, { tripo: 'env', '3daistudio': 'none' }); // back to the environment's key
+  assert.equal((await app.j('/api/keys/tripo')).status, 404); // there is no way to read a key
+  for (const file of ['settings.json', 'library.json']) assert.equal((await readFile(path.join(data, file), 'utf8')).includes(KEY), false, file);
+});
+
+test('settings remember the provider and its last setup', async () => {
+  assert.equal((await app.json('/api/settings', 'POST', { provider: 'meshy' })).status, 400);
+  assert.equal((await app.json('/api/settings', 'POST', { setups: { tripo: { engine: 'hitem3d' } } })).status, 400);
+  assert.equal((await app.json('/api/settings', 'POST', { setups: { constructor: {} } })).status, 400);
+  const saved = (await app.json('/api/settings', 'POST', { provider: '3daistudio', setups: { '3daistudio': { engine: 'hitem3d', mode: 'views', options: { shading: 0.37, nonsense: 1 } } } })).body;
+  assert.equal(saved.provider, '3daistudio');
+  assert.deepEqual(saved.setups['3daistudio'], { provider: '3daistudio', engine: 'hitem3d', mode: 'views', options: { resolution: '2048quality', texture: 'pbr', shading: 0.4, face_limit: 2000000 } });
+  assert.equal((await app.json('/api/settings', 'POST', { provider: 'tripo' })).body.setups['3daistudio'].engine, 'hitem3d');
+});
+
 test('old v0.2 library migrates and the model still opens', async () => {
   const oldData = await tempDir();
   const old = {
@@ -317,10 +362,14 @@ test('old v0.2 library migrates and the model still opens', async () => {
   // A second v0.2 entry was still generating, on a task Tripo has since forgotten.
   const stuck = { id: '6f1c3f4e-0000-4000-8000-000000000002', name: 'Audi R8', status: 'generating', progress: 40, task_id: 'task_gone_1',
     created_at: '2026-10-02T10:00:00.000Z', source: 'source.png', exports: {} };
+  // v0.3 called the studio preset 'gold'.
+  old.scene = { preset: 'gold', turn: 30 };
   await mkdir(path.join(oldData, 'models', old.id), { recursive: true });
   await mkdir(path.join(oldData, 'models', stuck.id), { recursive: true });
   await writeFile(path.join(oldData, 'models', stuck.id, 'source.png'), 'png');
+  await writeFile(path.join(oldData, 'models', old.id, 'scene.json'), JSON.stringify(old.scene));
   await writeFile(path.join(oldData, 'library.json'), JSON.stringify([stuck, old], null, 2));
+  await writeFile(path.join(oldData, 'settings.json'), JSON.stringify({ defaultScene: 'gold', region: 'global' }));
   for (const f of ['model.glb', 'preview.webp', 'source.jpg']) await writeFile(path.join(oldData, 'models', old.id, f), `old-${f}`);
   const before = seen.length;
   const oldApp = await startApp(oldData, { TRIPO_API_KEY: KEY });
@@ -331,7 +380,7 @@ test('old v0.2 library migrates and the model still opens', async () => {
   assert.equal(m.activeVersion, 1);
   assert.deepEqual(m.versions, [{
     n: 1, created_at: old.created_at, exports: {}, task_id: 'task_old', status: 'ready', progress: 100,
-    glb: 'model.glb', thumb: 'preview.webp', credits: 30, source: 'source.jpg',
+    glb: 'model.glb', thumb: 'preview.webp', credits: 30, source: 'source.jpg', provider: 'tripo',
   }]);
   for (const k of ['status', 'progress', 'task_id', 'glb', 'thumb', 'source', 'credits', 'name', 'created_at']) assert.deepEqual(m[k], old[k], k);
   assert.equal((await oldApp.j(`/api/models/${old.id}`)).body.status, 'ready');
@@ -340,6 +389,9 @@ test('old v0.2 library migrates and the model still opens', async () => {
   const saved = JSON.parse(await readFile(path.join(oldData, 'library.json'), 'utf8'));
   assert.equal(saved[1].versions.length, 1);
   assert.equal(saved[1].glb, 'model.glb'); // v0.2 can still read it
+  assert.deepEqual(m.scene, { preset: 'ring', turn: 30 });
+  assert.deepEqual(JSON.parse(await readFile(path.join(oldData, 'models', old.id, 'scene.json'), 'utf8')), { preset: 'ring', turn: 30 });
+  assert.equal((await oldApp.j('/api/settings')).body.defaultScene, 'ring');
 
   // The in-flight one is polled; Tripo no longer has its task, so it fails (and can be retried) instead of spinning forever.
   const gone = (await oldApp.j(`/api/models/${stuck.id}`)).body;
@@ -447,6 +499,40 @@ test('HEIC photos are converted to JPEG before upload', async () => {
   const broken = await app.j('/api/models?name=Bad', { method: 'POST', headers: { 'Content-Type': 'image/heic' }, body: 'not a heic file' });
   assert.equal(broken.status, 415);
   assert.match(broken.body.error, /HEIC/);
+});
+
+test('setup screen: a Tripo preset goes out as multipart with its options', async () => {
+  const setup = (s) => JSON.stringify(s);
+  const post = (fields) => {
+    const form = new FormData();
+    for (const [k, v] of Object.entries(fields)) form.append(k, v);
+    return app.j('/api/models', { method: 'POST', body: form });
+  };
+  const png = (text) => new Blob([text], { type: 'image/png' });
+  const created = await post({ name: 'Setup Car', setup: setup({ provider: 'tripo', engine: 'tripo-direct', options: { texture: 'pbr', texture_quality: 'detailed' } }), front: png('front-bytes') });
+  assert.equal(created.status, 201, created.body.error);
+  assert.deepEqual(generationBodies.at(-1), { input: `file_${uploads.length}`, model: 'v3.1-20260211', texture: true, pbr: true, texture_quality: 'detailed' });
+  const v = created.body.versions[0];
+  assert.deepEqual([created.body.name, v.provider, v.engine, v.mode, v.estimate, v.source], ['Setup Car', 'tripo', 'tripo-direct', 'single', 40, 'source.png']);
+  // Tripo direct takes one photo, so extra views are not kept.
+  const four = await post({ setup: setup({ provider: 'tripo', engine: 'tripo-direct', mode: 'views' }), front: png('f'), left: png('l') });
+  assert.deepEqual([four.status, four.body.versions[0].mode, four.body.versions[0].views], [201, 'single', undefined]);
+
+  // Refused before anything is sent: a 3D AI Studio setup without its key, unknown engines, other image types.
+  const before = generationBodies.length;
+  assert.equal((await post({ setup: setup({ provider: '3daistudio', engine: 'trellis2' }), front: png('x') })).status, 401);
+  assert.equal((await post({ setup: setup({ provider: 'tripo', engine: 'hitem3d' }), front: png('x') })).status, 400);
+  assert.equal((await post({ setup: 'nonsense', front: png('x') })).status, 400);
+  assert.equal((await post({ setup: setup({ provider: 'tripo', engine: 'tripo-direct' }), front: new Blob(['x'], { type: 'image/gif' }) })).status, 415);
+  assert.equal((await post({ setup: setup({ provider: 'tripo', engine: 'tripo-direct' }) })).status, 400);
+  assert.equal(generationBodies.length, before);
+
+  // Regenerate with a new setup and the same photo.
+  const v2 = await app.j(`/api/models/${created.body.id}/versions`, { method: 'POST', body: (() => { const f = new FormData(); f.append('setup', setup({ provider: 'tripo', engine: 'tripo-direct', options: { texture: 'none' } })); return f; })() });
+  assert.equal(v2.status, 201, v2.body.error);
+  assert.deepEqual([v2.body.activeVersion, v2.body.source, v2.body.versions[1].estimate], [2, 'source.png', 20]);
+  assert.deepEqual(generationBodies.at(-1), { input: `file_${uploads.length}`, model: 'v3.1-20260211', texture: false, pbr: false });
+  for (const m of [created.body, four.body]) await settle(app, m.id);
 });
 
 test('delete removes the model and its files', async () => {

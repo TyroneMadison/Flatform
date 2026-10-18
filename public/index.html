@@ -16,13 +16,13 @@
 <div class="win">
   <header class="titlebar">
     <div class="tt"><img src="/img/icon-small.svg" alt="" width="18" height="18">Flatform</div>
-    <div class="tr" id="tripoStatus"></div>
+    <div class="tr" id="accountStatus"></div>
   </header>
   <div class="body">
     <nav class="rail" aria-label="Main">
       <img class="lgimg" src="/img/icon.svg" alt="Flatform">
       <div id="railLinks"></div>
-      <a class="ri acct" id="railTripo" href="#/settings"><span class="dot wait"></span><span>Tripo</span></a>
+      <a class="ri acct" id="railAccount" href="#/settings/providers"><span class="dot wait"></span><span class="acctname">Tripo</span></a>
     </nav>
     <main class="content" id="view" tabindex="-1"></main>
   </div>
@@ -31,7 +31,7 @@
 <dialog id="keyDialog" aria-labelledby="keyTitle">
   <form id="keyForm" method="dialog">
     <h2 id="keyTitle">Connect your Tripo account</h2>
-    <p class="muted">Paste an API key from <a href="https://developers.tripo3d.com/en/keys" target="_blank" rel="noopener">developers.tripo3d.com/en/keys</a>. It is stored encrypted on this computer and is only sent to Tripo.</p>
+    <p class="muted">Paste an API key from <a id="keyLink" href="https://developers.tripo3d.com/en/keys" target="_blank" rel="noopener">developers.tripo3d.com/en/keys</a>. It is stored encrypted on this computer and is only sent to <span id="keyTo">Tripo</span>.</p>
     <label class="field-label" for="keyInput">API key</label>
     <input id="keyInput" class="inp mono" type="password" placeholder="tsk_…" autocomplete="off" spellcheck="false" required autofocus>
     <div id="keyError" class="form-error" role="alert"></div>

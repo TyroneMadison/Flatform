@@ -1,5 +1,5 @@
 // 03 · Review: the source photo next to the 3D model, versions, regenerate, clean-up toggles, then into a scene.
-import { $, $$, esc, state, api, send, toast, go, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy } from '../app.js';
+import { $, $$, esc, state, send, toast, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy, setupFor, engineLabel } from '../app.js';
 import { icon } from '../lib/icons.js';
 import { Studio, defaultScene } from '../lib/studio.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -136,18 +136,18 @@ function renderInspector() {
   const html = `
     <label class="sr-only" for="rename">Model name</label>
     <input class="it rename" id="rename" value="${esc(m.name)}" maxlength="100" spellcheck="false">
-    <p class="sub">${m.status === 'ready' ? `Ready · saved to library · GLB${m.credits != null ? ` · ${m.credits} credits` : ''}` : esc(statusText(m))}</p>
+    <p class="sub">${m.status === 'ready' ? `Ready · ${esc(engineLabel(m))} · GLB${m.credits != null ? ` · ${m.credits} credits` : ''}` : esc(statusText(m))}</p>
     <div class="grp"><h3>Versions</h3>
       <div class="vers">${m.versions.map((v) => `
-        <button class="ver" type="button" data-version="${v.n}" aria-pressed="${v.n === m.activeVersion}">
+        <button class="ver" type="button" data-version="${v.n}" aria-pressed="${v.n === m.activeVersion}" title="${esc(engineLabel(v))}">
           <div class="stage s-clear"><div class="checker"></div>${thumb(v) ? `<img class="thumb" src="${thumb(v)}" alt="Version ${v.n} of ${esc(m.name)}">` : ''}</div>
-          <span>Version ${v.n}</span><small>${v.status === 'ready' ? 'Ready' : v.status === 'failed' ? 'Failed' : `${v.progress || 0}%`}</small>
+          <span>Version ${v.n}</span><small>${v.status === 'ready' ? esc(engineLabel(v).replace('3D AI Studio · ', '')) : v.status === 'failed' ? 'Failed' : `${v.progress || 0}%`}</small>
         </button>`).join('')}</div>
     </div>
     <div class="grp"><h3>Not right?</h3>
       <button class="btn sec" type="button" data-act="regen" ${isGenerating(m) ? 'disabled' : ''}>${icon('retry')}<span>Regenerate from same photo</span></button>
       <button class="btn ghostbtn" type="button" data-act="better" ${isGenerating(m) ? 'disabled' : ''}>${icon('upload')}<span>Regenerate with a better photo</span></button>
-      <p class="fine">Each regeneration is a new Tripo task and uses credits. Older versions stay in the library.</p>
+      <p class="fine">Both open the setup screen, where you can change the provider and quality. Each regeneration is a new paid job; older versions stay in the library.</p>
     </div>
     <div class="grp"><h3>Clean up</h3>
       <label class="tg"><span>Auto-orient<small>Wheels down, nose facing the camera</small></span><input class="sw" type="checkbox" role="switch" data-clean="autoOrient" ${scene.autoOrient ? 'checked' : ''}></label>
@@ -173,11 +173,7 @@ async function onClick(e) {
     refresh();
     await showVersion();
   }
-  if (t.dataset.act === 'regen') {
-    await busy(t, async () => {
-      try { upsert(await api(`/api/models/${m.id}/versions`, { method: 'POST' })); go(`#/generate/${m.id}`); } catch (err) { toast(err.message); }
-    });
-  }
+  if (t.dataset.act === 'regen') await busy(t, () => setupFor(m).catch((err) => toast(err.message)));
   if (t.dataset.act === 'better') $('#betterPhoto', root).click();
 }
 
@@ -196,15 +192,9 @@ async function onChange(e) {
     draw();
   }
   if (t.id === 'betterPhoto' && t.files[0]) {
-    const file = t.files[0];
+    const files = [...t.files];
     t.value = '';
-    const type = file.type || (/\.png$/i.test(file.name) ? 'image/png' : /\.hei[cf]$/i.test(file.name) ? 'image/heic' : 'image/jpeg');
-    await busy($('[data-act=better]', root), async () => {
-      try {
-        upsert(await api(`/api/models/${m.id}/versions`, { method: 'POST', headers: { 'Content-Type': type }, body: file }));
-        go(`#/generate/${m.id}`);
-      } catch (err) { toast(err.message); }
-    });
+    setupFor(m, files).catch((err) => toast(err.message));
   }
 }
 

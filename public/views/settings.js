@@ -1,18 +1,34 @@
-// 07 · Settings: Tripo account, generation defaults, rendering, app. Only non-secret values are stored here;
-// the API key stays in the OS keychain (desktop app) and is never sent to this page.
-import { $, esc, state, api, send, toast, refresh, refreshAccount, openKeyDialog, native, fmt } from '../app.js';
+// 07 · Settings: providers and keys, rendering, the output folder, about. Only non-secret values are stored in
+// settings.json; keys go to the OS keychain and never come back to this page: it only learns whether one is saved.
+import { $, esc, state, api, send, toast, refresh, native, fmt, fmtBalance, saveKey, confirmDialog, arrowRadios } from '../app.js';
+import { PROVIDERS } from '../lib/engines.js';
 import { icon } from '../lib/icons.js';
 
-const SCENES = [['gold', 'Escalade gold-ring studio'], ['transparent', 'Transparent'], ['cyclorama', 'White cyclorama'], ['miami', 'Miami street at night (your HDRI)'], ['custom', 'Your backdrop or HDRI']];
+const SCENES = [['ring', 'Escalade ring studio'], ['transparent', 'Transparent'], ['cyclorama', 'White cyclorama'], ['miami', 'Miami street at night (your HDRI)'], ['custom', 'Your backdrop or HDRI']];
+const SECTIONS = [['providers', 'Providers'], ['rendering', 'Rendering'], ['output', 'Output folder'], ['about', 'About']];
 const RELEASES = 'https://github.com/TyroneMadison/Flatform/releases';
+const results = {}; // provider → { ok, text } from the last Test or key change
 let root;
+let section;
+let replacing = null; // provider whose key field is open for a new key
 
-export function mount(el) {
+export function mount(el, { id }) {
   root = el;
-  el.innerHTML = `<h1 class="ph">Settings</h1><section class="settings" id="settings"></section>`;
+  section = SECTIONS.some(([k]) => k === id) ? id : 'providers';
+  replacing = null;
+  el.innerHTML = `<h1 class="ph">Settings</h1>
+  <p class="sub">Providers and keys. Paste a key once; Flatform encrypts it on this computer.</p>
+  <div class="set">
+    <nav class="sn" aria-label="Settings sections">${SECTIONS.map(([k, label]) => `<a href="#/settings/${k}"${k === section ? ' class="on" aria-current="page"' : ''}>${label}</a>`).join('')}</nav>
+    <section class="settings" id="settings"></section>
+  </div>`;
   el.addEventListener('click', onClick);
   el.addEventListener('change', onChange);
   el.addEventListener('submit', onSubmit);
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && replacing) { replacing = null; redraw(); }
+    arrowRadios(e);
+  });
   update();
 }
 
@@ -22,19 +38,54 @@ const save = async (data) => {
     state.blender = await api('/api/blender');
   } catch (e) {
     toast(e.message);
-    $('#settings', root).dataset.html = ''; // redraw, so a refused change doesn't stay on screen
   }
+  redraw();
   refresh();
 };
+let forced = false;
+const redraw = () => { forced = true; update(); }; // after an action of ours, even if a field has focus
+
+async function test(provider) {
+  results[provider] = { text: 'Checking…' };
+  redraw();
+  try {
+    const a = await api(`/api/account?provider=${provider}&fresh`);
+    state.accounts[provider] = a;
+    results[provider] = a.hasKey ? { ok: true, text: `${worksText(provider, a)} · ${testedAt()}` } : { ok: false, text: 'No key to test' };
+  } catch (e) {
+    results[provider] = { ok: false, text: e.message };
+  }
+  redraw();
+  refresh();
+}
+const worksText = (provider, a) => [
+  `Key works · ${fmtBalance(a.balance)} credits`,
+  a.frozen ? `${fmt(a.frozen)} frozen` : '',
+  provider === '3daistudio' ? `${a.rateLimit || 3} requests a minute` : '',
+].filter(Boolean).join(' · ');
+const testedAt = () => `tested ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
 
 async function onClick(e) {
   const t = e.target.closest('[data-act]');
   if (!t) return;
   const s = state.settings;
-  const act = t.dataset.act;
-  if (act === 'key') openKeyDialog();
-  if (act === 'refresh') { await refreshAccount(); toast(state.account?.error || 'Balance updated', state.account?.error ? 'error' : 'info'); }
-  if (act === 'region') { await save({ region: t.dataset.value }); refreshAccount(); } // the balance comes from the new region
+  const { act, provider } = t.dataset;
+  if (act === 'provider') save({ provider: t.dataset.value });
+  if (act === 'test') await test(provider);
+  if (act === 'replace') { replacing = provider; redraw(); $(`#key-${provider}`, root)?.focus(); }
+  if (act === 'cancel') { replacing = null; redraw(); }
+  if (act === 'remove') {
+    const env = PROVIDERS[provider].env;
+    if (!(await confirmDialog({ title: `Remove the ${PROVIDERS[provider].name} key?`, text: `Flatform deletes the encrypted key from this computer. If ${env} is set in .env, that key is used instead.`, ok: 'Remove key' }))) return;
+    try {
+      const r = await send(`/api/keys/${provider}`, 'DELETE');
+      state.settings = { ...state.settings, keys: r.keys };
+      delete state.accounts[provider];
+      results[provider] = { ok: true, text: 'Key removed' };
+    } catch (err) { toast(err.message); }
+    redraw();
+    refresh();
+  }
   if (act === 'renderer') save({ renderer: t.dataset.value });
   if (act === 'output') {
     if (native) { const dir = await native.pickFolder(); if (dir) save({ outputRoot: dir }); } else showField('outputField');
@@ -55,77 +106,129 @@ function showField(id) {
   f.querySelector('input').focus();
 }
 
-function onChange(e) {
+async function onChange(e) {
   const t = e.target;
-  if (t.name === 'texture' || t.name === 'pbr' || t.name === 'alsoTransparent') save({ [t.name]: t.checked });
+  if (t.name === 'alsoTransparent') save({ alsoTransparent: t.checked });
   if (t.name === 'defaultScene') save({ defaultScene: t.value });
-  if (t.name === 'model') save({ model: t.value.trim() });
+  if (t.name === 'region') { await save({ region: t.value }); if (state.settings.keys?.tripo !== 'none') test('tripo'); } // the balance comes from the new region
 }
 
-function onSubmit(e) {
+async function onSubmit(e) {
   e.preventDefault();
-  const input = e.target.querySelector('input');
-  save({ [input.name]: input.value.trim() });
+  const form = e.target;
+  const provider = form.dataset.provider;
+  if (!provider) {
+    const input = form.querySelector('input');
+    return save({ [input.name]: input.value.trim() });
+  }
+  const input = form.querySelector('input');
+  results[provider] = { text: 'Checking the key…' };
+  $(`#pc-res-${provider}`, root).textContent = 'Checking the key…';
+  try {
+    const a = await saveKey(provider, input.value);
+    input.value = '';
+    replacing = null;
+    results[provider] = { ok: true, text: `${worksText(provider, a)} · saved · ${testedAt()}` };
+  } catch (err) {
+    results[provider] = { ok: false, text: err.message };
+  }
+  redraw();
+}
+
+// One card per provider, both built the same way.
+function card(id) {
+  const p = PROVIDERS[id];
+  const s = state.settings;
+  const source = s.keys?.[id] || 'none';
+  const pill = { saved: ['ok', 'Saved · encrypted'], env: ['env', 'From .env'], none: ['none', 'Not set'] }[source];
+  // Tripo has two hosts (global and China); the header picks one.
+  const sub = id === 'tripo'
+    ? `<label class="sr-only" for="region">Tripo region</label><select class="hostsel" id="region" name="region">${Object.entries(s.regions).map(([k, url]) => `<option value="${k}"${s.region === k ? ' selected' : ''}>${esc(new URL(url).host)} · v3${k === 'china' ? ' · China' : ''}</option>`).join('')}</select>`
+    : `<span>${esc(p.host)}</span>`;
+  const r = results[id];
+  const field = replacing === id
+    ? `<form class="kf" data-provider="${id}"><label class="sr-only" for="key-${id}">New ${p.name} API key</label>
+        <input class="in" id="key-${id}" type="password" autocomplete="off" spellcheck="false" placeholder="${esc(p.keyHint || 'Paste the new key')}" required>
+        <button class="btn sm pri" type="submit">Save</button><button class="btn sm ghostbtn" type="button" data-act="cancel">Cancel</button></form>`
+    : `<div class="kf"><div class="in" aria-label="${source === 'none' ? 'No key saved' : 'Key saved, hidden'}">${source === 'none' ? '<span class="muted">No key yet</span>' : '<span aria-hidden="true">••••••••••••••••••••••••</span>'}<em>${source === 'env' ? 'from .env' : source === 'saved' ? 'hidden' : ''}</em></div>
+        <button class="btn sm ghostbtn" type="button" data-act="test" data-provider="${id}"${source === 'none' ? ' disabled' : ''}>Test</button>
+        <button class="btn sm ghostbtn" type="button" data-act="replace" data-provider="${id}">${source === 'none' ? 'Add key' : 'Replace'}</button>
+        <button class="btn sm ghostbtn" type="button" data-act="remove" data-provider="${id}"${source === 'saved' ? '' : ' disabled'}>Remove</button></div>`;
+  return `<div class="pc glass" aria-labelledby="pc-${id}">
+    <div class="ph2"><div class="av" aria-hidden="true">${id === 'tripo' ? 'T' : '3D'}</div><div><b id="pc-${id}">${p.name}</b><p>${sub}</p></div><span class="pill ${pill[0]}">● ${pill[1]}</span></div>
+    ${field}
+    <div class="res${r ? (r.ok === false ? ' bad' : r.ok ? ' ok' : '') : ''}" id="pc-res-${id}" role="status">${r ? `${r.ok === false ? '✗' : r.ok ? '✓' : ''} ${esc(r.text)}` : `<span>Get a key at <a href="${p.keyUrl}" target="_blank" rel="noopener">${esc(new URL(p.keyUrl).host)}</a>. Test runs the free balance check.</span>`}</div>
+  </div>`;
+}
+
+function providersHtml() {
+  const s = state.settings;
+  return `<div class="def"><h2 class="label" id="defK">Default provider</h2>
+      <div class="prov" role="radiogroup" aria-labelledby="defK">${Object.entries(PROVIDERS).map(([id, p]) => `<button type="button" role="radio" aria-checked="${s.provider === id}" class="${s.provider === id ? 'on' : ''}" data-act="provider" data-value="${id}"><b>${p.name}</b><span>${p.sub}</span></button>`).join('')}</div>
+      <p class="fine">You can still switch per model on the Generate screen.</p></div>
+    ${Object.keys(PROVIDERS).map(card).join('')}
+    <p class="fine">Keys are stored with the operating system's encryption (Windows DPAPI, macOS Keychain), never in settings.json, and are only sent to that provider's own API. Test runs the free balance check and spends no credits. In <span class="mono">npm run web</span>, keys come from .env (TRIPO_API_KEY, THREE_D_AI_STUDIO_KEY) and pasted ones last until it stops.</p>`;
+}
+
+const pathForm = (id, name, label, value, placeholder) => `
+  <form class="field pathform" id="${id}" hidden><label for="${id}In">${label}</label>
+    <input class="inp mono" id="${id}In" name="${name}" value="${esc(value)}" placeholder="${esc(placeholder)}" spellcheck="false">
+    <button class="btn ghostbtn" type="submit">Save</button></form>`;
+
+function renderingHtml() {
+  const s = state.settings;
+  const b = state.blender;
+  return `<div class="card glass"><h2 class="label">Rendering</h2>
+    <div class="field"><span class="flabel" id="rendererLabel">Renderer</span>
+      <div class="chips seg" role="radiogroup" aria-labelledby="rendererLabel">
+        <button class="chip" type="button" role="radio" aria-checked="${s.renderer !== 'blender' || !b?.found}" data-act="renderer" data-value="three">In-app</button>
+        <button class="chip" type="button" role="radio" aria-checked="${s.renderer === 'blender' && Boolean(b?.found)}" data-act="renderer" data-value="blender" ${b?.found ? '' : 'disabled'}>Blender (Cycles)</button>
+      </div></div>
+    <div class="field"><span class="flabel">Blender</span>
+      <div class="inp ${b?.found ? 'mono' : 'warn'}" title="${esc(b?.path || '')}">${b?.found ? esc(b.path) : 'Not found · install Blender 4.x to render'}</div>
+      <button class="btn sec" type="button" data-act="blender">${icon('folder')}<span>Locate Blender</span></button></div>
+    ${pathForm('blenderField', 'blenderPath', 'Blender path', s.blenderPath, s.platform === 'win32' ? 'C:\\Program Files\\Blender Foundation\\Blender 4.2\\blender.exe' : '/Applications/Blender.app')}
+    <div class="field"><label class="flabel" for="defaultScene">Default scene</label>
+      <select class="inp" id="defaultScene" name="defaultScene">${SCENES.map(([k, l]) => `<option value="${k}" ${s.defaultScene === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+    <label class="tg"><span>Always also render the transparent look</span><input class="sw" type="checkbox" role="switch" name="alsoTransparent" ${s.alsoTransparent ? 'checked' : ''}></label>
+  </div>`;
+}
+
+function outputHtml() {
+  const s = state.settings;
+  return `<div class="card glass"><h2 class="label">Output folder</h2>
+    <div class="field"><span class="flabel">Default output folder</span>
+      <div class="inp mono" title="${esc(s.outputRoot)}">${s.outputRoot ? esc(s.outputRoot) : `<span class="muted">Not set · suggested ${esc(s.suggestedOutputRoot)}</span>`}</div>
+      <button class="btn ghostbtn" type="button" data-act="output">${icon('folder')}<span>Change</span></button></div>
+    ${pathForm('outputField', 'outputRoot', 'Output folder', s.outputRoot || s.suggestedOutputRoot, s.suggestedOutputRoot)}
+    <p class="fine">Each car gets its own folder inside it: frames, web sprite sheets, stills, model files and HANDOFF.md.</p>
+  </div>`;
+}
+
+function aboutHtml() {
+  const s = state.settings;
+  return `<div class="card glass"><h2 class="label">About</h2>
+    <div class="field"><span class="flabel">Library location</span><div class="inp mono" title="${esc(s.libraryDir)}">${esc(s.libraryDir)}</div>
+      <button class="btn ghostbtn" type="button" data-act="show-library" ${native ? '' : 'disabled title="Available in the desktop app"'}>${icon('folder')}<span>Show</span></button></div>
+    <div class="field"><span class="flabel">Version</span><div class="inp">Flatform ${esc(s.version)}</div>
+      <a class="btn ghostbtn" href="${RELEASES}" target="_blank" rel="noopener">${icon('external')}<span>Releases</span></a></div>
+    <p class="fine">Unofficial app for the Tripo and 3D AI Studio APIs; not affiliated with either. You pay them directly in credits.</p>
+  </div>`;
 }
 
 export function update() {
-  const s = state.settings;
-  const a = state.account;
-  const b = state.blender;
-  if (!s) return;
-  const pathForm = (id, name, label, value, placeholder) => `
-    <form class="field pathform" id="${id}" hidden><label for="${id}In">${label}</label>
-      <input class="inp mono" id="${id}In" name="${name}" value="${esc(value)}" placeholder="${esc(placeholder)}" spellcheck="false">
-      <button class="btn ghostbtn" type="submit">Save</button></form>`;
-  const html = `
-  <div class="setcol">
-    <div class="card glass"><h2 class="label">Tripo account</h2>
-      <div class="field"><span class="flabel">API key</span><div class="inp mono">${a?.hasKey ? 'tsk_••••••••••••••••' : 'No key yet'}</div><button class="btn ghostbtn" type="button" data-act="key">${a?.hasKey ? 'Change key' : 'Add key'}</button></div>
-      <p class="fine">Encrypted by Windows (DPAPI) or the macOS Keychain. Only ever sent to Tripo. Get a key at developers.tripo3d.com/en/keys.</p>
-      <div class="field"><span class="flabel" id="regionLabel">Region</span>
-        <div class="chips seg" role="radiogroup" aria-labelledby="regionLabel">
-          ${Object.entries(s.regions).map(([k, url]) => `<button class="chip" type="button" role="radio" aria-checked="${s.region === k}" data-act="region" data-value="${k}">${k === 'global' ? 'Global' : 'China'} · ${esc(new URL(url).host)}</button>`).join('')}
-        </div></div>
-      <div class="field"><span class="flabel">Credit balance</span>
-        <div class="inp" role="status">${a?.hasKey ? `${fmt(a.balance)} credits · ${fmt(a.frozen || 0)} frozen` : a?.error ? esc(a.error) : 'Shown from your Tripo account'}</div>
-        <button class="btn ghostbtn" type="button" data-act="refresh">${icon('retry')}<span>Refresh</span></button></div>
-    </div>
-    <div class="card glass"><h2 class="label">Generation defaults</h2>
-      <div class="field"><label class="flabel" for="model">Tripo model</label><input class="inp mono" id="model" name="model" value="${esc(s.model)}" spellcheck="false"></div>
-      <label class="tg"><span>Textures</span><input class="sw" type="checkbox" role="switch" name="texture" ${s.texture ? 'checked' : ''}></label>
-      <label class="tg"><span>PBR materials<small>Metal and roughness maps for realistic paint</small></span><input class="sw" type="checkbox" role="switch" name="pbr" ${s.pbr ? 'checked' : ''} ${s.texture ? '' : 'disabled'}></label>
-    </div>
-  </div>
-  <div class="setcol">
-    <div class="card glass"><h2 class="label">Rendering</h2>
-      <div class="field"><span class="flabel" id="rendererLabel">Renderer</span>
-        <div class="chips seg" role="radiogroup" aria-labelledby="rendererLabel">
-          <button class="chip" type="button" role="radio" aria-checked="${s.renderer !== 'blender' || !b?.found}" data-act="renderer" data-value="three">In-app</button>
-          <button class="chip" type="button" role="radio" aria-checked="${s.renderer === 'blender' && Boolean(b?.found)}" data-act="renderer" data-value="blender" ${b?.found ? '' : 'disabled'}>Blender (Cycles)</button>
-        </div></div>
-      <div class="field"><span class="flabel">Blender</span>
-        <div class="inp ${b?.found ? 'mono' : 'warn'}" title="${esc(b?.path || '')}">${b?.found ? esc(b.path) : 'Not found · install Blender 4.x to render'}</div>
-        <button class="btn sec" type="button" data-act="blender">${icon('folder')}<span>Locate Blender</span></button></div>
-      ${pathForm('blenderField', 'blenderPath', 'Blender path', s.blenderPath, s.platform === 'win32' ? 'C:\\Program Files\\Blender Foundation\\Blender 4.2\\blender.exe' : '/Applications/Blender.app')}
-      <div class="field"><span class="flabel">Default output folder</span>
-        <div class="inp mono" title="${esc(s.outputRoot)}">${s.outputRoot ? esc(s.outputRoot) : `<span class="muted">Not set · suggested ${esc(s.suggestedOutputRoot)}</span>`}</div>
-        <button class="btn ghostbtn" type="button" data-act="output">${icon('folder')}<span>Change</span></button></div>
-      ${pathForm('outputField', 'outputRoot', 'Output folder', s.outputRoot || s.suggestedOutputRoot, s.suggestedOutputRoot)}
-      <div class="field"><label class="flabel" for="defaultScene">Default scene</label>
-        <select class="inp" id="defaultScene" name="defaultScene">${SCENES.map(([k, l]) => `<option value="${k}" ${s.defaultScene === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-      <label class="tg"><span>Always also render the transparent look</span><input class="sw" type="checkbox" role="switch" name="alsoTransparent" ${s.alsoTransparent ? 'checked' : ''}></label>
-    </div>
-    <div class="card glass"><h2 class="label">App</h2>
-      <div class="field"><span class="flabel">Library location</span><div class="inp mono" title="${esc(s.libraryDir)}">${esc(s.libraryDir)}</div>
-        <button class="btn ghostbtn" type="button" data-act="show-library" ${native ? '' : 'disabled title="Available in the desktop app"'}>${icon('folder')}<span>Show</span></button></div>
-      <div class="field"><span class="flabel">Version</span><div class="inp">Flatform ${esc(s.version)}</div>
-        <a class="btn ghostbtn" href="${RELEASES}" target="_blank" rel="noopener">${icon('external')}<span>Releases</span></a></div>
-    </div>
-  </div>`;
+  if (!state.settings || !root?.isConnected) return;
+  const html = { providers: providersHtml, rendering: renderingHtml, output: outputHtml, about: aboutHtml }[section]();
   const box = $('#settings', root);
   // Keep the page as it is while someone is typing in it.
-  if (box.dataset.html !== html && !box.contains(document.activeElement?.matches('input:not([type=checkbox])') ? document.activeElement : null)) {
-    box.dataset.html = html;
-    box.innerHTML = html;
-  }
+  const focused = box.contains(document.activeElement) ? document.activeElement : null;
+  const typing = !forced && focused?.matches('input:not([type=checkbox])');
+  forced = false;
+  if (box.dataset.html === html || typing) return;
+  box.dataset.html = html;
+  box.innerHTML = html;
+  // Put keyboard focus back on the same control.
+  const d = focused?.dataset || {};
+  const same = focused?.id ? `#${CSS.escape(focused.id)}` : d.act ? `[data-act="${d.act}"]${d.value ? `[data-value="${d.value}"]` : ''}${d.provider ? `[data-provider="${d.provider}"]` : ''}` : null;
+  if (same) box.querySelector(same)?.focus();
 }

@@ -2,7 +2,7 @@
 // In-app renderer: the same Three.js studio, offscreen at full size, turning only the car 5° per frame.
 // Blender renderer (optional): render/blender_turntable.py writes the frames; sprites are made here either way.
 // A render belongs to the car it started on and keeps going if you leave this screen.
-import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, native, announce, FORMATS } from '../app.js';
+import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, native, announce, providerOf, FORMATS } from '../app.js';
 import { icon } from '../lib/icons.js';
 import * as P from '../lib/pipeline.js';
 import { Studio, defaultScene } from '../lib/studio.js';
@@ -77,16 +77,18 @@ function renderLeft() {
   const card = (key, title, desc) => `<label class="oc"><input type="checkbox" data-opt="${key}" ${opts[key] ? 'checked' : ''} ${busy ? 'disabled' : ''}><span class="cb">${icon('check', 12)}</span><div><b>${title}</b><span class="d">${desc}</span></div></label>`;
   const look = (key, title, desc, art) => `<button class="look" type="button" data-look="${key}" aria-pressed="${opts[key]}" ${busy ? 'disabled' : ''}><div class="lk">${art}</div><b>${title}</b><span>${desc}</span></button>`;
   const f = (x) => `<button class="chip" type="button" data-format="${x}" aria-pressed="${opts.formats.has(x)}" ${busy ? 'disabled' : ''}>${x}${m.exports?.[x]?.status === 'ready' ? ' ✓' : ''}</button>`;
+  const tripo = providerOf(m) === 'tripo'; // only Tripo can convert its own models to other formats
   const html = `<h2 class="label">What to render</h2>
     ${card('still', 'Still image', `PNG · 2048 px · current angle (${stillYaw(m)}°)`)}
     ${card('t360', '360° turntable', `${P.FRAMES} frames · ${P.STEP}° steps · loops`)}
     ${card('t180', '180° half turn', `Frames 000–0${P.HALF - 1} · stops at both ends`)}
-    ${card('models', 'Model files', 'GLB · GLTF · FBX · USDZ · OBJ · STL · 3MF')}
-    ${opts.models ? `<div class="fmtpick" role="group" aria-label="Extra formats"><span class="chip on" aria-label="GLB is always included">GLB</span>${FORMATS.map(f).join('')}</div>
+    ${card('models', 'Model files', tripo ? 'GLB · GLTF · FBX · USDZ · OBJ · STL · 3MF' : 'GLB')}
+    ${opts.models && tripo ? `<div class="fmtpick" role="group" aria-label="Extra formats"><span class="chip on" aria-label="GLB is always included">GLB</span>${FORMATS.map(f).join('')}</div>
       <p class="fine" style="margin:-4px 0 10px 32px">GLB is copied straight away. Other formats are converted by Tripo the first time, then copied.</p>` : ''}
+    ${opts.models && !tripo ? '<p class="fine" style="margin:-4px 0 10px 32px">Other formats come from Tripo’s converter, which only works on models made with Tripo direct.</p>' : ''}
     <h2 class="label">Looks</h2>
     <div class="looks">
-      ${look('studio', 'Studio backdrop', '4:3 · 2048 px wide', '<div class="stage s-gold"><div class="sg-wall"></div><div class="sg-panel"></div><div class="sg-bar l"></div><div class="sg-bar r"></div><div class="sg-floor"></div><div class="sg-ring"></div></div>')}
+      ${look('studio', 'Studio backdrop', '4:3 · 2048 px wide', '<div class="stage s-ring"><div class="sg-wall"></div><div class="sg-panel"></div><div class="sg-bar l"></div><div class="sg-bar r"></div><div class="sg-floor"></div><div class="sg-ring"></div></div>')}
       ${look('transparent', 'Transparent', 'RGBA · 2048 × 2048', '<div class="stage s-clear"><div class="checker"></div><div class="sc-shadow"></div></div>')}
     </div>
     <div class="renderer-pick">
@@ -254,7 +256,7 @@ async function checkpoint() {
 function sceneFor(model, look) {
   const s = { ...defaultScene(state.settings), ...model.scene };
   if (look === 'transparent') return { ...s, preset: 'transparent' };
-  if (s.preset === 'transparent') return { ...s, preset: state.settings?.defaultScene && state.settings.defaultScene !== 'transparent' ? state.settings.defaultScene : 'gold', backdrop: null };
+  if (s.preset === 'transparent') return { ...s, preset: state.settings?.defaultScene && state.settings.defaultScene !== 'transparent' ? state.settings.defaultScene : 'ring', backdrop: null };
   return s;
 }
 
@@ -316,7 +318,8 @@ async function start() {
   renderRight();
   renderBar();
   try {
-    const started = await send(`/api/renders/${model.id}/start`, 'POST', { looks: turns.length || opts.still ? looks : [], formats: opts.models ? [...opts.formats] : [] });
+    const formats = opts.models && providerOf(model) === 'tripo' ? [...opts.formats] : [];
+    const started = await send(`/api/renders/${model.id}/start`, 'POST', { looks: turns.length || opts.still ? looks : [], formats });
     const slug = started.slug;
     const frames = turns.length ? Math.max(...turns.map(P.turnFrames)) : 0;
     const manifests = {};
@@ -331,7 +334,7 @@ async function start() {
       await put('viewer.html', new Blob([P.viewerHtml({ name: model.name, manifests })]));
     }
     const stills = opts.still ? looks.map((look) => ({ look, angle: job.yaw })) : [];
-    const models = [`${slug}.glb`, ...(opts.models ? [...opts.formats].map((f) => `${slug}.${f.toLowerCase()} (when Tripo finishes converting)`) : [])];
+    const models = [`${slug}.glb`, ...formats.map((f) => `${slug}.${f.toLowerCase()} (when Tripo finishes converting)`)];
     await put('HANDOFF.md', new Blob([P.handoffText({ slug, name: model.name, looks: turns.length ? looks : [], turns, stills, models, renderer: job.renderer, version })]));
     upsert(await api(`/api/models/${model.id}`));
     job.done = true;
