@@ -150,7 +150,12 @@ export function retryQueued(qid) {
   if (item) item.status = 'waiting';
   pump();
 }
-export const openPicker = () => $('#filePicker').click();
+// open: go to the Generate screen when the first photo is in.
+export function openPicker(open = true) {
+  const picker = $('#filePicker');
+  picker.dataset.open = String(open);
+  picker.click();
+}
 export async function retryModel(m) {
   try {
     upsert(await api(`/api/models/${m.id}/retry`, { method: 'POST' }));
@@ -249,9 +254,9 @@ async function navigate() {
   try { current?.unmount?.(); } catch (e) { console.error(e); }
   route = { name, id };
   if (id && findModel(id)) state.lastId = id;
-  const el = $('#view');
-  el.innerHTML = '';
-  el.scrollTop = 0;
+  // A fresh element per screen, so listeners a screen added can never fire on the next one.
+  const el = $('#view').cloneNode(false);
+  $('#view').replaceWith(el);
   current = mod;
   renderFrame();
   try { await mod.mount(el, { id }); } catch (e) { console.error(e); toast(e.message); }
@@ -291,7 +296,7 @@ $('#keyForm').addEventListener('submit', async (e) => {
     refresh();
   } catch (err) { $('#keyError').textContent = err.message; }
 });
-$('#filePicker').addEventListener('change', (e) => { addFiles(e.target.files, { open: e.target.dataset.open !== 'false' }); e.target.value = ''; e.target.dataset.open = ''; });
+$('#filePicker').addEventListener('change', (e) => { addFiles(e.target.files, { open: e.target.dataset.open !== 'false' }); e.target.value = ''; });
 // Dropping a file outside a drop zone must not open it in the window.
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());

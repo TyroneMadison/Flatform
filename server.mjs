@@ -8,13 +8,20 @@ import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP } from './public/lib/pipeline.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
 const THREE = path.join(ROOT, 'node_modules', 'three');
 const VERSION = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+// The app page may only run its own files (and its inline import map). WebAssembly is for the Draco/Meshopt decoders.
+const IMPORT_MAP = readFileSync(path.join(PUBLIC, 'index.html'), 'utf8').match(/<script type="importmap">([\s\S]*?)<\/script>/)[1];
+const CSP = [
+  "default-src 'self'", `script-src 'self' 'wasm-unsafe-eval' 'sha256-${createHash('sha256').update(IMPORT_MAP).digest('base64')}'`,
+  "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "worker-src 'self' blob:", "connect-src 'self'",
+  "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'",
+].join('; ');
 const FORMATS = ['GLTF', 'FBX', 'USDZ', 'OBJ', 'STL', '3MF'];
 const IMAGE_TYPES = { 'image/png': '.png', 'image/jpeg': '.jpg' };
 const HEIC_TYPES = ['image/heic', 'image/heif'];
@@ -34,6 +41,7 @@ const MIME = {
   '.json': 'application/json', '.md': 'text/markdown; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
   '.svg': 'image/svg+xml', '.ttf': 'font/ttf', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.usdz': 'model/vnd.usdz+zip',
+  '.wasm': 'application/wasm',
 };
 
 class HttpError extends Error {
@@ -424,7 +432,9 @@ export async function startServer({
     if (!settings.outputRoot) throw new HttpError(409, 'Choose an output folder first');
     const outDir = path.join(await checkOutputRoot(settings.outputRoot).catch((e) => { throw new HttpError(409, e.message); }), m.slug);
     for (const sub of [...looks.map((l) => path.join('frames', l)), 'web', 'stills', 'models']) await mkdir(path.join(outDir, sub), { recursive: true });
-    m.renders = { ...m.renders, outDir, formats, at: new Date().toISOString() };
+    // A new output folder starts a new record; rendering into the same folder again keeps what's already there.
+    const kept = m.renders?.outDir === outDir ? m.renders : { poster: m.renders?.poster };
+    m.renders = { ...kept, outDir, formats, at: new Date().toISOString() };
     await copyToHandoff(m, v.glb);
     for (const fmt of formats) {
       if (v.exports[fmt]?.status === 'ready') await copyToHandoff(m, v.exports[fmt].file);
@@ -528,9 +538,9 @@ export async function startServer({
     res.end(JSON.stringify(data));
   };
 
-  function serveFile(res, file) {
+  function serveFile(res, file, headers = {}) {
     if (!statSync(file, { throwIfNoEntry: false })?.isFile()) throw new HttpError(404, 'Not found');
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream' });
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff', ...headers });
     createReadStream(file).pipe(res);
   }
 
@@ -562,7 +572,8 @@ export async function startServer({
       if (parts[0] === 'files') return serveFile(res, inside(MODELS, parts.slice(1)));
       if (parts[0] === 'backdrops') return serveFile(res, inside(BACKDROPS, parts.slice(1)));
       if (parts[0] === 'vendor' && parts[1] === 'three') return serveFile(res, inside(THREE, parts.slice(2)));
-      return serveFile(res, inside(PUBLIC, parts.length ? parts : ['index.html']));
+      const file = inside(PUBLIC, parts.length ? parts : ['index.html']);
+      return serveFile(res, file, file.endsWith('.html') ? { 'Content-Security-Policy': CSP } : {});
     }
 
     const [, area, id, sub, extra] = parts;

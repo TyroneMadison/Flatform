@@ -39,9 +39,9 @@ export function mount(el) {
   zone.addEventListener('dragleave', (e) => { if (!zone.contains(e.relatedTarget)) hot(false); });
   zone.addEventListener('drop', (e) => { e.preventDefault(); hot(false); addFiles(e.dataTransfer.files); });
   const hit = $('.dz-hit', el);
-  hit.addEventListener('click', openPicker);
+  hit.addEventListener('click', () => openPicker());
   hit.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPicker(); } });
-  el.querySelector('[data-act=pick]').addEventListener('click', openPicker);
+  el.querySelector('[data-act=pick]').addEventListener('click', () => openPicker());
   el.querySelector('[data-act=paste]').addEventListener('click', pasteFromClipboard);
   update();
 }

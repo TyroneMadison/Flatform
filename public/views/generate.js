@@ -8,6 +8,9 @@ import { icon } from '../lib/icons.js';
 let root;
 let model;
 let shownReady = false;
+let observer;
+
+export function unmount() { observer?.disconnect(); }
 
 export function mount(el, { id }) {
   root = el;
@@ -51,9 +54,18 @@ export function mount(el, { id }) {
   </section>`;
 
   const img = $('.fghost', el);
-  img?.addEventListener('load', () => { $('#fstage', el).style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`; });
+  const fit = () => {
+    const box = $('.fstage-wrap', el);
+    if (!img?.naturalWidth || !box) return;
+    const ratio = img.naturalWidth / img.naturalHeight;
+    const w = Math.min(box.clientWidth, box.clientHeight * ratio);
+    Object.assign($('#fstage', el).style, { width: `${w}px`, height: `${w / ratio}px` });
+  };
+  img?.addEventListener('load', fit);
+  observer = new ResizeObserver(fit);
+  observer.observe($('.fstage-wrap', el));
   const add = $('#qadd', el);
-  add.addEventListener('click', () => { $('#filePicker').dataset.open = 'false'; openPicker(); });
+  add.addEventListener('click', () => openPicker(false));
   add.addEventListener('dragover', (e) => { e.preventDefault(); add.classList.add('hot'); });
   add.addEventListener('dragleave', () => add.classList.remove('hot'));
   add.addEventListener('drop', (e) => { e.preventDefault(); add.classList.remove('hot'); addFiles(e.dataTransfer.files, { open: false }); });

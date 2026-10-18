@@ -184,7 +184,13 @@ test('serves the app, fonts and three.js from local files', async () => {
   for (const p of ['/', '/app.js', '/lib/pipeline.js', '/fonts/Sora-VariableFont_wght.ttf', '/img/icon.svg', '/vendor/three/build/three.module.js', '/vendor/three/examples/jsm/loaders/GLTFLoader.js']) {
     assert.equal((await fetch(app.base + p)).status, 200, p);
   }
-  assert.match((await fetch(`${app.base}/`)).headers.get('content-type'), /text\/html/);
+  const page = await fetch(`${app.base}/`);
+  assert.match(page.headers.get('content-type'), /text\/html/);
+  // The page may only load its own scripts (plus its inline import map) and only talk to this server.
+  const csp = page.headers.get('content-security-policy');
+  assert.match(csp, /script-src 'self' 'wasm-unsafe-eval' 'sha256-[\w+/=]+'/);
+  assert.match(csp, /connect-src 'self'/);
+  assert.match(csp, /object-src 'none'/);
 });
 
 test('Origin check: foreign origins cannot POST, PATCH, PUT or DELETE', async () => {

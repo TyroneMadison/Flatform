@@ -4,8 +4,9 @@
 .dropwrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .dropzone {
   flex: none; min-height: 430px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
-  position: relative; overflow: hidden; padding: 30px 20px; border-radius: 14px; border: 1px solid var(--line-4);
+  position: relative; overflow: hidden; padding: 30px 20px; border-radius: 14px; border: 1px solid rgba(212, 175, 106, .6);
   background: radial-gradient(ellipse 60% 70% at 50% 35%, #1a1611, #0a0908 70%);
+  box-shadow: 0 0 0 4px rgba(212, 175, 106, .04), 0 0 60px rgba(212, 175, 106, .07) inset;
   transition: border-color .2s, box-shadow .2s;
 }
 .dropzone::before { content: ''; position: absolute; inset: 14px; border: 1px dashed rgba(212, 175, 106, .35); border-radius: 8px; pointer-events: none; }
@@ -61,9 +62,10 @@
 .forming.done .pulse { animation: none; }
 @keyframes pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
-.fstage-wrap { flex: 1; min-height: 0; display: grid; place-items: center; padding: 56px 40px 0; }
-/* The photo with a gold wireframe scan: left of the scan line is "formed", right of it is still a grid. */
-.fstage { position: relative; max-width: 100%; max-height: 100%; height: 100%; aspect-ratio: 4 / 3; --p: 4%; }
+.fstage-wrap { flex: 1; min-height: 0; position: relative; margin: 56px 40px 0; display: grid; place-items: center; }
+/* The photo with a gold wireframe scan: left of the scan line is "formed", right of it is still a grid.
+   generate.js sizes it to fit the panel with the photo's own proportions. */
+.fstage { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 0; height: 0; --p: 4%; }
 .fstage > * { position: absolute; inset: 0; width: 100%; height: 100%; }
 .fghost { object-fit: fill; opacity: .16; filter: grayscale(1) brightness(1.6); }
 .freveal { object-fit: fill; clip-path: inset(0 calc(100% - var(--p)) 0 0); transition: clip-path .6s; }
@@ -144,6 +146,7 @@
 .viewport canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
 .viewport canvas.moving { cursor: move; }
 .safe { position: absolute; z-index: 7; border: 1px dashed rgba(212, 175, 106, .35); border-radius: 2px; pointer-events: none; }
+.viewport.light .safe { border-color: rgba(110, 80, 30, .5); }
 .hud.h1 { left: 16px; top: 16px; } .hud.h2 { left: 16px; bottom: 16px; } .hud.h3 { right: 16px; top: 16px; }
 .hud.msg { left: 50%; top: 50%; transform: translate(-50%, -50%); text-transform: none; letter-spacing: 0; font-size: 12.5px; padding: 10px 14px; }
 .vtool { position: absolute; right: 16px; bottom: 16px; z-index: 9; display: flex; gap: 4px; padding: 4px; border-radius: 6px; background: rgba(5, 4, 3, .8); border: 1px solid var(--line-4); }
@@ -240,11 +243,21 @@
 .field select.inp, .field input.inp { grid-column: span 2; }
 .pathform input.inp { grid-column: auto; }
 
-/* narrower windows */
+/* narrower windows (the desktop app's minimum is 1100 px) */
 @media (max-width: 1320px) {
   .genwrap { grid-template-columns: 250px minmax(0, 1fr) 260px; }
   .compose { grid-template-columns: 210px minmax(0, 1fr) 270px; }
   .export { grid-template-columns: 260px minmax(0, 1fr) 300px; }
   .dropzone h1 { font-size: 42px; }
   .recent { grid-template-columns: repeat(2, 1fr); }
+  .stepper { gap: 8px; }
+  .step { letter-spacing: .1em; }
+  .stepline { width: 14px; }
+  .ctop-act .btn { padding: 0 12px; }
+  .tl-step { display: none; }
 }
+.comp-top { flex-wrap: wrap; }
+/* Scrolling panels keep their buttons and cards at full height instead of squashing them. */
+.ex-left > *, .ex-mid > *, .ex-right > *, .insp > *, .scenes > *, .stages > *, .queue > :not(.qlist) { flex-shrink: 0; }
+.tl-head { flex-wrap: wrap; row-gap: 6px; }
+.tl-read { white-space: nowrap; }

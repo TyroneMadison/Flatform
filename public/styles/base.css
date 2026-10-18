@@ -5,6 +5,7 @@
 @font-face { font-family: 'IBM Plex Mono'; src: url('/fonts/IBMPlexMono-Medium.ttf') format('truetype'); font-weight: 500 700; font-display: block; }
 
 :root {
+  color-scheme: dark; /* dark scrollbars and native controls */
   --bg: #070605; --text: #ece5d6; --muted: #a99c82; --soft: #bfb39b; --dim: #7d725e;
   --gold: #d4af6a; --gold-hi: #f1d390; --gold-2: #e6c27a; --ring: #f0c66b;
   --line: #2a241b; --line-2: #241f17; --line-3: #2e271d; --line-4: #3a3022; --line-5: #4a3e2c;
@@ -90,7 +91,8 @@ a.step:hover span { color: var(--gold-hi); }
   color: #e9dcc0; border: 1px solid var(--line-5); background: #14110d; text-decoration: none;
 }
 .btn:hover:not(:disabled) { filter: brightness(1.12); }
-.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:disabled, .btn.disabled { opacity: .45; cursor: not-allowed; }
+.btn.disabled { pointer-events: none; }
 .btn.pri { background: linear-gradient(180deg, #f1d390, #c99a4c); color: #120e08; border: 0; box-shadow: 0 6px 20px rgba(212, 160, 80, .25), inset 0 1px 0 rgba(255, 255, 255, .5); }
 .btn.sec { border-color: var(--gold); color: var(--gold-2); background: transparent; }
 .btn.ghostbtn { background: transparent; border-color: var(--line-3); }
