@@ -187,10 +187,12 @@ export function openKeyDialog() {
   $('#keyError').textContent = '';
   if (!$('#keyDialog').open) $('#keyDialog').showModal();
 }
+let askedForKey = false;
 export async function refreshAccount() {
   try {
     state.account = await api('/api/account');
-    if (!state.account.hasKey) openKeyDialog();
+    // Ask once per session; after that the rail and Settings show that the key is missing.
+    if (!state.account.hasKey && !askedForKey) { askedForKey = true; openKeyDialog(); }
   } catch (e) {
     state.account = { error: e.message };
   }

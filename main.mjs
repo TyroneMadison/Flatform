@@ -40,7 +40,8 @@ let win;
 let origin;
 
 // Native helpers for the page (see preload.cjs). Only our own page may call them, and every argument is checked.
-const fromApp = (e) => e.sender === win?.webContents && e.senderFrame?.url.startsWith(origin + '/');
+const sameOrigin = (url) => { try { return new URL(url).origin === origin; } catch { return false; } };
+const fromApp = (e) => e.sender === win?.webContents && sameOrigin(e.senderFrame?.url);
 const existingPath = (p) => typeof p === 'string' && path.isAbsolute(p) && existsSync(p);
 const validFilters = (filters) => Array.isArray(filters) && filters.length <= 10 && filters.every((f) => f
   && typeof f.name === 'string' && f.name.length <= 100 && Array.isArray(f.extensions) && f.extensions.length <= 20
@@ -84,7 +85,7 @@ function createWindow(port) {
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (e, url) => {
-    if (!url.startsWith(origin)) e.preventDefault();
+    if (!sameOrigin(url)) e.preventDefault();
   });
   win.loadURL(origin);
 }
@@ -103,7 +104,11 @@ app.whenReady().then(async () => {
     dataDir: path.join(app.getPath('userData'), 'library'),
     keyStore,
     // Blender runs the render script as a separate program, so it can't be read from inside app.asar.
-    ...(app.isPackaged && { blenderScript: path.join(process.resourcesPath, 'render', 'blender_turntable.py') }),
+    // The three.js addons ship next to it because electron-builder leaves dependencies' examples/ folders out.
+    ...(app.isPackaged && {
+      blenderScript: path.join(process.resourcesPath, 'render', 'blender_turntable.py'),
+      threeAddons: path.join(process.resourcesPath, 'three', 'examples', 'jsm'),
+    }),
   });
   console.log(`Flatform server on 127.0.0.1:${port}`);
   createWindow(port);

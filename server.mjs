@@ -52,6 +52,7 @@ class HttpError extends Error {
 const vname = (base, n) => (n > 1 ? `${base}-v${n}` : base);
 const typeOf = (file) => (/\.png$/i.test(file) ? 'image/png' : 'image/jpeg');
 const cleanName = (name) => String(name ?? '').trim().slice(0, 100) || 'Untitled';
+const isLook = (look) => typeof look === 'string' && Object.hasOwn(LOOKS, look); // not "constructor" and friends
 
 export function suggestedOutputRoot(platform = process.platform) {
   return platform === 'win32' ? 'E:\\Claude Stuff\\car-360-pipeline\\handoff' : path.join(os.homedir(), 'Flatform', 'handoff');
@@ -79,6 +80,9 @@ export async function startServer({
   model = 'v3.1-20260211',
   keyStore,
   blenderScript = path.join(ROOT, 'render', 'blender_turntable.py'), // the packaged app ships it as a resource file
+  // three.js addons (loaders, controls, decoders). electron-builder drops every dependency's examples/ folder,
+  // so the packaged app ships this one as a resource file too.
+  threeAddons = path.join(THREE, 'examples', 'jsm'),
 }) {
   const MODELS = path.join(dataDir, 'models');
   const BACKDROPS = path.join(dataDir, 'backdrops');
@@ -199,7 +203,7 @@ export async function startServer({
   // Photos come in as PNG, JPEG or HEIC. HEIC is converted to JPEG here because Tripo and browsers can't read it.
   async function readImage(req) {
     let type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
-    if (!IMAGE_TYPES[type] && !HEIC_TYPES.includes(type)) throw new HttpError(415, 'Use a PNG, JPEG or HEIC image');
+    if (!Object.hasOwn(IMAGE_TYPES, type) && !HEIC_TYPES.includes(type)) throw new HttpError(415, 'Use a PNG, JPEG or HEIC image');
     let image = await readBody(req, MAX_IMAGE, 'Image too large (max 20 MB)');
     if (HEIC_TYPES.includes(type)) {
       const { default: convert } = await import('heic-convert');
@@ -427,7 +431,7 @@ export async function startServer({
   async function startRender(m, { looks = [], formats = [] }) {
     const v = active(m);
     if (v.status !== 'ready') throw new HttpError(409, 'Model is not ready yet');
-    if (!Array.isArray(looks) || looks.some((l) => !LOOKS[l])) throw new HttpError(400, 'Unknown look');
+    if (!Array.isArray(looks) || !looks.every(isLook)) throw new HttpError(400, 'Unknown look');
     if (!Array.isArray(formats) || formats.some((f) => !FORMATS.includes(f))) throw new HttpError(400, 'Unknown model format');
     if (!settings.outputRoot) throw new HttpError(409, 'Choose an output folder first');
     const outDir = path.join(await checkOutputRoot(settings.outputRoot).catch((e) => { throw new HttpError(409, e.message); }), m.slug);
@@ -497,7 +501,7 @@ export async function startServer({
     const bin = findBlender();
     if (!bin) throw new HttpError(409, 'Blender not found. Install Blender 4.x or locate it in Settings.');
     if (!m.renders?.outDir) throw new HttpError(409, 'Start the render first');
-    if (!Array.isArray(looks) || !looks.length || looks.some((l) => !LOOKS[l])) throw new HttpError(400, 'Unknown look');
+    if (!Array.isArray(looks) || !looks.length || !looks.every(isLook)) throw new HttpError(400, 'Unknown look');
     if (![FRAMES, HALF, 0].includes(frames)) throw new HttpError(400, `Render ${FRAMES} or ${HALF} frames`);
     if (still !== undefined && !(Number.isFinite(still) && still >= 0 && still < 360)) throw new HttpError(400, 'Bad still angle');
     if (jobs.get(m.id)?.status === 'running') throw new HttpError(409, 'Blender is already rendering this car');
@@ -546,6 +550,7 @@ export async function startServer({
 
   // Resolves URL path parts under dir, refusing anything that climbs out of it.
   function inside(dir, parts) {
+    if (parts.some((p) => p.includes('\0'))) throw new HttpError(404, 'Not found');
     const file = path.resolve(dir, ...parts);
     if (!file.startsWith(dir + path.sep)) throw new HttpError(404, 'Not found');
     return file;
@@ -571,7 +576,8 @@ export async function startServer({
       if (method !== 'GET') throw new HttpError(404, 'Not found');
       if (parts[0] === 'files') return serveFile(res, inside(MODELS, parts.slice(1)));
       if (parts[0] === 'backdrops') return serveFile(res, inside(BACKDROPS, parts.slice(1)));
-      if (parts[0] === 'vendor' && parts[1] === 'three') return serveFile(res, inside(THREE, parts.slice(2)));
+      if (parts[0] === 'vendor' && parts[1] === 'three' && parts[2] === 'examples' && parts[3] === 'jsm') return serveFile(res, inside(threeAddons, parts.slice(4)));
+      if (parts[0] === 'vendor' && parts[1] === 'three' && parts[2] === 'build') return serveFile(res, inside(THREE, parts.slice(2)));
       const file = inside(PUBLIC, parts.length ? parts : ['index.html']);
       return serveFile(res, file, file.endsWith('.html') ? { 'Content-Security-Policy': CSP } : {});
     }

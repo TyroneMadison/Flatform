@@ -33,7 +33,7 @@ export function mount(el, { id }) {
       <div class="fhud tl"><span class="pulse" aria-hidden="true"></span><span id="fhudText">Generating 3D model</span></div>
       <div class="fhud tr">${esc(modelLabel())}</div>
       <div class="fstage-wrap">${model?.source ? `
-        <div class="fstage" id="fstage" style="--src:url('${fileUrl(model, model.source)}')">
+        <div class="fstage" id="fstage">
           <img class="fghost" src="${fileUrl(model, model.source)}" alt="">
           <img class="freveal" src="${fileUrl(model, model.source)}" alt="">
           <div class="fwire"></div><div class="fdots"></div><div class="fscan"></div>

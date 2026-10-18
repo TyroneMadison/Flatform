@@ -44,6 +44,10 @@
       {
         "from": "render/blender_turntable.py",
         "to": "render/blender_turntable.py"
+      },
+      {
+        "from": "node_modules/three/examples/jsm",
+        "to": "three/examples/jsm"
       }
     ],
     "directories": {
