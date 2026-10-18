@@ -260,7 +260,7 @@ export { valuesOf };
 /**
  * Tripo direct (POST /v3/generation/image-to-model). input, model, texture and pbr are what v0.3 sent to the live
  * API. The other names mirror Tripo's own task parameters as 3D AI Studio's Tripo proxy documents them; Flatform has
- * no Tripo v3 reference for them, so they are only sent when they differ from Tripo's defaults.
+ * names checked against developers.tripo3d.ai v3 docs; only sent when they differ from Tripo's defaults.
  */
 export function tripoDirectBody(o, input) {
   const t = textured(o);
@@ -269,7 +269,7 @@ export function tripoDirectBody(o, input) {
   set('geometry_quality', o.geometry_quality, 'standard');
   if (t) {
     set('texture_quality', o.texture_quality, 'standard');
-    if (o.texture_model === '3.5') Object.assign(body, { texture_model: '3.5', lighting_removal: o.lighting_removal });
+    if (o.texture_model === '3.5') Object.assign(body, { texture_version: 'v3.5-20260815', delight: o.lighting_removal }); // Tripo v3 names (developers.tripo3d.ai image-to-model H series)
     set('texture_alignment', o.texture_alignment, 'original_image');
     set('texture_seed', o.texture_seed);
   }

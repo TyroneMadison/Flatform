@@ -124,7 +124,7 @@ test('3D AI Studio request bodies for every engine', () => {
 test('Tripo direct body sends only what differs from Tripo defaults', () => {
   assert.deepEqual(tripoDirectBody(presetConfig('tripo', 'balanced').options, 'file_1'), { input: 'file_1', model: 'v3.1-20260211', texture: true, pbr: true, texture_quality: 'detailed' });
   assert.deepEqual(tripoDirectBody(presetConfig('tripo', 'fast').options, 'file_2'),
-    { input: 'file_2', model: 'v3.1-20260211', texture: true, pbr: false, texture_quality: 'fast', texture_model: '3.5', lighting_removal: true });
+    { input: 'file_2', model: 'v3.1-20260211', texture: true, pbr: false, texture_quality: 'fast', texture_version: 'v3.5-20260815', delight: true });
   assert.deepEqual(tripoDirectBody(normalize({ provider: 'tripo', engine: 'tripo-direct', options: { texture: 'none', generate_parts: true, face_limit: 10000, model_seed: 3 } }).options, 'f'),
     { input: 'f', model: 'v3.1-20260211', texture: false, pbr: false, face_limit: 10000, generate_parts: true, model_seed: 3 });
 });
