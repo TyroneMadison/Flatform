@@ -9,7 +9,7 @@ Drop images and get 3D models. Each model is saved to a library on your computer
 Download the latest release from the [Releases page](https://github.com/TyroneMadison/tripo-studio/releases):
 
 - **Windows:** `Tripo Studio Setup x.y.z.exe`. The app isn't code-signed yet, so Windows SmartScreen may warn you. Click **More info**, then **Run anyway**.
-- **Mac:** use the `arm64` `.dmg` for Apple Silicon or the `x64` `.dmg` for Intel. The app isn't notarized yet, so the first time you open it, right-click the app and choose **Open**.
+- **Mac:** use `Tripo Studio-x.y.z-arm64.dmg` for Apple Silicon or `Tripo Studio-x.y.z.dmg` for Intel, and drag the app into Applications. The app isn't notarized yet, so macOS blocks the first launch. Open it once, then go to **System Settings → Privacy & Security** and click **Open Anyway**.
 
 On first launch, paste a Tripo API key from https://developers.tripo3d.com/en/keys. The key is encrypted by your operating system (Windows DPAPI or macOS Keychain) and is only sent to Tripo. You pay Tripo directly in credits; this app adds no fees.
 

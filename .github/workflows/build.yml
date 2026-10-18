@@ -29,7 +29,8 @@ jobs:
       - run: npx electron-builder --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: false # no paid signing certificate yet
+          CSC_IDENTITY_AUTO_DISCOVERY: false # no paid certificate yet; Mac uses the ad-hoc identity in package.json
+          CSC_FOR_PULL_REQUEST: true # sign PR builds too, so they match releases
       - uses: actions/upload-artifact@v4
         with:
           name: tripo-studio-${{ runner.os }}
