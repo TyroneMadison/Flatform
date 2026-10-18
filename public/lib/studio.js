@@ -23,15 +23,16 @@ import { STEP } from './pipeline.js';
 RectAreaLightUniformsLib.init();
 
 export const CAR_LENGTH = 4.6;
-export const GOLD = '#f0c66b';
+export const RING = '#ff7a66'; // the accent colour of the app
 export const CAMERAS = {
   front34: { label: 'Front ¾', turn: 30, elevation: 13, lens: 50, height: 'eye height' },
   side: { label: 'Side', turn: 90, elevation: 6, lens: 50, height: 'eye height' },
   rear34: { label: 'Rear ¾', turn: 150, elevation: 13, lens: 50, height: 'eye height' },
   low: { label: 'Low hero', turn: 30, elevation: 2.5, lens: 35, height: 'low' },
 };
+// 'ring' was called 'gold' before v0.4; the server renames it in saved scenes and settings.
 export const PRESETS = {
-  gold: { label: 'Escalade gold-ring studio', note: 'Reflective floor · gold ring · side light bars' },
+  ring: { label: 'Escalade ring studio', note: 'Reflective floor · coral ring · side light bars' },
   transparent: { label: 'Transparent', note: 'RGBA PNG with soft contact shadow' },
   cyclorama: { label: 'White cyclorama', note: 'Seamless white, soft top light' },
   miami: { label: 'Miami street at night', note: 'Add your Miami HDRI' },
@@ -39,7 +40,7 @@ export const PRESETS = {
 };
 // Light intensities each preset uses when "Match lighting to scene" is on.
 const MATCHED = {
-  gold: { key: 1.3, fill: 0.3, rim: 1.4 },
+  ring: { key: 1.3, fill: 0.3, rim: 1.4 },
   transparent: { key: 1.6, fill: 0.6, rim: 0.9 },
   cyclorama: { key: 1.1, fill: 0.6, rim: 0.4 },
   backdrop: { key: 0.5, fill: 0.15, rim: 0.4 },
@@ -47,7 +48,7 @@ const MATCHED = {
 
 export function defaultScene(settings = {}) {
   return {
-    preset: settings.defaultScene && settings.defaultScene !== 'transparent' ? settings.defaultScene : 'gold',
+    preset: settings.defaultScene && settings.defaultScene !== 'transparent' ? settings.defaultScene : 'ring',
     backdrop: null, x: 0, y: 0, snap: true, turn: 30, scale: 1, sameSize: true,
     camera: 'front34', lens: 50, matchLighting: true, key: 1.3, fill: 0.3, rim: 1.4,
     reflection: 0.7, shadow: 0.5, autoOrient: true, center: true, flip: false,
@@ -120,8 +121,8 @@ function glowMaterial(kind, color, width, strength, radius = 0) {
 }
 const emissive = (color, intensity) => new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(intensity) });
 
-// The lighting the car paint reflects in the gold studio: dark room, overhead softbox, two light bars, gold ring.
-function goldEnvironment() {
+// The lighting the car paint reflects in the ring studio: dark room, overhead softbox, two light bars, the ring.
+function ringEnvironment() {
   const env = new THREE.Scene();
   const room = new THREE.Mesh(new THREE.BoxGeometry(26, 14, 26), new THREE.MeshBasicMaterial({ color: 0x030303, side: THREE.BackSide }));
   room.position.y = 6;
@@ -131,7 +132,7 @@ function goldEnvironment() {
   add(new THREE.BoxGeometry(0.5, 7, 0.5), emissive('#ffffff', 9), -7, 3.6, -3);
   add(new THREE.BoxGeometry(0.5, 7, 0.5), emissive('#ffffff', 9), 7, 3.6, -3);
   add(new THREE.PlaneGeometry(6, 2.5), emissive('#fff6ea', 0.9), 0, 2.2, 11);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(3.3, 0.08, 8, 96), emissive(GOLD, 2));
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(3.3, 0.08, 8, 96), emissive(RING, 2));
   ring.rotation.x = Math.PI / 2;
   ring.position.y = 0.05;
   env.add(ring);
@@ -249,7 +250,7 @@ export class Studio {
   }
 
   env(name) {
-    this.envs[name] ||= this.pmrem.fromScene(name === 'gold' ? goldEnvironment() : new RoomEnvironment(), 0.04).texture;
+    this.envs[name] ||= this.pmrem.fromScene(name === 'ring' ? ringEnvironment() : new RoomEnvironment(), 0.04).texture;
     return this.envs[name];
   }
 
@@ -320,7 +321,7 @@ export class Studio {
     this.lights.fill.intensity = k.fill;
     this.lights.rim.intensity = k.rim;
     if (this.floor) this.floor.material.uniforms.strength.value = s.reflection * 0.75;
-    this.shadow.plane.material.opacity = this.state.preset === 'gold' ? 0.85 : 0.7;
+    this.shadow.plane.material.opacity = this.state.preset === 'ring' ? 0.85 : 0.7;
   }
 
   // Frames the car for the look (4:3 studio or 1:1 transparent) and fits that frame inside the canvas.
@@ -386,18 +387,18 @@ export class Studio {
     this.built = true;
     this.clearStage();
     const p = this.state.preset;
-    if (p === 'gold') this.buildGold();
+    if (p === 'ring') this.buildRing();
     else if (p === 'cyclorama') this.buildCyclorama();
     else if (needsBackdrop(p)) await this.buildBackdrop(build);
     else this.scene.environment = this.env('room'); // transparent
     this.applyLights();
   }
 
-  // a) Escalade gold-ring studio. Built the same way every time.
-  buildGold() {
+  // a) Escalade ring studio. Built the same way every time.
+  buildRing() {
     const add = (o) => { this.stage.add(o); return o; };
     this.scene.background = new THREE.Color(0x050505);
-    this.scene.environment = this.env('gold');
+    this.scene.environment = this.env('ring');
     const w = Math.round(this.width * this.renderer.getPixelRatio());
     const h = Math.round(this.height * this.renderer.getPixelRatio());
     this.floor = add(new Reflector(new THREE.PlaneGeometry(80, 80), { color: 0x060606, textureWidth: w, textureHeight: h, clipBias: 0.003, shader: FloorShader }));
@@ -405,10 +406,10 @@ export class Studio {
     this.floor.material.uniforms.texel.value.set(1 / w, 1 / h);
     const wall = add(new THREE.Mesh(new THREE.PlaneGeometry(60, 24), new THREE.MeshStandardMaterial({ color: 0x0d0c0b, roughness: 0.92 })));
     wall.position.set(0, 12, -8);
-    const ring = add(new THREE.Mesh(new THREE.TorusGeometry(3.3, 0.024, 12, 320), emissive(GOLD, 2.6)));
+    const ring = add(new THREE.Mesh(new THREE.TorusGeometry(3.3, 0.024, 12, 320), emissive(RING, 2.6)));
     ring.rotation.x = Math.PI / 2;
     ring.position.y = 0.012;
-    const halo = add(new THREE.Mesh(new THREE.RingGeometry(2.7, 3.9, 320, 1), glowMaterial('ring', GOLD, 0.16, 0.9, 3.3)));
+    const halo = add(new THREE.Mesh(new THREE.RingGeometry(2.7, 3.9, 320, 1), glowMaterial('ring', RING, 0.16, 0.9, 3.3)));
     halo.rotation.x = -Math.PI / 2;
     halo.position.y = 0.008;
     for (const x of [-5.9, 5.9]) {

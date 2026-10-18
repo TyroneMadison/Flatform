@@ -3,7 +3,7 @@
     blender -b -P blender_turntable.py -- --glb car.glb --out frames/studio --slug audi-r8 --look studio \
         --frames 72 --step 5 --res 2048x1536 [--scene scene.json] [--still 30 --still-out stills/x.png]
 
-Builds the Escalade gold-ring studio (or the transparent look) in code, normalises the car exactly like the in-app
+Builds the Escalade ring studio (or the transparent look) in code, normalises the car exactly like the in-app
 renderer (public/lib/studio.js), then turns only the car by --step degrees per frame. The camera, lights and studio
 never move. Prints "FLATFORM_FRAME <done> <total>" after each frame so Flatform can show progress.
 
@@ -20,7 +20,7 @@ import bpy
 from mathutils import Vector
 
 CAR_LENGTH = 4.6
-GOLD = (0.871, 0.565, 0.150)  # #f0c66b in linear RGB
+RING = (1.0, 0.195, 0.133)  # #ff7a66, the app's coral accent, in linear RGB
 CAMERAS = {  # elevation in degrees, as in studio.js
     "front34": 13.0,
     "side": 6.0,
@@ -111,14 +111,14 @@ def world(strength, color=(1, 1, 1)):
     bpy.context.scene.world = w
 
 
-def build_gold_studio(reflection):
-    """Near-black room, glossy dark floor, gold ring, two light bars, overhead softbox, key/fill/rim."""
+def build_ring_studio(reflection):
+    """Near-black room, glossy dark floor, coral ring, two light bars, overhead softbox, key/fill/rim."""
     world(0.02)
     floor = plane("floor", 80, 80, (0, 0, 0), mat=principled("floor", (0.006, 0.006, 0.006), 0.22 - 0.18 * reflection))
     floor.data.materials[0].node_tree.nodes["Principled BSDF"].inputs["Specular IOR Level"].default_value = 0.3 + 0.5 * reflection
     plane("wall", 60, 24, (0, 8, 12), rotation=(math.radians(90), 0, 0), mat=principled("wall", (0.008, 0.007, 0.006), 0.92))
     bpy.ops.mesh.primitive_torus_add(major_radius=3.3, minor_radius=0.024, major_segments=320, minor_segments=12, location=(0, 0, 0.012))
-    add_object(bpy.context.active_object, emission("gold ring", GOLD, 9.0))
+    add_object(bpy.context.active_object, emission("ring", RING, 9.0))
     for x in (-5.9, 5.9):
         bpy.ops.mesh.primitive_cube_add(size=1, location=(x, 3.8, 1.75))
         bar = bpy.context.active_object
@@ -257,7 +257,7 @@ def main():
     if args.look == "transparent":
         build_transparent()
     else:
-        build_gold_studio(float(s["reflection"]))
+        build_ring_studio(float(s["reflection"]))
     pivot = import_car(args.glb, s)
     place_camera(s, args.look)
     setup_render(width, height, args.look, args.samples)

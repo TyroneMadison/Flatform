@@ -145,7 +145,7 @@ export function viewerHtml({ name, manifests }) {
   section { margin:32px 0; }
   .frame { border:1px solid #2a241b; border-radius:6px; overflow:hidden; }
   .frame.transparent { background:conic-gradient(#e5e7eb 25%, #fff 0 50%, #e5e7eb 0 75%, #fff 0) 0 0 / 20px 20px; }
-  [data-flatform-spin]:focus-visible { outline:2px solid #f0c66b; outline-offset:-2px; }
+  [data-flatform-spin]:focus-visible { outline:2px solid #ff7a66; outline-offset:-2px; }
 </style>
 </head>
 <body>

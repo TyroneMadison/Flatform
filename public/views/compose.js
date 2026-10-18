@@ -210,7 +210,7 @@ function renderTimeline() {
 
 function renderScenes() {
   const art = {
-    gold: '<div class="stage s-gold"><div class="sg-wall"></div><div class="sg-panel"></div><div class="sg-bar l"></div><div class="sg-bar r"></div><div class="sg-floor"></div><div class="sg-ring"></div></div>',
+    ring: '<div class="stage s-ring"><div class="sg-wall"></div><div class="sg-panel"></div><div class="sg-bar l"></div><div class="sg-bar r"></div><div class="sg-floor"></div><div class="sg-ring"></div></div>',
     transparent: '<div class="stage s-clear"><div class="checker"></div><div class="sc-shadow"></div></div>',
     cyclorama: '<div class="stage s-cyc"><div class="sc-shadow"></div></div>',
     miami: '<div class="stage s-miami"><div class="sm-sky"></div><div class="sm-city"></div><div class="sm-road"></div><div class="sm-neon"></div></div>',
@@ -266,7 +266,7 @@ function renderInspector() {
       ${s.matchLighting ? '' : `<div class="lights">${slider('key', 'Key', 0, 3, 0.1, s.key, valueText.key(s.key))}${slider('fill', 'Fill', 0, 3, 0.1, s.fill, valueText.fill(s.fill))}${slider('rim', 'Rim', 0, 3, 0.1, s.rim, valueText.rim(s.rim))}</div>`}
     </div>
     <div class="grp" id="grp-ground"><h3>Ground</h3>
-      ${slider('reflection', 'Reflection', 0, 1, 0.01, s.reflection, s.preset === 'gold' ? level(s.reflection) : 'n/a', s.preset !== 'gold')}
+      ${slider('reflection', 'Reflection', 0, 1, 0.01, s.reflection, s.preset === 'ring' ? level(s.reflection) : 'n/a', s.preset !== 'ring')}
       ${slider('shadow', 'Shadow', 0, 1, 0.01, s.shadow, softness(s.shadow))}
     </div>`;
 }
@@ -309,7 +309,7 @@ function bind() {
     if (!k || e.target.type !== 'range') return;
     const v = Number(e.target.value);
     e.target.style.setProperty('--p', `${((v - e.target.min) / (e.target.max - e.target.min)) * 100}%`);
-    $(`#v-${k}`, el).textContent = k === 'reflection' && scene.preset !== 'gold' ? 'n/a' : valueText[k](v);
+    $(`#v-${k}`, el).textContent = k === 'reflection' && scene.preset !== 'ring' ? 'n/a' : valueText[k](v);
     change({ [k]: v }, { inspector: false });
   });
   el.addEventListener('change', (e) => {

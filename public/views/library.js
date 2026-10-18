@@ -1,6 +1,6 @@
 // 06 · Library: search, filters, cards and the side panel with every action for one model.
 import { $, $$, esc, state, api, send, toast, go, findModel, upsert, fileUrl, thumbOf, statusText, statusClass, isGenerating,
-  isRendered, retryModel, confirmDialog, refresh, openPicker, busy, FORMATS } from '../app.js';
+  isRendered, retryModel, confirmDialog, refresh, openPicker, busy, setupFor, engineLabel, providerOf, FORMATS } from '../app.js';
 import { icon } from '../lib/icons.js';
 
 const FILTERS = [['all', 'All'], ['ready', 'Ready'], ['generating', 'Generating'], ['failed', 'Failed'], ['rendered', 'Rendered'], ['needs', 'Needs render']];
@@ -56,11 +56,7 @@ async function onClick(e) {
   const m = findModel(t.dataset.id || selectedId);
   if (!m) return;
   if (t.dataset.act === 'retry') return busy(t, () => retryModel(m));
-  if (t.dataset.act === 'regen') {
-    await busy(t, async () => {
-      try { upsert(await api(`/api/models/${m.id}/versions`, { method: 'POST' })); go(`#/generate/${m.id}`); } catch (err) { toast(err.message); }
-    });
-  }
+  if (t.dataset.act === 'regen') await busy(t, () => setupFor(m).catch((err) => toast(err.message)));
   if (t.dataset.act === 'delete') {
     if (!(await confirmDialog({ title: `Delete “${m.name}”?`, text: 'This removes the model, every version and its files from this computer. Rendered handoff folders are not touched.', ok: 'Delete model' }))) return;
     try {
@@ -89,7 +85,7 @@ function card(m) {
     : '<em class="dim">Not rendered</em>';
   return `<article class="lc glass${m.id === selectedId ? ' on' : ''}">
     <button class="lc-select" type="button" data-select="${m.id}" aria-pressed="${m.id === selectedId}"><span class="sr-only">Select ${esc(m.name)}</span></button>
-    <div class="lc-th"><div class="stage ${poster ? 's-gold' : 's-clear'}">${poster ? '' : '<div class="checker"></div>'}${img ? `<img class="thumb${poster ? '' : ' contain'}" src="${img}" alt="${esc(m.name)}">` : ''}</div></div>
+    <div class="lc-th"><div class="stage ${poster ? 's-ring' : 's-clear'}">${poster ? '' : '<div class="checker"></div>'}${img ? `<img class="thumb${poster ? '' : ' contain'}" src="${img}" alt="${esc(m.name)}">` : ''}</div></div>
     <div class="lc-b">
       <div><b>${esc(m.name)}</b><span class="st ${statusClass(m)}">${esc(statusText(m))}</span>${isGenerating(m) ? `<div class="pbar"><i style="width:${m.progress || 0}%"></i></div>` : ''}</div>
       <div class="badges">${m.status === 'failed' ? `<button class="btn sm pri" type="button" data-act="retry" data-id="${m.id}">${icon('retry')}<span>Retry</span></button>` : badges}</div>
@@ -110,9 +106,10 @@ function side(m) {
   if (!m) return '<p class="muted">Select a model to see what you can do with it.</p>';
   const ready = m.status === 'ready';
   const rendered = isRendered(m) ? `rendered ${[(m.renders.studio360 || m.renders.transparent360) && '360', (m.renders.studio180 || m.renders.transparent180) && '180'].filter(Boolean).join(' and ')}` : 'not rendered yet';
-  const sub = [statusText(m), `${m.versions.length} version${m.versions.length > 1 ? 's' : ''}`, ready && rendered].filter(Boolean).join(' · ');
+  const sub = [statusText(m), engineLabel(m), `${m.versions.length} version${m.versions.length > 1 ? 's' : ''}`, ready && rendered].filter(Boolean).join(' · ');
+  const tripo = providerOf(m) === 'tripo';
   return `
-    <div class="ls-th"><div class="stage ${m.renders?.poster ? 's-gold' : 's-clear'}">${m.renders?.poster ? '' : '<div class="checker"></div>'}${thumbOf(m) ? `<img class="thumb${m.renders?.poster ? '' : ' contain'}" src="${thumbOf(m)}" alt="${esc(m.name)}">` : ''}</div></div>
+    <div class="ls-th"><div class="stage ${m.renders?.poster ? 's-ring' : 's-clear'}">${m.renders?.poster ? '' : '<div class="checker"></div>'}${thumbOf(m) ? `<img class="thumb${m.renders?.poster ? '' : ' contain'}" src="${thumbOf(m)}" alt="${esc(m.name)}">` : ''}</div></div>
     <label class="sr-only" for="rename">Model name</label>
     <input class="it rename" id="rename" value="${esc(m.name)}" maxlength="100" spellcheck="false">
     <p class="sub">${esc(sub)}</p>
@@ -125,8 +122,9 @@ function side(m) {
       <button class="btn ghostbtn" type="button" data-act="regen" ${isGenerating(m) ? 'disabled' : ''}>${icon('retry')}<span>Regenerate</span></button>
     </div>
     <div class="grp"><h3>Download model</h3>
-      ${ready ? `<div class="fmts"><a class="fmt ok" href="${fileUrl(m, m.glb)}" download="${esc(m.slug || 'model')}.glb" aria-label="Download GLB">GLB</a>${FORMATS.map((f) => formatButton(m, f)).join('')}</div>
-      <p class="fine">GLB is saved right away. Other formats are converted by Tripo on first click.</p>` : '<p class="fine">Downloads unlock when the model is ready.</p>'}
+      ${ready ? `<div class="fmts"><a class="fmt ok" href="${fileUrl(m, m.glb)}" download="${esc(m.slug || 'model')}.glb" aria-label="Download GLB">GLB</a>${tripo ? FORMATS.map((f) => formatButton(m, f)).join('') : ''}</div>
+      <p class="fine">${tripo ? 'GLB is saved right away. Other formats are converted by Tripo on first click.'
+        : 'GLB is saved right away. Other formats come from Tripo’s converter, which only works on models made with Tripo direct.'}</p>` : '<p class="fine">Downloads unlock when the model is ready.</p>'}
     </div>
     <div class="grp danger"><button class="btn dangerbtn" type="button" data-act="delete">Delete model and its files</button></div>`;
 }
