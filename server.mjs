@@ -10,12 +10,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
-import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP } from './public/lib/pipeline.js';
+import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, PLATES, plateCamera } from './public/lib/pipeline.js';
 import { PROVIDERS, VIEWS, normalize, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
 import { estimate } from './public/lib/pricing.js';
 import { threeDAIStudio, createLimiter, THREE_D_AI_BASE, HIGH } from './providers.mjs';
 import { createKeyStore } from './keys.mjs';
 import { createUpdater, parseVersion, updateOptions } from './updates.mjs';
+import { SERVICES, CONVERT_CREDITS, entry, append, parse, summary, defaultThresholds } from './ledger.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -34,6 +35,8 @@ const IMAGE_TYPES = { 'image/png': '.png', 'image/jpeg': '.jpg' };
 const HEIC_TYPES = ['image/heic', 'image/heif'];
 const MAX_IMAGE = 20 * 1024 * 1024; // Tripo's and 3D AI Studio's limit for images
 const MAX_FORM = VIEWS.length * MAX_IMAGE + 1024 * 1024; // four views and the setup
+const MAX_MODEL = 300 * 1024 * 1024; // a dropped 3D model: its GLB, the original file and a preview
+export const MODEL_EXTS = ['.glb', '.gltf', '.fbx', '.obj', '.usdz']; // 3D files the Drop step takes
 const MAX_RENDER_FILE = 128 * 1024 * 1024; // a 6144 px PNG sprite sheet fits easily
 const MAX_BACKDROP = 256 * 1024 * 1024; // 4K EXR HDRIs are big
 const RENDER_TYPES = ['.png', '.webp', '.json', '.js', '.html', '.md', '.glb'];
@@ -41,10 +44,10 @@ const BACKDROP_TYPES = ['.jpg', '.jpeg', '.png', '.hdr', '.exr'];
 const FAILED = ['failed', 'cancelled', 'banned'];
 // Global keys work on .ai; .com (the host the docs show) is the China region and rejects global keys.
 const REGIONS = { global: 'https://openapi.tripo3d.ai/v3', china: 'https://openapi.tripo3d.com/v3' };
-const SCENES = ['ring', 'transparent', 'cyclorama', 'miami', 'custom']; // 'ring' was called 'gold' before v0.4
+const SCENES = [...Object.keys(PLATES), 'ring', 'transparent', 'cyclorama', 'miami', 'custom']; // 'ring' was called 'gold' before v0.4
 // Version fields mirrored at the top level of each library entry, so v0.2 readers and the UI see the active version.
 const VERSION_FIELDS = ['task_id', 'status', 'progress', 'tripo_status', 'glb', 'thumb', 'credits', 'error', 'exports', 'source',
-  'provider', 'engine', 'mode', 'views', 'upstream_status', 'note'];
+  'provider', 'engine', 'mode', 'views', 'upstream_status', 'note', 'generation', 'file', 'fileName'];
 const RESULTS_KEPT = 24 * 60 * 60 * 1000; // 3D AI Studio deletes results after 24 hours
 const EXPIRED = '3D AI Studio keeps results for 24 hours and this job is older, so its model is gone. Retry to generate it again.';
 const KEY_FORMAT = /^[\x21-\x7e]{10,300}$/; // printable, no spaces; it goes into an Authorization header
@@ -70,14 +73,32 @@ export function suggestedOutputRoot(platform = process.platform) {
   return platform === 'win32' ? 'E:\\Claude Stuff\\car-360-pipeline\\handoff' : path.join(os.homedir(), 'Flatform', 'handoff');
 }
 
-// Default install locations. Blender is optional and never bundled.
-export function blenderCandidates(platform = process.platform) {
-  if (platform === 'darwin') return ['/Applications/Blender.app/Contents/MacOS/Blender'];
-  if (platform !== 'win32') return ['/usr/bin/blender', '/snap/bin/blender'];
-  const base = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Blender Foundation');
-  let dirs = [];
-  try { dirs = readdirSync(base).filter((d) => /^blender/i.test(d)); } catch { /* not installed */ }
-  return dirs.sort((a, b) => b.localeCompare(a, undefined, { numeric: true })).map((d) => path.join(base, d, 'blender.exe'));
+// Where Blender usually lives. Blender is optional and never bundled. On Windows that is the installer's
+// Program Files folder on any drive, Steam, a portable zip unpacked in the home folder, or anything on PATH.
+export function blenderCandidates(platform = process.platform, env = process.env) {
+  if (platform === 'darwin') return ['/Applications/Blender.app/Contents/MacOS/Blender', path.join(os.homedir(), 'Applications/Blender.app/Contents/MacOS/Blender')];
+  const onPath = String(env.PATH || env.Path || '').split(path.delimiter).filter(Boolean)
+    .map((d) => path.join(d, platform === 'win32' ? 'blender.exe' : 'blender'));
+  if (platform !== 'win32') return [...onPath, '/usr/bin/blender', '/snap/bin/blender'];
+  // Newest version first inside each folder that holds versioned Blender folders.
+  const versions = (base) => {
+    let dirs = [];
+    try { dirs = readdirSync(base).filter((d) => /^blender/i.test(d)); } catch { /* not there */ }
+    return dirs.sort((a, b) => b.localeCompare(a, undefined, { numeric: true })).map((d) => path.join(base, d, 'blender.exe'));
+  };
+  const home = env.USERPROFILE || os.homedir();
+  const drives = [];
+  for (let c = 67; c <= 90; c++) { const d = `${String.fromCharCode(c)}:\\`; if (existsSync(d)) drives.push(d); } // C: to Z:
+  const programFiles = [...new Set([env.ProgramFiles, env['ProgramFiles(x86)'], ...drives.flatMap((d) => [`${d}Program Files`, `${d}Program Files (x86)`])].filter(Boolean))];
+  const steam = [...new Set([env['ProgramFiles(x86)'] && path.join(env['ProgramFiles(x86)'], 'Steam'), ...drives.flatMap((d) => [`${d}SteamLibrary`, `${d}Steam`])].filter(Boolean))];
+  return [
+    ...programFiles.flatMap((p) => versions(path.join(p, 'Blender Foundation'))),
+    ...steam.map((s) => path.join(s, 'steamapps', 'common', 'Blender', 'blender.exe')),
+    ...(env.LOCALAPPDATA ? versions(path.join(env.LOCALAPPDATA, 'Programs')) : []),
+    ...versions(home), ...versions(path.join(home, 'Blender')), // portable zips
+    ...onPath,
+    ...(env.LOCALAPPDATA ? [path.join(env.LOCALAPPDATA, 'Microsoft', 'WindowsApps', 'blender.exe')] : []), // Microsoft Store alias
+  ];
 }
 
 /**
@@ -102,6 +123,7 @@ export async function startServer({
   threeAddons = path.join(THREE, 'examples', 'jsm'),
   updateUrl,
   updateDelayMs,
+  onLowBalance, // (service, { balance, threshold }) when GET /api/spend finds a balance under its alert (main.mjs notifies)
 }) {
   const MODELS = path.join(dataDir, 'models');
   const BACKDROPS = path.join(dataDir, 'backdrops');
@@ -122,11 +144,15 @@ export async function startServer({
 
   const defaults = {
     region: 'global', model, texture: true, pbr: true, provider: 'tripo', setups: {},
-    renderer: 'three', blenderPath: '', outputRoot: '', defaultScene: 'ring', alsoTransparent: true, backdrops: {},
+    renderer: 'three', blenderPath: '', outputRoot: '', defaultScene: 'showroom', alsoTransparent: true, backdrops: {},
+    lighting: DEFAULT_LIGHTING, glass: DEFAULT_GLASS,
     updates: { autoCheck: true, skippedVersion: null },
+    spend: { thresholds: defaultThresholds() }, // low-balance alert per provider, in credits
   };
   const settings = { ...defaults, ...(existsSync(SETTINGS) ? JSON.parse(await readFile(SETTINGS, 'utf8')) : {}) };
   if (settings.defaultScene === 'gold') settings.defaultScene = 'ring';
+  // v0.5: Showroom became the default scene. 'ring' was the old built-in default, so it moves over once.
+  if (!settings.scenesV5) Object.assign(settings, { scenesV5: true, ...(settings.defaultScene === 'ring' && { defaultScene: 'showroom' }) });
   const apiBase = () => fixedApiBase || REGIONS[settings.region] || REGIONS.global;
 
   // ponytail: whole library in one JSON file rewritten on each change; move to SQLite past a few thousand models
@@ -306,18 +332,22 @@ export async function startServer({
   }
 
   // Starts a generation with the provider. Returns its task id.
-  async function submit(setup, views) {
+  async function submit(setup, views, modelId) {
+    const spend = {
+      task: setup.mode === 'views' ? 'multiview_to_model' : 'image_to_model', model: setup.options.model || setup.engine,
+      credits: estimate(setup).credits, modelId,
+    };
     if (setup.provider === 'tripo') {
       const { image, type } = views.front;
       const form = new FormData();
       form.append('file', new Blob([image], { type }), 'image' + IMAGE_TYPES[type]);
-      const { file_token } = await tripo('/files', { body: form });
-      const { task_id } = await tripo('/generation/image-to-model', { json: tripoDirectBody(setup.options, file_token) });
+      const { file_token } = await tripo('/files', { body: form }); // uploads are free
+      const { task_id } = await paid('tripo', spend, () => tripo('/generation/image-to-model', { json: tripoDirectBody(setup.options, file_token) }));
       return task_id;
     }
     const uris = Object.fromEntries(Object.entries(views).map(([view, { image, type }]) => [view, `data:${type};base64,${image.toString('base64')}`]));
     const { path: route, body } = threeDAIRequest(setup, uris);
-    const { task_id } = await ai.submit(route, body);
+    const { task_id } = await paid('3daistudio', spend, () => ai.submit(route, body));
     if (typeof task_id !== 'string' || !task_id) throw new HttpError(502, '3D AI Studio: no task id in the reply');
     if (wallet.at) wallet.balance -= estimate(setup).credits; // charged on submission, so the balance is right without asking
     wakePoller();
@@ -340,22 +370,70 @@ export async function startServer({
     return views;
   }
 
+  // What a generation was made with, kept with the version for the model page. Versions from before v0.5 have
+  // no record (their options may be a guess from the settings of the day), so the page says "not recorded".
+  const generationOf = (setup) => ({
+    provider: setup.provider, engine: setup.engine, mode: setup.mode, options: setup.options,
+    prompt: typeof setup.options?.prompt === 'string' ? setup.options.prompt : null, credits: estimate(setup).credits,
+  });
   const newVersion = (n, setup, task_id, names) => {
     const now = new Date().toISOString();
     return {
       n, created_at: now, submitted_at: now, provider: setup.provider, engine: setup.engine, mode: setup.mode, options: setup.options,
+      generation: generationOf(setup),
       estimate: estimate(setup).credits, task_id, status: 'generating', progress: 0,
       ...(setup.provider === 'tripo' ? { tripo_status: 'queued' } : { upstream_status: 'PENDING' }),
       source: names.front, ...(setup.mode === 'views' && { views: names }), exports: {},
     };
   };
 
+  // A 3D model dropped on the Drop step. The page sends a GLB (the file itself, or converted in the page with
+  // three.js loaders from GLTF, FBX, OBJ or USDZ), the original file and a PNG preview. It skips Generate.
+  async function importModel(req) {
+    const contentType = String(req.headers['content-type'] || '');
+    if (!/^multipart\/form-data/i.test(contentType)) throw new HttpError(415, 'Send the model as a form');
+    let form;
+    try { form = await new Response(await readBody(req, MAX_MODEL, 'Model too large (max 300 MB)'), { headers: { 'Content-Type': contentType } }).formData(); } catch (e) {
+      throw e.status ? e : new HttpError(400, 'Bad form');
+    }
+    const glbFile = form.get('glb');
+    if (!glbFile || typeof glbFile !== 'object') throw new HttpError(400, 'Add a 3D model');
+    const glb = Buffer.from(await glbFile.arrayBuffer());
+    if (glb.length < 20 || glb.toString('latin1', 0, 4) !== 'glTF' || glb.readUInt32LE(4) !== 2) throw new HttpError(415, 'That is not a GLB 2.0 file');
+    const original = form.get('original');
+    const originalName = path.basename(String((original && typeof original === 'object' ? original.name : form.get('fileName')) || ''));
+    const ext = path.extname(originalName).toLowerCase();
+    if (originalName && !MODEL_EXTS.includes(ext)) throw new HttpError(415, `Use a ${MODEL_EXTS.join(', ').toUpperCase().replaceAll('.', '')} file`);
+    const preview = form.get('preview');
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const m = { id, name: cleanName(form.get('name') || originalName.replace(/\.[^.]+$/, '')), created_at: now, activeVersion: 1, versions: [] };
+    m.slug = uniqueSlug(m.name, slugsExcept(m));
+    await mkdir(path.join(MODELS, m.id), { recursive: true });
+    await writeFile(path.join(MODELS, m.id, 'model.glb'), glb);
+    const v = { n: 1, created_at: now, provider: 'upload', status: 'ready', progress: 100, glb: 'model.glb', exports: {}, credits: 0, generation: null };
+    if (original && typeof original === 'object' && ext !== '.glb') {
+      v.file = `original${ext}`;
+      await writeFile(path.join(MODELS, m.id, v.file), Buffer.from(await original.arrayBuffer()));
+    }
+    v.fileName = originalName || 'model.glb';
+    if (preview && typeof preview === 'object' && preview.size && preview.size < MAX_IMAGE) {
+      const png = Buffer.from(await preview.arrayBuffer());
+      if (png.subarray(1, 4).toString('latin1') === 'PNG') { v.thumb = 'preview.png'; await writeFile(path.join(MODELS, m.id, v.thumb), png); }
+    }
+    m.versions.push(v);
+    library.unshift(mirror(m));
+    await save();
+    return m;
+  }
+
   async function createModel(req, queryName) {
     const { setup, views, name } = await readInput(req);
     if (!setup) throw new HttpError(400, 'Add a photo');
     checkViews(setup, views);
-    const task_id = await submit(setup, views);
-    const m = { id: randomUUID(), name: cleanName(name ?? queryName), created_at: new Date().toISOString(), activeVersion: 1, versions: [] };
+    const id = randomUUID();
+    const task_id = await submit(setup, views, id);
+    const m = { id, name: cleanName(name ?? queryName), created_at: new Date().toISOString(), activeVersion: 1, versions: [] };
     m.slug = uniqueSlug(m.name, slugsExcept(m));
     await mkdir(path.join(MODELS, m.id), { recursive: true });
     m.versions.push(newVersion(1, setup, task_id, await saveViews(m, 1, views)));
@@ -373,7 +451,7 @@ export async function startServer({
     const fresh = Boolean(input.views.front);
     const views = fresh ? input.views : await readViews(m, active(m));
     checkViews(setup, views);
-    const task_id = await submit(setup, views);
+    const task_id = await submit(setup, views, m.id);
     const names = fresh ? await saveViews(m, n, views)
       : Object.fromEntries(Object.keys(views).map((view) => [view, (active(m).views || { front: active(m).source })[view]]));
     m.versions.push(newVersion(n, setup, task_id, names));
@@ -389,7 +467,7 @@ export async function startServer({
     const setup = setupOf(v);
     const views = await readViews(m, v);
     checkViews(setup, views);
-    const task_id = await submit(setup, views);
+    const task_id = await submit(setup, views, m.id);
     for (const k of ['error', 'note', 'checked_at', 'tripo_status', 'upstream_status']) delete v[k];
     Object.assign(v, newVersion(v.n, setup, task_id, v.views || { front: v.source }));
     mirror(m);
@@ -508,7 +586,13 @@ export async function startServer({
     if (!keyStore.get(provider)) return { hasKey: false };
     if (provider === 'tripo') return { hasKey: true, ...(await tripo('/account/balance')) };
     if (fresh || Date.now() - wallet.at > 5 * 60 * 1000) {
+      const expected = wallet.at ? Number(wallet.balance) : null; // the last balance minus the estimates charged since
       Object.assign(wallet, await ai.wallet({ priority: fresh ? HIGH : undefined }), { at: Date.now() });
+      const actual = Number(wallet.balance);
+      if (expected != null && Number.isFinite(actual) && expected - actual > 0.005) {
+        append(SPEND, entry({ service: '3daistudio', task: 'unlogged charge', model: null, credits: 0, balanceBefore: expected, balanceAfter: actual }))
+          .catch((e) => console.error(`Spend ledger: ${e.message}`));
+      }
     }
     return { hasKey: true, balance: wallet.balance, rateLimit: wallet.rateLimit, checkedAt: new Date(wallet.at).toISOString() };
   }
@@ -528,13 +612,50 @@ export async function startServer({
     return p;
   };
 
+  // ---- Spend ledger (ledger.mjs): every paid call goes through paid(), which notes the balance before and after ----
+
+  const SPEND = path.join(dataDir, 'spend.jsonl');
+  // A balance for the ledger, or null. Never throws and never waits long: the ledger must not hold up a job.
+  // 3D AI Studio: the last known balance, since a wallet call costs one of its 3 requests a minute.
+  function balanceNow(service) {
+    if (service === '3daistudio') return wallet.at ? wallet.balance : null;
+    const timeout = new Promise((ok) => setTimeout(ok, 5000, null).unref());
+    return Promise.race([account(service).then((a) => a.balance ?? null), timeout]).catch(() => null);
+  }
+  // fields: { task, model, credits, modelId }. The task id comes from the reply.
+  // ponytail: two jobs running at once share their before/after window, so one may show the other's charge as unlogged.
+  async function paid(service, fields, call) {
+    const balanceBefore = await balanceNow(service);
+    const out = await call();
+    (async () => {
+      let balanceAfter = null;
+      // 3D AI Studio allows 3 requests a minute (polls included), so no extra wallet call here: its balance after
+      // is checked at the next regular wallet refresh, which logs anything charged beyond the estimates (account()).
+      if (service === 'tripo') balanceAfter = await balanceNow(service);
+      await append(SPEND, entry({ service, ...fields, taskId: out?.task_id ?? null, balanceBefore, balanceAfter }));
+    })().catch((e) => console.error(`Spend ledger: ${e.message}`));
+    return out;
+  }
+
+  async function spendView() {
+    const balances = {};
+    for (const s of SERVICES) balances[s] = !keyStore.get(s) ? null : s === '3daistudio' && wallet.at ? wallet.balance : await account(s).then((a) => a.balance ?? null, () => null);
+    const view = summary(parse(await readFile(SPEND, 'utf8').catch(() => '')), { balances, thresholds: settings.spend.thresholds });
+    for (const [s, v] of Object.entries(view.services)) if (v.low) onLowBalance?.(s, v);
+    return view;
+  }
+
   async function patchModel(m, body) {
-    const allowed = ['name', 'activeVersion', 'scene'];
+    const allowed = ['name', 'activeVersion', 'scene', 'approved'];
     if (Object.keys(body).some((k) => !allowed.includes(k))) throw new HttpError(400, `Only ${allowed.join(', ')} can be changed`);
     if ('name' in body) {
       if (typeof body.name !== 'string' || !body.name.trim()) throw new HttpError(400, 'Give the model a name');
       m.name = cleanName(body.name);
       m.slug = uniqueSlug(m.name, slugsExcept(m));
+    }
+    if ('approved' in body) {
+      if (typeof body.approved !== 'boolean') throw new HttpError(400, 'approved must be true or false');
+      m.approved = body.approved; // "Approve this model" in Compose
     }
     if ('activeVersion' in body) {
       if (!m.versions.some((v) => v.n === body.activeVersion)) throw new HttpError(400, 'No such version');
@@ -556,7 +677,8 @@ export async function startServer({
     if (v.status !== 'ready') throw new HttpError(409, 'Model is not ready yet');
     if (v.provider !== 'tripo') throw new HttpError(409, TRIPO_ONLY);
     if (['converting', 'ready'].includes(v.exports[fmt]?.status)) return v.exports[fmt];
-    const { task_id } = await tripo('/models/convert', { json: { input: v.task_id, format: fmt } });
+    const { task_id } = await paid('tripo', { task: 'convert', model: `${fmt} conversion`, credits: CONVERT_CREDITS, modelId: m.id },
+      () => tripo('/models/convert', { json: { input: v.task_id, format: fmt } }));
     v.exports[fmt] = { status: 'converting', task_id };
     await save();
     return v.exports[fmt];
@@ -628,11 +750,22 @@ export async function startServer({
         if (!SCENES.includes(body.defaultScene)) throw new HttpError(400, 'Unknown scene');
         next.defaultScene = body.defaultScene;
       } else if (k === 'outputRoot') next.outputRoot = body.outputRoot === '' ? '' : await checkOutputRoot(body.outputRoot);
-      else if (k === 'blenderPath') next.blenderPath = body.blenderPath === '' ? '' : await checkBlenderPath(body.blenderPath);
+      else if (k === 'lighting' || k === 'glass') {
+        const v = k === 'lighting' ? cleanLighting(body.lighting, settings.lighting) : cleanGlass(body.glass, settings.glass);
+        if (!v) throw new HttpError(400, `Bad ${k}`);
+        next[k] = v;
+      } else if (k === 'blenderPath') next.blenderPath = body.blenderPath === '' ? '' : await checkBlenderPath(body.blenderPath);
       else if (k === 'updates') {
         // Only the automatic check is set here; a skipped version comes from POST /api/update/skip.
         if (typeof body.updates?.autoCheck !== 'boolean' || Object.keys(body.updates).length !== 1) throw new HttpError(400, 'updates must be { autoCheck: true or false }');
         next.updates = { ...settings.updates, autoCheck: body.updates.autoCheck };
+      } else if (k === 'spend') {
+        // Low-balance alerts: { thresholds: { tripo: credits, '3daistudio': credits } }, either or both.
+        const t = body.spend?.thresholds;
+        const ok = t && typeof t === 'object' && !Array.isArray(t) && Object.keys(body.spend).length === 1
+          && Object.entries(t).every(([s, n]) => SERVICES.includes(s) && Number.isFinite(n) && n >= 0 && n <= 1e7);
+        if (!ok) throw new HttpError(400, 'spend must be { thresholds: { tripo, 3daistudio } } in credits');
+        next.spend = { thresholds: { ...settings.spend.thresholds, ...t } };
       } else throw new HttpError(400, `Unknown setting: ${k}`);
     }
     const replan = next.updates.autoCheck !== settings.updates.autoCheck;
@@ -714,13 +847,16 @@ export async function startServer({
 
   // Records what a finished render produced, so the library can show 360/180 badges and the poster.
   async function noteRenderFile(m, rel, file) {
-    const sprite = rel.match(/^web\/(studio|transparent)-sprite-(360|180)\.json$/);
-    const poster = rel.match(/^web\/(studio|transparent)-poster\.webp$/);
+    const looks = Object.keys(LOOKS).join('|');
+    const sprite = rel.match(new RegExp(`^web/(${looks})-sprite-(360|180)\\.json$`));
+    const poster = rel.match(new RegExp(`^web/(${looks})-poster\\.webp$`));
     const still = rel.match(/^stills\/([^/]+\.png)$/);
     if (sprite) m.renders[`${sprite[1]}${sprite[2]}`] = true;
     if (poster) {
       await copyFile(file, path.join(MODELS, m.id, `poster-${poster[1]}.webp`));
-      if (poster[1] === 'studio' || !m.renders.poster) m.renders.poster = `poster-${poster[1]}.webp`;
+      // The library card shows the house look first: Showroom, then the composed scene, then the cut-out.
+      const rank = (file) => ['showroom', 'studio', 'transparent'].indexOf(String(file).replace(/^poster-|\.webp$/g, ''));
+      if (!m.renders.poster || rank(`poster-${poster[1]}.webp`) <= rank(m.renders.poster)) m.renders.poster = `poster-${poster[1]}.webp`;
     }
     if (still) m.renders.stills = [...new Set([...(m.renders.stills || []), still[1]])];
     if (sprite || poster || still) await save();
@@ -771,6 +907,14 @@ export async function startServer({
     if (jobs.get(m.id)?.status === 'running') throw new HttpError(409, 'Blender is already rendering this car');
     const v = active(m);
     const sceneFile = path.join(MODELS, m.id, 'scene.json');
+    // Photo scenes: Blender renders the car on a shadow catcher with the plate's camera and light; the page lays
+    // the frames over the plate when it makes the sprites. The Showroom look always uses the showroom plate.
+    const plateArg = (look) => {
+      const preset = look === 'showroom' ? 'showroom' : look === 'transparent' ? null : m.scene?.preset || settings.defaultScene;
+      if (!PLATES[preset]) return [];
+      const modeled = preset === 'showroom' && Boolean(m.scene?.modeled);
+      return ['--plate', JSON.stringify({ slug: preset, modeled, camera: plateCamera(PLATES[preset].cam, 4 / 3), light: PLATES[preset].light })];
+    };
     const job = { status: 'running', looks, look: looks[0], frame: 0, frames, error: null };
     jobs.set(m.id, job);
     (async () => {
@@ -783,6 +927,8 @@ export async function startServer({
           '--glb', path.join(MODELS, m.id, v.glb), '--out', path.join(m.renders.outDir, 'frames', look), '--slug', m.slug,
           '--look', look, '--frames', String(frames), '--step', String(STEP), '--res', `${width}x${height}`,
           ...(existsSync(sceneFile) ? ['--scene', sceneFile] : []),
+          '--rig', JSON.stringify({ lighting: settings.lighting, glass: settings.glass }),
+          ...plateArg(look),
           ...(still !== undefined ? ['--still', String(still), '--still-out', path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still))] : []),
         ]);
       }
@@ -867,6 +1013,7 @@ export async function startServer({
       if ('apiKey' in body) return send(res, 200, await saveKey('tripo', body.apiKey)); // the v0.3 key dialog
       return send(res, 200, await saveSettings(body));
     }
+    if (area === 'spend' && !id && method === 'GET') return send(res, 200, await spendView());
     if (area === 'update' && !sub) {
       if (!id && method === 'GET') return send(res, 200, updater.view());
       if (id === 'check' && method === 'POST') return send(res, 200, await updater.check());
@@ -884,6 +1031,7 @@ export async function startServer({
     if (area === 'models') {
       if (!id && method === 'GET') return send(res, 200, library);
       if (!id && method === 'POST') return send(res, 201, await createModel(req, url.searchParams.get('name')));
+      if (id === 'import' && method === 'POST') return send(res, 201, await importModel(req));
       const m = findModel(id);
       if (!sub && method === 'GET') {
         await once(id, () => refreshModel(m));
@@ -943,6 +1091,7 @@ export async function startServer({
   const close = () => {
     stopped = true;
     clearTimeout(pollTimer);
+    ai.limiter.stop();
     updater.stop();
     return new Promise((ok) => server.close(ok));
   };

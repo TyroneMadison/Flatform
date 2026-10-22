@@ -1,15 +1,22 @@
 // Electron shell: runs the app server inside the app and shows it in a window.
-import { app, BrowserWindow, safeStorage, shell, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, safeStorage, shell, ipcMain, dialog, Notification } from 'electron';
 import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startServer } from './server.mjs';
 import { createKeyStore } from './keys.mjs';
 import { updateOptions } from './updates.mjs';
+import { PROVIDERS } from './public/lib/engines.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
-if (!app.requestSingleInstanceLock()) app.quit();
+// One Flatform at a time. The lock is per userData folder (%APPDATA%\Flatform), the same for `npm run app` and the
+// installed app. A second launch hands its files to the first one (see 'second-instance') and quits.
+const primary = app.requestSingleInstanceLock();
+if (!primary) app.quit();
+// Same as package.json build.appId, so dev and installed builds share one taskbar and notification identity.
+if (process.platform === 'win32') app.setAppUserModelId('io.github.tyronemadison.tripostudio');
 
 // The app used to be called "Tripo Studio". Move its library and saved key once so an upgrade keeps them.
 // (On a Mac the old key can't be decrypted under the new name, so the app asks for it again.)
@@ -51,6 +58,31 @@ ipcMain.handle('show-item-in-folder', (e, p) => {
   if (!fromApp(e) || !existingPath(p)) throw new Error('Not allowed');
   shell.showItemInFolder(p);
 });
+// Top up: the page names a provider, never a URL.
+const BILLING = Object.fromEntries(Object.entries(PROVIDERS).map(([id, p]) => [id, p.billingUrl]).filter(([, url]) => /^https:\/\/[^/]+\//.test(url || '')));
+ipcMain.handle('open-billing', (e, service) => {
+  if (!fromApp(e) || !Object.hasOwn(BILLING, service)) throw new Error('Not allowed');
+  return shell.openExternal(BILLING[service]);
+});
+
+// Photos and models opened with Flatform (Explorer "Open with", dragging onto the exe, a second launch). Main sends
+// their paths; the page reads each one back once, and only paths main offered.
+const OPENABLE = /\.(jpe?g|png|heic|heif|webp|glb|gltf|fbx|obj|usdz)$/i;
+const MAX_OPEN = 300 * 1024 * 1024;
+const offered = new Set();
+const openable = (p) => existingPath(p) && OPENABLE.test(p) && statSync(p).isFile() && statSync(p).size < MAX_OPEN;
+function openFiles(argv) {
+  const files = argv.filter(openable).map((p) => path.resolve(p));
+  if (!files.length || !win) return;
+  for (const f of files) offered.add(f);
+  win.webContents.send('open-files', files);
+}
+ipcMain.handle('read-dropped-file', async (e, p) => {
+  if (!fromApp(e) || !offered.has(p) || !openable(p)) throw new Error('Not allowed');
+  offered.delete(p);
+  return { name: path.basename(p), bytes: await readFile(p) };
+});
+
 ipcMain.handle('open-path', async (e, p) => {
   // Folders only: "opening" a file would run it with its default program.
   if (!fromApp(e) || !existingPath(p) || !statSync(p).isDirectory()) throw new Error('Not allowed');
@@ -77,15 +109,30 @@ function createWindow(port) {
   win.webContents.on('will-navigate', (e, url) => {
     if (!sameOrigin(url)) e.preventDefault();
   });
+  win.webContents.once('did-finish-load', () => openFiles(process.argv)); // files this first launch was opened with
   win.loadURL(origin);
 }
 
-app.on('second-instance', () => {
-  if (win?.isMinimized()) win.restore();
-  win?.focus();
+app.on('second-instance', (e, argv) => {
+  if (!win) return; // still starting; ponytail: files from a launch this early are dropped
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  openFiles(argv);
 });
 
+// Low balance: one system notification per provider per session; the page shows its banner each time.
+const warned = new Set();
+function notifyLow(service, { balance, threshold }) {
+  if (warned.has(service) || !Notification.isSupported()) return;
+  warned.add(service);
+  const n = new Notification({ title: `${PROVIDERS[service].name} balance is low`, body: `${Math.floor(balance)} credits left, under your alert of ${threshold}. Open Settings, Spend to top up.` });
+  n.on('click', () => { win?.show(); win?.webContents.executeJavaScript("location.hash = '#/settings/spend'"); });
+  n.show();
+}
+
 app.whenReady().then(async () => {
+  if (!primary) return;
   migrateOldData();
   // API keys are encrypted by the OS (Windows DPAPI / macOS Keychain) before they touch disk. The Tripo key saved by
   // v0.3 (userData/tripo-key.bin) is moved into the per-provider store on first launch; see keys.mjs.
@@ -101,6 +148,7 @@ app.whenReady().then(async () => {
     keyStore,
     // Looks for a newer release on GitHub; Download links open in the browser through the window-open handler below.
     ...updateOptions(process.env),
+    onLowBalance: notifyLow,
     // Blender runs the render script as a separate program, so it can't be read from inside app.asar.
     // The three.js addons ship next to it because electron-builder leaves dependencies' examples/ folders out.
     ...(app.isPackaged && {

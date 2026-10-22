@@ -200,6 +200,23 @@ test('upload → generate → library → export (existing flow)', async () => {
   assert.equal(lib[0].versions[0].exports.FBX.status, 'ready');
 });
 
+test('spend ledger: one line per paid call with balance snapshots; thresholds validated', async () => {
+  const file = path.join(data, 'spend.jsonl');
+  for (let i = 0; i < 50 && (await readFile(file, 'utf8').catch(() => '')).split('\n').filter(Boolean).length < 2; i++) await new Promise((ok) => setTimeout(ok, 20));
+  const lines = (await readFile(file, 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepEqual(lines.map((l) => [l.service, l.task, l.taskId, l.modelId, l.balanceBefore, l.balanceAfter, l.delta]),
+    [['tripo', 'image_to_model', 'task_gen', id, 1500, 1500, 0], ['tripo', 'convert', 'task_conv_task_gen_FBX', id, 1500, 1500, 0]]);
+  const spend = (await app.j('/api/spend')).body;
+  assert.equal(spend.services.tripo.all.calls, 2);
+  assert.equal(spend.services.tripo.balance, 1500);
+  assert.equal(spend.daily.length, 30);
+  assert.equal((await app.json('/api/settings', 'POST', { spend: { thresholds: { tripo: -1 } } })).status, 400);
+  assert.equal((await app.json('/api/settings', 'POST', { spend: { thresholds: { other: 5 } } })).status, 400);
+  const saved = await app.json('/api/settings', 'POST', { spend: { thresholds: { tripo: 2000 } } });
+  assert.equal(saved.body.spend.thresholds.tripo, 2000);
+  assert.equal((await app.j('/api/spend')).body.services.tripo.low, true);
+});
+
 test('serves the app, fonts and three.js from local files', async () => {
   for (const p of ['/', '/app.js', '/lib/pipeline.js', '/fonts/Sora-VariableFont_wght.ttf', '/img/icon.svg', '/vendor/three/build/three.module.js', '/vendor/three/examples/jsm/loaders/GLTFLoader.js']) {
     assert.equal((await fetch(app.base + p)).status, 200, p);
@@ -292,6 +309,57 @@ test('scene state is saved per model', async () => {
   assert.equal((await app.json(`/api/models/${id}`, 'PATCH', { scene: [1] })).status, 400);
 });
 
+// A minimal valid GLB 2.0: header, then one JSON chunk.
+function tinyGlb() {
+  const json = Buffer.from(JSON.stringify({ asset: { version: '2.0' } }).padEnd(28, ' '));
+  const head = Buffer.alloc(20);
+  head.write('glTF', 0, 'latin1');
+  head.writeUInt32LE(2, 4);
+  head.writeUInt32LE(20 + json.length, 8);
+  head.writeUInt32LE(json.length, 12);
+  head.write('JSON', 16, 'latin1');
+  return Buffer.concat([head, json]);
+}
+
+test('a dropped 3D model is imported as GLB, skips Generate and keeps its original file', async () => {
+  const form = new FormData();
+  form.append('name', 'Garage Find');
+  form.append('glb', new Blob([tinyGlb()], { type: 'model/gltf-binary' }), 'model.glb');
+  form.append('original', new Blob(['fbx bytes']), 'garage find.fbx');
+  form.append('preview', new Blob([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00])], { type: 'image/png' }), 'preview.png');
+  const r = await app.j('/api/models/import', { method: 'POST', body: form });
+  assert.equal(r.status, 201);
+  const m = r.body;
+  assert.deepEqual([m.status, m.provider, m.glb, m.file, m.fileName, m.thumb, m.credits, m.generation], ['ready', 'upload', 'model.glb', 'original.fbx', 'garage find.fbx', 'preview.png', 0, null]);
+  assert.deepEqual(await readFile(path.join(data, 'models', m.id, 'model.glb')), tinyGlb());
+  assert.equal(await readFile(path.join(data, 'models', m.id, 'original.fbx'), 'utf8'), 'fbx bytes');
+  assert.equal((await app.j('/api/models')).body[0].id, m.id);
+
+  const bad = (parts) => { const f = new FormData(); for (const [k, v, n] of parts) (n ? f.append(k, v, n) : f.append(k, v)); return app.j('/api/models/import', { method: 'POST', body: f }); };
+  assert.equal((await bad([['glb', new Blob(['not a glb at all, really']), 'model.glb']])).status, 415);
+  assert.equal((await bad([['glb', new Blob([tinyGlb()]), 'model.glb'], ['original', new Blob(['x']), 'car.exe']])).status, 415);
+  assert.equal((await bad([['name', 'x']])).status, 400);
+  assert.equal((await app.j('/api/models/import', { method: 'POST', body: 'x', headers: { 'Content-Type': 'text/plain' } })).status, 415);
+  // A GLB dropped as is: no separate original file.
+  const plain = (await bad([['glb', new Blob([tinyGlb()]), 'model.glb'], ['fileName', 'plain.glb']])).body;
+  assert.deepEqual([plain.fileName, plain.file, plain.name], ['plain.glb', undefined, 'plain']);
+  await app.j(`/api/models/${plain.id}`, { method: 'DELETE' });
+  await app.j(`/api/models/${m.id}`, { method: 'DELETE' });
+});
+
+test('each new version keeps the prompt and settings it was generated with; approve is a flag', async () => {
+  const m = (await app.j(`/api/models/${id}`)).body;
+  const v = m.versions.at(-1);
+  assert.equal(v.generation.provider, v.provider);
+  assert.equal(v.generation.engine, v.engine);
+  assert.deepEqual(v.generation.options, v.options);
+  assert.equal(v.generation.prompt, null);
+  assert.equal(typeof v.generation.credits, 'number');
+  assert.equal((await app.json(`/api/models/${id}`, 'PATCH', { approved: 'yes' })).status, 400);
+  assert.equal((await app.json(`/api/models/${id}`, 'PATCH', { approved: true })).body.approved, true);
+  assert.equal((await app.json(`/api/models/${id}`, 'PATCH', { approved: false })).body.approved, false);
+});
+
 let outRoot;
 test('settings persist and the region is validated', async () => {
   const s = (await app.j('/api/settings')).body;
@@ -321,6 +389,34 @@ test('settings persist and the region is validated', async () => {
   assert.deepEqual([after.region, after.pbr, after.defaultScene, after.outputRoot], ['china', false, 'cyclorama', path.resolve(outRoot)]);
   assert.equal((await app.j('/api/models')).body.length, 3);
   assert.equal((await app.json('/api/settings', 'POST', { region: 'global', pbr: true })).body.region, 'global');
+});
+
+test('the Render step light rig and glass are saved in settings and validated', async () => {
+  const s = (await app.j('/api/settings')).body;
+  assert.equal(s.lighting.kelvin, 5600);
+  assert.equal(s.glass.on, true);
+  assert.equal((await app.json('/api/settings', 'POST', { lighting: { key: 9 } })).status, 400);
+  assert.equal((await app.json('/api/settings', 'POST', { glass: { tint: 'javascript:1' } })).status, 400);
+  assert.equal((await app.json('/api/settings', 'POST', { defaultScene: 'showroom' })).status, 200);
+  const saved = (await app.json('/api/settings', 'POST', { lighting: { azimuth: 60 }, glass: { opacity: 0.5 } })).body;
+  assert.deepEqual([saved.lighting.azimuth, saved.lighting.key, saved.glass.opacity, saved.glass.on], [60, 1, 0.5, true]);
+  assert.equal(JSON.parse(await readFile(path.join(data, 'settings.json'), 'utf8')).lighting.azimuth, 60);
+  await app.json('/api/settings', 'POST', { defaultScene: 'ring' });
+});
+
+test('Blender is found on PATH, in a portable folder in the home folder, and in Program Files', async () => {
+  const { blenderCandidates } = await import('./server.mjs');
+  const home = await tempDir();
+  const env = { PATH: path.join(home, 'bin'), USERPROFILE: home, ProgramFiles: path.join(home, 'PF') };
+  await mkdir(path.join(home, 'Blender', 'blender-4.2.1-windows-x64'), { recursive: true });
+  await mkdir(path.join(home, 'Blender', 'blender-5.2.2-windows-x64'), { recursive: true });
+  await mkdir(path.join(home, 'PF', 'Blender Foundation', 'Blender 4.5'), { recursive: true });
+  const list = blenderCandidates('win32', env);
+  assert.ok(list.includes(path.join(home, 'bin', 'blender.exe')));
+  assert.ok(list.includes(path.join(home, 'PF', 'Blender Foundation', 'Blender 4.5', 'blender.exe')));
+  const portable = list.filter((p) => p.startsWith(path.join(home, 'Blender', 'blender-')));
+  assert.deepEqual(portable.map((p) => path.basename(path.dirname(p))), ['blender-5.2.2-windows-x64', 'blender-4.2.1-windows-x64']); // newest first
+  assert.ok(blenderCandidates('linux', { PATH: '/opt/b' }).includes(path.join('/opt/b', 'blender')));
 });
 
 test('keys: saved, replaced and removed per provider, never sent back to the page', async () => {
@@ -400,7 +496,7 @@ test('old v0.2 library migrates and the model still opens', async () => {
   assert.equal(saved[1].glb, 'model.glb'); // v0.2 can still read it
   assert.deepEqual(m.scene, { preset: 'ring', turn: 30 });
   assert.deepEqual(JSON.parse(await readFile(path.join(oldData, 'models', old.id, 'scene.json'), 'utf8')), { preset: 'ring', turn: 30 });
-  assert.equal((await oldApp.j('/api/settings')).body.defaultScene, 'ring');
+  assert.equal((await oldApp.j('/api/settings')).body.defaultScene, 'showroom'); // gold -> ring -> showroom (v0.5 default)
 
   // The in-flight one is polled; Tripo no longer has its task, so it fails (and can be retried) instead of spinning forever.
   const gone = (await oldApp.j(`/api/models/${stuck.id}`)).body;

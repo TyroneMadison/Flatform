@@ -1,6 +1,7 @@
-// 06 · Library: search, filters, cards and the side panel with every action for one model.
+// Library: search, filters and cards. A card opens the model page; the side panel keeps quick actions (downloads,
+// retry, regenerate, delete) for the last model looked at.
 import { $, $$, esc, state, api, send, toast, go, findModel, upsert, fileUrl, thumbOf, statusText, statusClass, isGenerating,
-  isRendered, retryModel, confirmDialog, refresh, openPicker, busy, setupFor, engineLabel, providerOf, FORMATS } from '../app.js';
+  isRendered, renderedTurns, retryModel, confirmDialog, refresh, openPicker, busy, setupFor, engineLabel, providerOf, FORMATS } from '../app.js';
 import { icon } from '../lib/icons.js';
 
 const FILTERS = [['all', 'All'], ['ready', 'Ready'], ['generating', 'Generating'], ['failed', 'Failed'], ['rendered', 'Rendered'], ['needs', 'Needs render']];
@@ -52,7 +53,7 @@ async function onClick(e) {
   const t = e.target.closest('[data-filter],[data-select],[data-act],[data-fmt]');
   if (!t) return;
   if (t.dataset.filter) { filter = t.dataset.filter; $$('[data-filter]', root).forEach((b) => b.setAttribute('aria-pressed', b === t)); return update(); }
-  if (t.dataset.select) { selectedId = t.dataset.select; state.lastId = selectedId; return update(); }
+  if (t.dataset.select) { selectedId = t.dataset.select; state.lastId = selectedId; return go(`#/model/${selectedId}`); } // the model page
   const m = findModel(t.dataset.id || selectedId);
   if (!m) return;
   if (t.dataset.act === 'retry') return busy(t, () => retryModel(m));
@@ -81,7 +82,7 @@ function card(m) {
   const img = thumbOf(m);
   const poster = Boolean(m.renders?.poster);
   const badges = m.status !== 'ready' ? '' : isRendered(m)
-    ? `${m.renders.studio360 || m.renders.transparent360 ? '<em>360</em>' : ''}${m.renders.studio180 || m.renders.transparent180 ? '<em>180</em>' : ''}`
+    ? renderedTurns(m).map((t) => `<em>${t}</em>`).join('')
     : '<em class="dim">Not rendered</em>';
   return `<article class="lc glass${m.id === selectedId ? ' on' : ''}">
     <button class="lc-select" type="button" data-select="${m.id}" aria-pressed="${m.id === selectedId}"><span class="sr-only">Select ${esc(m.name)}</span></button>
@@ -105,7 +106,7 @@ function formatButton(m, f) {
 function side(m) {
   if (!m) return '<p class="muted">Select a model to see what you can do with it.</p>';
   const ready = m.status === 'ready';
-  const rendered = isRendered(m) ? `rendered ${[(m.renders.studio360 || m.renders.transparent360) && '360', (m.renders.studio180 || m.renders.transparent180) && '180'].filter(Boolean).join(' and ')}` : 'not rendered yet';
+  const rendered = isRendered(m) ? `rendered ${renderedTurns(m).join(' and ')}` : 'not rendered yet';
   const sub = [statusText(m), engineLabel(m), `${m.versions.length} version${m.versions.length > 1 ? 's' : ''}`, ready && rendered].filter(Boolean).join(' · ');
   const tripo = providerOf(m) === 'tripo';
   return `
@@ -118,7 +119,7 @@ function side(m) {
       <a class="btn sec" href="#/render/${m.id}">${icon('film')}<span>${isRendered(m) ? 'Render again' : 'Render'}</span></a>` : ''}
       ${isGenerating(m) ? `<a class="btn sec" href="#/generate/${m.id}">${icon('eye')}<span>Show progress</span></a>` : ''}
       ${m.status === 'failed' ? `<button class="btn pri" type="button" data-act="retry" data-id="${m.id}">${icon('retry')}<span>Retry</span></button>` : ''}
-      ${ready ? `<a class="btn ghostbtn" href="#/review/${m.id}">${icon('eye')}<span>Review versions</span></a>` : ''}
+      <a class="btn ghostbtn" href="#/model/${m.id}">${icon('eye')}<span>Model page</span></a>
       <button class="btn ghostbtn" type="button" data-act="regen" ${isGenerating(m) ? 'disabled' : ''}>${icon('retry')}<span>Regenerate</span></button>
     </div>
     <div class="grp"><h3>Download model</h3>

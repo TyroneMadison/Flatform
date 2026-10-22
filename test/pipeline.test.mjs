@@ -75,20 +75,55 @@ test('slugify and unique slugs', () => {
 });
 
 test('handoff text and viewer page', () => {
-  const md = P.handoffText({ slug: 'audi-r8', name: 'Audi R8', looks: ['studio', 'transparent'], turns: [360, 180], models: ['audi-r8.glb'], version: '0.3.0' });
-  assert.match(md, /Transparent 360 · 512\*\* → spinning thumbnails across dudrents\.com: `web\/transparent-360-512\.webp`/);
+  const md = P.handoffText({ slug: 'audi-r8', name: 'Audi R8', looks: ['showroom', 'transparent'], turns: [360, 180], models: ['audi-r8.glb'], version: '0.3.0' });
+  assert.match(md, /Showroom 360 · 512\*\* → spinning thumbnails across dudrents\.com: `web\/showroom-360-512\.webp`/);
   assert.match(md, /Transparent 360 · 256\*\* → admin portal lists and the edit page: `web\/transparent-360-256\.webp`/);
-  assert.match(md, /Studio 180\*\* → swipe view on the car's detail page: `web\/studio-180-512\.webp`/);
-  assert.match(md, /`frames\/studio\/audi-r8_000\.png … audi-r8_071\.png`/);
+  assert.match(md, /Showroom 180\*\* → swipe view on the car's detail page: `web\/showroom-180-512\.webp`/);
+  assert.match(md, /`frames\/showroom\/audi-r8_000\.png … audi-r8_071\.png`/);
   assert.match(md, /`models\/audi-r8\.glb`/);
   assert.match(md, /`spin-viewer\.js`/);
   const onlyStudio = P.handoffText({ slug: 'a', name: 'A', looks: ['studio'], turns: [180], version: '0.3.0' });
-  assert.match(onlyStudio, /Transparent 360 · 512\*\* → spinning thumbnails across dudrents\.com: _not rendered this time_/);
+  assert.match(onlyStudio, /Showroom 360 · 512\*\* → spinning thumbnails across dudrents\.com: _not rendered this time_/);
   assert.match(onlyStudio, /`frames\/studio\/a_000\.png … a_036\.png`/);
 
   const manifests = { transparent360: P.manifest({ slug: 'a', name: 'A <b>', look: 'transparent', turn: 360, version: '0.3.0' }) };
   const html = P.viewerHtml({ name: 'A <b>', manifests });
   assert.match(html, /<title>A &#60;b&#62; · spin viewer<\/title>/);
-  assert.equal((html.match(/data-flatform-spin=/g) || []).length, 2); // 512 and 256 of the transparent 360
+  assert.equal((html.match(/data-flatform-spin=/g) || []).length, 1); // the 256 of the transparent 360
   assert.match(html, /<script src="spin-viewer\.js"><\/script>/);
+});
+
+test('three looks; the light rig and glass are validated and merged', () => {
+  assert.deepEqual(Object.keys(P.LOOKS), ['showroom', 'studio', 'transparent']);
+  assert.deepEqual(P.DEFAULT_LOOKS, ['showroom', 'transparent']);
+  assert.deepEqual(P.frameSize('showroom', 512), { width: 512, height: 384 });
+  assert.deepEqual(P.cleanLighting({ key: 1.5, kelvin: 3200 }), { ...P.DEFAULT_LIGHTING, key: 1.5, kelvin: 3200 });
+  for (const bad of [{ key: 3 }, { kelvin: 1000 }, { azimuth: '10' }, { color: 1 }, [], null]) assert.equal(P.cleanLighting(bad), null);
+  assert.deepEqual(P.cleanGlass({ tint: '#AABBCC', opacity: 0.4 }), { on: true, tint: '#aabbcc', opacity: 0.4 });
+  for (const bad of [{ tint: 'red' }, { opacity: 2 }, { on: 'yes' }, { transmission: 1 }]) assert.equal(P.cleanGlass(bad), null);
+});
+
+test('plate camera: the car stands where the photo floor is', () => {
+  const near = (a, b, d = 1e-6) => assert.ok(Math.abs(a - b) < d, `${a} vs ${b}`);
+  // Where a point straight ahead (x = 0) lands in the frame, 0 = top: its angle from the view axis over the half fov.
+  const project = (cam, [, y, z]) => {
+    const [, cy, cz] = cam.position; const [, ty, tz] = cam.target;
+    const off = Math.atan2(cy - y, cz - z) - Math.atan2(cy - ty, cz - tz); // radians below the view axis
+    return (1 + Math.tan(off) / Math.tan((cam.vfov * Math.PI) / 360)) / 2;
+  };
+  for (const [slug, plate] of Object.entries(P.PLATES)) {
+    const cam = P.plateCamera(plate.cam);
+    near(project(cam, [0, 0, 0]), plate.cam.ground, 1e-9); // the car's ground point lands on the photo's floor
+    near(project(cam, [0, cam.position[1], -1e7]), plate.cam.horizon, 1e-3); // eye level lands on the horizon
+    assert.ok(cam.position[1] > 0.3 && cam.position[1] < 3, `${slug}: camera height ${cam.position[1]}`);
+  }
+  assert.equal(P.plateUrl('showroom'), '/img/backplates/showroom.jpg');
+});
+
+test('the Drop step tells 3D models from photos', async () => {
+  const { isModelFile, extOf, MODEL_EXTS } = await import('../public/lib/importer.js');
+  assert.deepEqual(MODEL_EXTS, ['.glb', '.gltf', '.fbx', '.obj', '.usdz']);
+  for (const name of ['car.GLB', 'a.b.gltf', 'x.fbx', 'y.obj', 'z.usdz']) assert.ok(isModelFile({ name }), name);
+  for (const name of ['car.jpg', 'car.heic', 'glb', 'car.stl', '']) assert.ok(!isModelFile({ name }), name);
+  assert.equal(extOf('Some.Car.FBX'), '.fbx');
 });

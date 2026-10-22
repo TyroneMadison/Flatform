@@ -7,10 +7,12 @@ export const PROVIDERS = {
   tripo: {
     name: 'Tripo', sub: 'direct', host: 'openapi.tripo3d.ai', env: 'TRIPO_API_KEY',
     keyUrl: 'https://developers.tripo3d.com/en/keys', keyHint: 'tsk_…',
+    billingUrl: 'https://platform.tripo3d.ai/billing', // Top up; main.mjs opens only these exact URLs
   },
   '3daistudio': {
     name: '3D AI Studio', sub: '6 engines', host: 'api.3daistudio.com', env: 'THREE_D_AI_STUDIO_KEY',
     keyUrl: 'https://www.3daistudio.com/Platform/API/Documentation', keyHint: '',
+    billingUrl: 'https://www.3daistudio.com/Platform/API', // the API dashboard, where credits are bought
   },
 };
 export const VIEWS = ['front', 'left', 'back', 'right'];

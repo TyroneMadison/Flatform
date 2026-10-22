@@ -43,6 +43,12 @@ export function createLimiter({ limit = 3, windowMs = 62000, now = Date.now, tim
     // The account may have a lower limit than 3; never a higher one.
     setLimit(n) { if (Number.isInteger(n) && n > 0) { limit = Math.min(limit, n); pump(); } },
     get waiting() { return queue.length; },
+    // The server is closing: calls still waiting never start (a later server's limiter can't see them).
+    stop() {
+      if (wake) timer.clear(wake);
+      wake = null;
+      for (const job of queue.splice(0)) job.reject(new Error('Stopped'));
+    },
   };
 }
 

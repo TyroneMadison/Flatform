@@ -5,14 +5,16 @@
 import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, native, announce, providerOf, FORMATS } from '../app.js';
 import { icon } from '../lib/icons.js';
 import * as P from '../lib/pipeline.js';
-import { Studio, defaultScene } from '../lib/studio.js';
+import { Studio, defaultScene, kelvinColor } from '../lib/studio.js';
 
 let root;
 let m; // the car on screen
 let opts;
-let previewLook = 'studio';
+let previewLook = 'showroom';
 let job = null; // { model, yaw, renderer, frame, total, paused, cancelled, done, error, phaseText }
 const CELL = 64; // preview cell width
+const LOOK_KEYS = Object.keys(P.LOOKS); // showroom, studio (the composed scene), transparent
+let rigTimer;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sep = () => (state.settings?.platform === 'win32' ? '\\' : '/');
@@ -30,7 +32,8 @@ export function mount(el, { id }) {
   }
   const intent = state.renderIntent;
   state.renderIntent = null;
-  opts ||= { still: false, t360: true, t180: true, models: false, formats: new Set(), studio: true, transparent: state.settings?.alsoTransparent !== false };
+  opts ||= { still: false, t360: true, t180: true, models: false, formats: new Set(), ...Object.fromEntries(LOOK_KEYS.map((l) => [l, P.DEFAULT_LOOKS.includes(l)])) };
+  if (state.settings?.alsoTransparent === false && !running()) opts.transparent = false;
   if (intent === 'still') Object.assign(opts, { still: true, t360: false, t180: false });
   if (intent === 'turntable') Object.assign(opts, { t360: true, t180: true });
   if (!running()) opts.renderer = state.settings?.renderer === 'blender' && blenderReady() ? 'blender' : 'three';
@@ -40,7 +43,8 @@ export function mount(el, { id }) {
     <div class="ex-mid glass">
       <div class="rowhead sheethead"><h2 class="label">Sprite sheet preview · 360°</h2>
         <div class="chips seg sm" role="radiogroup" aria-label="Preview look">
-          <button class="chip" type="button" role="radio" data-preview="studio">Studio</button>
+          <button class="chip" type="button" role="radio" data-preview="showroom">Showroom</button>
+          <button class="chip" type="button" role="radio" data-preview="studio">Scene</button>
           <button class="chip" type="button" role="radio" data-preview="transparent">Transparent</button>
         </div></div>
       <div class="sheet"><canvas id="sheet360" aria-label="Preview of the 360° sprite sheet"></canvas></div>
@@ -58,6 +62,7 @@ export function mount(el, { id }) {
   el.addEventListener('click', onClick);
   el.addEventListener('change', onChange);
   el.addEventListener('submit', onSubmit);
+  el.addEventListener('input', onInput);
   renderLeft();
   renderRight();
   renderBar();
@@ -88,9 +93,11 @@ function renderLeft() {
     ${opts.models && !tripo ? '<p class="fine" style="margin:-4px 0 10px 32px">Other formats come from Tripo’s converter, which only works on models made with Tripo direct.</p>' : ''}
     <h2 class="label">Looks</h2>
     <div class="looks">
-      ${look('studio', 'Studio backdrop', '4:3 · 2048 px wide', '<div class="stage s-ring"><div class="sg-wall"></div><div class="sg-panel"></div><div class="sg-bar l"></div><div class="sg-bar r"></div><div class="sg-floor"></div><div class="sg-ring"></div></div>')}
-      ${look('transparent', 'Transparent', 'RGBA · 2048 × 2048', '<div class="stage s-clear"><div class="checker"></div><div class="sc-shadow"></div></div>')}
+      ${look('showroom', 'Showroom', 'Default · 4:3', `<div class="stage"><img class="thumb" src="${P.plateThumb('showroom')}" alt=""></div>`)}
+      ${look('studio', 'Scene', 'From Compose · 4:3', sceneArt())}
+      ${look('transparent', 'Transparent', '1:1 · RGBA', '<div class="stage s-clear"><div class="checker"></div><div class="sc-shadow"></div></div>')}
     </div>
+    ${rigPanel(busy)}
     <div class="renderer-pick">
       <h2 class="label">Renderer</h2>
       <div class="chips" role="radiogroup" aria-label="Renderer">
@@ -101,6 +108,49 @@ function renderLeft() {
     </div>`;
   const box = $('#left', root);
   if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
+}
+
+// The composed scene's thumbnail for the "Scene" look tile.
+function sceneArt() {
+  const preset = sceneFor(m, 'studio').preset;
+  return P.PLATES[preset] ? `<div class="stage"><img class="thumb" src="${P.plateThumb(preset)}" alt=""></div>`
+    : '<div class="stage s-ring"><div class="sg-wall"></div><div class="sg-panel"></div><div class="sg-bar l"></div><div class="sg-bar r"></div><div class="sg-floor"></div><div class="sg-ring"></div></div>';
+}
+
+// Light rig and glass: saved in settings, used by every look and by Blender.
+const pct = (v) => `${Math.round(v * 100)}%`;
+const RIG_TEXT = {
+  key: pct, fill: pct, rim: pct, azimuth: (v) => `${Math.round(v)}°`, elevation: (v) => `${Math.round(v)}°`, kelvin: (v) => `${Math.round(v)} K`, opacity: pct,
+};
+function rigSlider(group, key, label, min, max, step, value, disabled) {
+  const p = ((value - min) / (max - min)) * 100;
+  return `<div class="sl"><label for="rig-${key}">${label}</label>
+    <input class="range" type="range" id="rig-${key}" data-rig="${group}" data-key="${key}" min="${min}" max="${max}" step="${step}" value="${value}" style="--p:${p}%" ${disabled ? 'disabled' : ''}>
+    <span class="v" id="rv-${key}">${RIG_TEXT[key](value)}</span></div>`;
+}
+function rigPanel(busy) {
+  const l = { ...P.DEFAULT_LIGHTING, ...state.settings?.lighting };
+  const g = { ...P.DEFAULT_GLASS, ...state.settings?.glass };
+  const swatch = `rgb(${kelvinColor(l.kelvin).map((v) => Math.round(v * 255)).join(',')})`;
+  return `<div class="grp rig"><h3>${icon('light', 14)} Lighting <button class="link" type="button" data-act="rig-reset" ${busy ? 'disabled' : ''}>Reset</button></h3>
+      ${rigSlider('lighting', 'key', 'Key', 0, 2, 0.05, l.key, busy)}
+      ${rigSlider('lighting', 'azimuth', 'Direction', -180, 180, 5, l.azimuth, busy)}
+      ${rigSlider('lighting', 'elevation', 'Height', 5, 85, 1, l.elevation, busy)}
+      ${rigSlider('lighting', 'kelvin', `Colour <i class="kswatch" id="kswatch" style="background:${swatch}"></i>`, 2700, 9000, 100, l.kelvin, busy)}
+      ${rigSlider('lighting', 'fill', 'Fill', 0, 2, 0.05, l.fill, busy)}
+      ${rigSlider('lighting', 'rim', 'Rim · env', 0, 2, 0.05, l.rim, busy)}
+    </div>
+    <div class="grp rig"><h3>${icon('cube', 14)} Glass</h3>
+      <label class="tg"><span>Tinted glass<small>Found by name, or dark glossy texture on Tripo scans</small></span><input class="sw" type="checkbox" role="switch" data-glass="on" ${g.on ? 'checked' : ''} ${busy ? 'disabled' : ''}></label>
+      ${g.on ? `<div class="sl"><label for="rig-tint">Tint</label><input class="tint" type="color" id="rig-tint" data-glass="tint" value="${esc(g.tint)}" ${busy ? 'disabled' : ''}><span class="v">${esc(g.tint)}</span></div>
+      ${rigSlider('glass', 'opacity', 'Opacity', 0, 1, 0.05, g.opacity, busy)}` : ''}
+    </div>`;
+}
+function saveRig(group, patch) {
+  state.settings = { ...state.settings, [group]: { ...state.settings?.[group], ...patch } };
+  clearTimeout(rigTimer);
+  rigTimer = setTimeout(() => send('/api/settings', 'POST', { lighting: state.settings.lighting, glass: state.settings.glass })
+    .then((s) => { state.settings = s; }).catch((e) => toast(e.message)), 300);
 }
 
 function renderRight() {
@@ -114,7 +164,7 @@ function renderRight() {
     <form class="field pathform" id="folderForm" hidden><label for="folderIn">Folder</label><input class="inp mono" id="folderIn" name="outputRoot" value="${esc(s.outputRoot || s.suggestedOutputRoot || '')}" spellcheck="false"><button class="btn ghostbtn" type="submit">Save</button></form>
     <div class="tree">
       <div class="tr-l">${icon('folder', 14)}<div><code>web${d}</code><span>360 + 180 sheets · 512 and 256 px · sprite json · posters</span></div></div>
-      <div class="tr-l">${icon('folder', 14)}<div><code>frames${d}</code><span>${P.FRAMES} studio PNGs · ${P.FRAMES} transparent PNGs</span></div></div>
+      <div class="tr-l">${icon('folder', 14)}<div><code>frames${d}</code><span>${P.FRAMES} PNGs per look · 2048 px</span></div></div>
       <div class="tr-l">${icon('cube', 14)}<div><code>spin-viewer.js · viewer.html</code><span>Drag-to-spin viewer for the site and admin</span></div></div>
       <div class="tr-l">${icon('cube', 14)}<div><code>HANDOFF.md</code><span>What goes where, for the web team</span></div></div>
     </div>
@@ -192,6 +242,7 @@ async function onClick(e) {
   const t = e.target.closest('button');
   if (!t) return;
   if (t.dataset.preview && !(running() && onScreen())) { previewLook = t.dataset.preview; resetPreview(); }
+  if (t.dataset.act === 'rig-reset') { saveRig('lighting', P.DEFAULT_LIGHTING); renderLeft(); }
   if (t.dataset.look) { opts[t.dataset.look] = !opts[t.dataset.look]; renderLeft(); }
   if (t.dataset.renderer) { opts.renderer = t.dataset.renderer; renderLeft(); }
   if (t.dataset.format) {
@@ -218,6 +269,20 @@ async function onClick(e) {
 function onChange(e) {
   const k = e.target.dataset.opt;
   if (k) { opts[k] = e.target.checked; renderLeft(); }
+  const g = e.target.dataset.glass;
+  if (g === 'on') { saveRig('glass', { on: e.target.checked }); renderLeft(); }
+}
+// Sliders update their own text while dragging; the panel is not redrawn so the thumb keeps focus.
+function onInput(e) {
+  const t = e.target;
+  if (t.dataset.glass === 'tint') { t.nextElementSibling.textContent = t.value; saveRig('glass', { tint: t.value }); return; }
+  if (!t.dataset.rig) return;
+  const v = Number(t.value);
+  t.style.setProperty('--p', `${((v - t.min) / (t.max - t.min)) * 100}%`);
+  $(`#rv-${t.dataset.key}`, root).textContent = RIG_TEXT[t.dataset.key](v);
+  if (t.dataset.key === 'kelvin') $('#kswatch', root).style.background = `rgb(${kelvinColor(v).map((c) => Math.round(c * 255)).join(',')})`;
+  saveRig(t.dataset.rig, { [t.dataset.key]: v });
+  $('#left', root).dataset.html = ''; // the next redraw picks up the new value
 }
 async function onSubmit(e) {
   e.preventDefault();
@@ -256,8 +321,73 @@ async function checkpoint() {
 function sceneFor(model, look) {
   const s = { ...defaultScene(state.settings), ...model.scene };
   if (look === 'transparent') return { ...s, preset: 'transparent' };
-  if (s.preset === 'transparent') return { ...s, preset: state.settings?.defaultScene && state.settings.defaultScene !== 'transparent' ? state.settings.defaultScene : 'ring', backdrop: null };
+  if (look === 'showroom') return { ...s, preset: 'showroom', backdrop: null };
+  if (s.preset === 'transparent') return { ...s, preset: state.settings?.defaultScene && state.settings.defaultScene !== 'transparent' ? state.settings.defaultScene : 'showroom', backdrop: null };
   return s;
+}
+// The photo plate a look is laid over, or null (3D scenes and the modeled showroom).
+function plateFor(model, look) {
+  const s = sceneFor(model, look);
+  return look !== 'transparent' && P.PLATES[s.preset] && !(s.preset === 'showroom' && s.modeled) ? s.preset : null;
+}
+// Blender renders a photo scene's car on a transparent shadow catcher; this lays it over the plate (cover-fit).
+async function overPlate(img, plate) {
+  const c = document.createElement('canvas');
+  Object.assign(c, { width: img.naturalWidth, height: img.naturalHeight });
+  const g = c.getContext('2d');
+  g.imageSmoothingQuality = 'high';
+  const s = Math.max(c.width / plate.naturalWidth, c.height / plate.naturalHeight);
+  g.drawImage(plate, (c.width - plate.naturalWidth * s) / 2, (c.height - plate.naturalHeight * s) / 2, plate.naturalWidth * s, plate.naturalHeight * s);
+  g.drawImage(img, 0, 0);
+  return c;
+}
+
+// High-quality downscale: halve with smoothing until within 2x of the target, then one last step. Each halving
+// averages 2x2 pixels, so fine detail (badges, panel gaps) survives where one big jump would alias.
+function downscale(source, width, height) {
+  let cur = source;
+  for (;;) {
+    const last = cur.width / 2 < width * 1.01;
+    const c = document.createElement('canvas');
+    Object.assign(c, last ? { width, height } : { width: Math.round(cur.width / 2), height: Math.round(cur.height / 2) });
+    const g = c.getContext('2d', { willReadFrequently: last });
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(cur, 0, 0, c.width, c.height);
+    cur = c;
+    if (last) return cur;
+  }
+}
+// Light unsharp mask (3x3) on opaque pixels, to undo the softening of the downscale. Edges against
+// transparency are left alone so the transparent look gets no halos.
+function sharpen(canvas, amount = 0.35) {
+  const g = canvas.getContext('2d', { willReadFrequently: true });
+  const img = g.getImageData(0, 0, canvas.width, canvas.height);
+  const src = new Uint8ClampedArray(img.data);
+  const w = canvas.width;
+  for (let y = 1; y < canvas.height - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const p = (y * w + x) * 4;
+      if (src[p + 3] < 255) continue;
+      for (let c = 0; c < 3; c++) {
+        const blur = (src[p + c - 4] + src[p + c + 4] + src[p + c - w * 4] + src[p + c + w * 4]) / 4;
+        img.data[p + c] = src[p + c] + (src[p + c] - blur) * amount;
+      }
+    }
+  }
+  g.putImageData(img, 0, 0);
+  return canvas;
+}
+// The frame at every web width: 512 from the full frame, 256 from the 512, each sharpened lightly.
+function webFrames(source, look) {
+  const out = {};
+  let cur = source;
+  for (const width of P.WEB_WIDTHS) { // 512, 256
+    const f = P.frameSize(look, width);
+    cur = downscale(cur, f.width, f.height);
+    out[width] = cur;
+  }
+  for (const width of P.WEB_WIDTHS) sharpen(out[width]);
+  return out;
 }
 
 // Draws frames into the web sprite sheets as they arrive, so nothing is rendered twice.
@@ -274,14 +404,14 @@ function makeSheets(look, turns) {
   }
   return {
     draw(i, source) {
+      const small = webFrames(source, look);
       for (const s of sheets) {
         if (i >= s.frames) continue;
         const { col, row } = P.cellOf(i);
         const f = P.frameSize(look, s.width);
-        const g = s.canvas.getContext('2d');
-        g.imageSmoothingQuality = 'high';
-        g.drawImage(source, col * f.width, row * f.height, f.width, f.height);
+        s.canvas.getContext('2d').drawImage(small[s.width], col * f.width, row * f.height);
       }
+      return small;
     },
     async write(poster) {
       for (const s of sheets) {
@@ -295,18 +425,9 @@ function makeSheets(look, turns) {
   };
 }
 
-function posterFrom(source, look) {
-  const f = P.frameSize(look, 512);
-  const c = document.createElement('canvas');
-  Object.assign(c, f);
-  const g = c.getContext('2d');
-  g.imageSmoothingQuality = 'high';
-  g.drawImage(source, 0, 0, f.width, f.height);
-  return c;
-}
 
 async function start() {
-  const looks = ['studio', 'transparent'].filter((l) => opts[l]);
+  const looks = LOOK_KEYS.filter((l) => opts[l]);
   const turns = [opts.t360 && 360, opts.t180 && 180].filter(Boolean);
   if (running()) return;
   if (!state.settings?.outputRoot) return toast('Choose an output folder first');
@@ -357,10 +478,21 @@ async function renderInApp(slug, looks, turns, frames, manifests) {
     if (onScreen()) { previewLook = look; resetPreview(); }
     const { width, height } = P.LOOKS[look];
     const canvas = document.createElement('canvas');
-    Object.assign(canvas, { width, height });
     const studio = new Studio(canvas, { preserveDrawingBuffer: true });
+    // Supersampling: render at twice the size (on top of MSAA) and scale down to the frame size.
+    const ss = studio.renderer.capabilities.maxTextureSize >= width * 2 ? 2 : 1;
+    const frame = document.createElement('canvas');
+    Object.assign(frame, { width, height });
+    const fg = frame.getContext('2d');
+    fg.imageSmoothingQuality = 'high';
+    const capture = () => {
+      fg.clearRect(0, 0, width, height);
+      fg.drawImage(ss > 1 ? downscale(canvas, width, height) : canvas, 0, 0);
+      return frame;
+    };
     try {
-      studio.resize(width, height, 1);
+      studio.resize(width, height, ss);
+      studio.setRig(state.settings || {});
       progress(`${P.LOOKS[look].label} · loading the scene`, done, total);
       await studio.setState(sceneFor(model, look));
       await studio.load(fileUrl(model, model.glb));
@@ -379,12 +511,13 @@ async function renderInApp(slug, looks, turns, frames, manifests) {
         await checkpoint();
         studio.setFrame(i);
         studio.render();
-        await queue(toBlob(canvas, 'image/png').then((b) => put(P.framePath(slug, look, i), b)));
-        sheets.draw(i, canvas);
-        if (i === 0) poster = posterFrom(canvas, look);
+        const out = capture();
+        await queue(toBlob(out, 'image/png').then((b) => put(P.framePath(slug, look, i), b)));
+        const small = sheets.draw(i, out);
+        if (i === 0) poster = small[512];
         if (onScreen() && previewLook === look) {
-          if (turns.includes(360)) cell('sheet360', i, P.COLUMNS, canvas);
-          if (i < P.HALF) cell('sheet180', i, 19, canvas);
+          if (turns.includes(360)) cell('sheet360', i, P.COLUMNS, small[256]);
+          if (i < P.HALF) cell('sheet180', i, 19, small[256]);
         }
         progress(`${P.LOOKS[look].label} · frame ${P.pad3(i + 1)} of ${P.pad3(frames)}`, ++done, total);
         if (i % 4 === 3) await sleep(0); // let the page breathe
@@ -395,7 +528,7 @@ async function renderInApp(slug, looks, turns, frames, manifests) {
         studio.state.turn = job.yaw;
         studio.applyYaw();
         studio.render();
-        await put(`stills/${P.stillName(slug, look, job.yaw)}`, await toBlob(canvas, 'image/png'));
+        await put(`stills/${P.stillName(slug, look, job.yaw)}`, await toBlob(capture(), 'image/png'));
         progress(`${P.LOOKS[look].label} · still image`, ++done, total);
       }
       await Promise.all(uploads);
@@ -422,6 +555,21 @@ async function renderBlender(slug, looks, turns, frames, manifests) {
     if (b.status !== 'running') throw new Error(b.error || `Blender ${b.status}`);
     if (job.cancelled) throw new Error('Cancelled');
   }
+  const load = async (src) => { const img = new Image(); img.src = src; await img.decode(); return img; };
+  const fileSrc = (rel) => `/api/renders/${model.id}/file?path=${encodeURIComponent(rel)}&t=${Date.now()}`;
+  // Photo scenes: Blender's frames (and still) go over the plate first, written back in place.
+  const plates = {};
+  for (const look of looks) {
+    const slug_ = plateFor(model, look);
+    if (!slug_) continue;
+    try { plates[look] = await load(P.plateUrl(slug_)); } catch { toast(`Backplate ${slug_}.jpg is missing · frames keep a transparent background`); }
+  }
+  if (opts.still) {
+    for (const look of looks.filter((l) => plates[l])) {
+      const rel = `stills/${P.stillName(slug, look, job.yaw)}`;
+      await put(rel, await toBlob(await overPlate(await load(fileSrc(rel)), plates[look]), 'image/png'));
+    }
+  }
   // Same sprite step as the in-app renderer, from the PNGs Blender wrote.
   for (const look of turns.length ? looks : []) {
     if (onScreen()) { previewLook = look; resetPreview(); }
@@ -429,11 +577,13 @@ async function renderBlender(slug, looks, turns, frames, manifests) {
     let poster;
     for (let i = 0; i < frames; i++) {
       await checkpoint();
-      const img = new Image();
-      img.src = `/api/renders/${model.id}/file?path=${encodeURIComponent(P.framePath(slug, look, i))}`;
-      await img.decode();
-      sheets.draw(i, img);
-      if (i === 0) poster = posterFrom(img, look);
+      let img = await load(fileSrc(P.framePath(slug, look, i)));
+      if (plates[look]) {
+        img = await overPlate(img, plates[look]);
+        await put(P.framePath(slug, look, i), await toBlob(img, 'image/png'));
+      }
+      const small = sheets.draw(i, img);
+      if (i === 0) poster = small[512];
       if (onScreen() && previewLook === look) {
         if (turns.includes(360)) cell('sheet360', i, P.COLUMNS, img);
         if (i < P.HALF) cell('sheet180', i, 19, img);

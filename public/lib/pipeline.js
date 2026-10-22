@@ -7,16 +7,118 @@ export const HALF = 37; // the 180° half turn is frames 000–036, cut from the
 export const COLUMNS = 12; // sprite sheet columns
 export const WEB_WIDTHS = [512, 256]; // frame widths of the web sprite sheets
 export const LOOKS = {
-  studio: { width: 2048, height: 1536, label: 'Studio backdrop' }, // 4:3
+  showroom: { width: 2048, height: 1536, label: 'Showroom' }, // 4:3, the showroom backplate: Dud Rents' house look
+  studio: { width: 2048, height: 1536, label: 'Composed scene' }, // 4:3, whatever scene was set up in Compose
   transparent: { width: 2048, height: 2048, label: 'Transparent' }, // RGBA with a soft contact shadow
 };
 
-// What each web file is for. Shown in the app and written into HANDOFF.md.
+// The light rig and glass set on the Render step. Saved in settings, applied on top of each scene's own lights
+// by the in-app renderer and by render/blender_turntable.py. key, fill and rim are multipliers (1 = the scene's own).
+export const LIGHT_RANGES = {
+  key: [0, 2], azimuth: [-180, 180], elevation: [5, 85], kelvin: [2700, 9000], fill: [0, 2], rim: [0, 2],
+};
+export const DEFAULT_LIGHTING = { key: 1, azimuth: -40, elevation: 40, kelvin: 5600, fill: 1, rim: 1 };
+export const DEFAULT_GLASS = { on: true, tint: '#14202a', opacity: 0.15 };
+
+// Validates a full or partial lighting / glass object; returns the merged result or null if anything is off.
+export function cleanLighting(next, base = DEFAULT_LIGHTING) {
+  if (!next || typeof next !== 'object' || Array.isArray(next)) return null;
+  const out = { ...base };
+  for (const [k, v] of Object.entries(next)) {
+    const r = Object.hasOwn(LIGHT_RANGES, k) && LIGHT_RANGES[k];
+    if (!r || typeof v !== 'number' || !(v >= r[0] && v <= r[1])) return null;
+    out[k] = v;
+  }
+  return out;
+}
+export function cleanGlass(next, base = DEFAULT_GLASS) {
+  if (!next || typeof next !== 'object' || Array.isArray(next)) return null;
+  const out = { ...base };
+  for (const [k, v] of Object.entries(next)) {
+    if (k === 'on' && typeof v === 'boolean') out.on = v;
+    else if (k === 'tint' && typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v)) out.tint = v.toLowerCase();
+    else if (k === 'opacity' && typeof v === 'number' && v >= 0 && v <= 1) out.opacity = v;
+    else return null;
+  }
+  return out;
+}
+
+// Backplate scenes: a photo stays fixed behind the car (right for a turntable, only the car turns) and the camera is
+// solved to the photo so the car stands on its floor. Calibration, in fractions of the 4:3 frame from the top:
+// horizon = where the eye-level horizon sits, ground = where the car's centre touches the floor, width = metres
+// visible across the frame at the car, hfov = horizontal field of view in degrees.
+// Light: sun = key direction (azimuth from the camera, negative = camera left; elevation) and colour temperature,
+// key/fill/rim = intensities, sky/ground = ambient colours and strength, shadow = contact shadow strength,
+// reflection = glossy floor reflection strength (0 = none), env = how much the photo shows in the paint.
+// Bundled plates are in public/img/backplates/<slug>.jpg (scene plates are 1280 x 720, low for 2048 px frames).
+export const PLATES = {
+  showroom: {
+    label: 'Showroom', note: 'Dark showroom · gold ring · ceiling softbox',
+    // The ring in the reference photo: centre 71% down, 90% of the frame wide, seen 7° above the floor.
+    cam: { horizon: 0.53, ground: 0.71, width: 7.3, hfov: 50 },
+    light: { sun: { azimuth: 0, elevation: 70, kelvin: 6500 }, key: 1.0, fill: 0.15, rim: 1.6, sky: ['#d8dde6', '#2a1e10', 0.12], shadow: 0.85, reflection: 0.35, env: 0.9, glow: ['#f2b56b', 0.3] },
+  },
+  'white-cyc-studio': {
+    label: 'White Cyc Studio', note: 'Bright infinity cove · soft even light',
+    cam: { horizon: 0.5, ground: 0.72, width: 7.4, hfov: 45 },
+    light: { sun: { azimuth: -30, elevation: 60, kelvin: 6000 }, key: 0.9, fill: 0.7, rim: 0.4, sky: ['#ffffff', '#d8dade', 0.9], shadow: 0.6, reflection: 0.06, env: 1.0 },
+  },
+  'golden-hour-coast': {
+    label: 'Golden Hour Coast', note: 'Palm Beach oceanfront · warm low sun',
+    cam: { horizon: 0.5, ground: 0.76, width: 7.6, hfov: 50 },
+    light: { sun: { azimuth: -70, elevation: 12, kelvin: 3300 }, key: 1.8, fill: 0.25, rim: 0.9, sky: ['#ffd9a8', '#5a4636', 0.35], shadow: 0.75, reflection: 0, env: 0.8 },
+  },
+  'night-city-rain': {
+    label: 'Night City Rain', note: 'Wet asphalt · neon reflections',
+    cam: { horizon: 0.5, ground: 0.76, width: 7.6, hfov: 50 },
+    light: { sun: { azimuth: 150, elevation: 25, kelvin: 7500 }, key: 0.5, fill: 0.2, rim: 1.6, sky: ['#5a6cff', '#1a0f2a', 0.25], shadow: 0.7, reflection: 0.55, env: 1.2 },
+  },
+  'luxury-garage': {
+    label: 'Luxury Garage', note: 'Polished concrete · warm LED strips',
+    cam: { horizon: 0.5, ground: 0.76, width: 7.6, hfov: 55 },
+    light: { sun: { azimuth: 0, elevation: 75, kelvin: 3600 }, key: 1.0, fill: 0.3, rim: 1.3, sky: ['#ffe2bd', '#3a332c', 0.25], shadow: 0.8, reflection: 0.3, env: 1.0 },
+  },
+  'desert-highway-dusk': {
+    label: 'Desert Highway Dusk', note: 'Purple-orange sky · open road',
+    cam: { horizon: 0.5, ground: 0.78, width: 7.6, hfov: 50 },
+    light: { sun: { azimuth: 170, elevation: 6, kelvin: 2900 }, key: 0.9, fill: 0.3, rim: 1.4, sky: ['#b58cd8', '#4a3a3e', 0.4], shadow: 0.6, reflection: 0, env: 0.9 },
+  },
+  'modern-villa-driveway': {
+    label: 'Modern Villa Driveway', note: 'Palms · white architecture · midday',
+    cam: { horizon: 0.5, ground: 0.8, width: 7.6, hfov: 50 },
+    light: { sun: { azimuth: -35, elevation: 62, kelvin: 5800 }, key: 2.0, fill: 0.45, rim: 0.6, sky: ['#bcd8ff', '#e8e2d8', 0.6], shadow: 0.85, reflection: 0, env: 1.0 },
+  },
+};
+export const plateUrl = (slug) => `/img/backplates/${slug}.jpg`;
+export const plateThumb = (slug) => `/img/backplates/${slug}-thumb.jpg`;
+
+// The camera that matches a plate, for a frame of the given aspect (the plate is cover-fitted, so its vertical
+// fractions hold). Returns { position: [x, y, z], target: [x, y, z], vfov } in metres and degrees, Y up, car at
+// the origin, camera on +Z. Pure maths so the in-app renderer and Blender (render/blender_turntable.py) agree.
+export function plateCamera({ horizon, ground, width, hfov }, aspect = 4 / 3) {
+  const rad = Math.PI / 180;
+  const tanH = Math.tan((hfov * rad) / 2);
+  const tanV = tanH / aspect;
+  const pitch = Math.atan((1 - 2 * horizon) * tanV); // > 0: looking down (horizon above the middle)
+  const below = pitch - Math.atan((1 - 2 * ground) * tanV); // angle from the camera down to the car's ground point
+  const distance = width / 2 / tanH; // along the view to the car, so `width` metres fill the frame there
+  const y = distance * Math.sin(below);
+  const z = distance * Math.cos(below);
+  return {
+    position: [0, y, z],
+    target: [0, y - Math.tan(pitch) * z, 0], // straight ahead at the pitch, level with the car
+    vfov: (2 * Math.atan(tanV)) / rad,
+  };
+}
+
+// What each web file is for: the Dud Rents (dudrents.com) handoff. Shown in the app and written into HANDOFF.md.
+// Showroom is the house look for the site; the admin lists keep the transparent cut-out.
 export const DESTINATIONS = [
-  { look: 'transparent', turn: 360, width: 512, label: 'Transparent 360 · 512', use: 'spinning thumbnails across dudrents.com' },
+  { look: 'showroom', turn: 360, width: 512, label: 'Showroom 360 · 512', use: 'spinning thumbnails across dudrents.com' },
   { look: 'transparent', turn: 360, width: 256, label: 'Transparent 360 · 256', use: 'admin portal lists and the edit page' },
-  { look: 'studio', turn: 180, width: 512, label: 'Studio 180', use: "swipe view on the car's detail page" },
+  { look: 'showroom', turn: 180, width: 512, label: 'Showroom 180', use: "swipe view on the car's detail page" },
 ];
+export const DEFAULT_LOOKS = ['showroom', 'transparent']; // what the Render step has switched on to begin with
 
 export function slugify(name) {
   const slug = String(name ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
@@ -111,11 +213,11 @@ export function handoffText({ slug, name, looks, turns, stills = [], models = []
     `- ${FRAMES} frames, ${STEP}° apart. Frame 000 is the front ¾ view; each next frame turns the car ${STEP}° more. The camera, lights and studio never move.`,
     `- The 360 loops. The 180 is frames 000–036 (${HALF} frames) of the same render and stops at both ends.`,
     `- Sprite sheets have ${COLUMNS} columns. 360: ${COLUMNS} × ${spriteGrid(FRAMES).rows}. 180: ${COLUMNS} × ${spriteGrid(HALF).rows}, last row has ${spriteGrid(HALF).lastRowFrames} frame. Each json lists frame size, columns, rows and frame count.`,
-    '- Studio frames are 2048 × 1536 (4:3). Transparent frames are 2048 × 2048 RGBA with a soft contact shadow.', '',
+    '- Showroom and composed-scene frames are 2048 × 1536 (4:3). Transparent frames are 2048 × 2048 RGBA with a soft contact shadow.', '',
     '## Embedding the spinner', '',
     'Serve `spin-viewer.js` and the `web/` folder, then:', '',
     '```html',
-    `<div data-flatform-spin="web/${spriteJsonName('transparent', 360)}" data-size="256"></div>`,
+    `<div data-flatform-spin="web/${spriteJsonName('showroom', 360)}" data-size="512"></div>`,
     '<script src="spin-viewer.js"></script>',
     '```', '',
     'Drag, swipe or use the arrow keys to turn. It shows the poster until the sheet loads. `viewer.html` is a working demo.', '');
