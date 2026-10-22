@@ -2,7 +2,7 @@
 // Generate. Calm rows: a label on the left, a fixed-width control on the right. Groups stay collapsed to a one-line
 // summary, one open at a time; options that don't apply to the current choices are hidden or explained by a tooltip.
 import { $, esc, state, stepper, findModel, toast, go, refresh, refreshAccount, openKeyDialog, takePhotos, addFiles, enqueue,
-  savedSetup, rememberSetup, accountOf, fmtBalance, busy, send, arrowRadios } from '../app.js';
+  savedSetup, rememberSetup, accountOf, fmtBalance, busy, send, arrowRadios, confirmDialog } from '../app.js';
 import { icon } from '../lib/icons.js';
 import { PROVIDERS, ENGINES, PRESETS, VIEWS, GROUPS, groupName, normalize, presetConfig, matchPreset, summary, optionSpecs,
   valuesOf, valueLabel, engineList } from '../lib/engines.js';
@@ -265,7 +265,7 @@ function footHtml() {
     noKey ? `no ${PROVIDERS[provider].name} key yet` : a?.error ? 'balance unavailable' : balance != null ? `${short ? 'not enough · ' : ''}balance ${fmtBalance(balance)}` : 'balance …',
   ].filter(Boolean).join(' · ');
   const button = noKey ? `<button class="btn pri gen" type="button" data-act="key">${icon('key')}<span>Add key</span></button>`
-    : `<button class="btn pri gen" type="button" data-act="generate"${why || short ? ' disabled' : ''}>Generate</button>`;
+    : `<button class="btn pri gen" type="button" data-act="generate"${why ? ' disabled' : ''}>Generate</button>`; // short: Generate asks first
   return `<div class="cost" role="status"><b>${total} credits</b><span class="${short ? 'bad' : ''}">${esc(line)}</span></div>${button}`;
 }
 
@@ -354,6 +354,11 @@ async function generate() {
     jobs.length = 1;
     Object.assign(jobs[0], { name: model.name, modelId: model.id });
   }
+  // More than the balance: the provider will likely refuse it, but the balance may be stale, so ask instead of blocking.
+  const total = estimate(s).credits * jobs.length;
+  const a = accountOf(s.provider);
+  if (a?.balance != null && total > Number(a.balance) && !(await confirmDialog({ title: 'Not enough credits?',
+    text: `This costs about ${total} credits and your ${PROVIDERS[s.provider].name} balance is ${fmtBalance(a.balance)}. Send it anyway?`, ok: 'Generate anyway' }))) return;
   rememberSetup(s).catch((err) => toast(err.message));
   Object.assign(p, { photos: [], views: {}, modelId: null, setup: null });
   jobs.forEach((job, i) => enqueue(job, i === 0));

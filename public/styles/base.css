@@ -66,15 +66,11 @@ img { display: block; }
 .dot.wait { background: var(--dim); }
 .content { padding: 18px 28px 20px; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: auto; outline: none; }
 
-/* ---- stepper ---- */
-.stepper { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
-.step { display: flex; align-items: center; gap: 8px; font-size: 11px; letter-spacing: .16em; text-transform: uppercase; opacity: .5; text-decoration: none; }
-.step b { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font: 500 11px var(--mono); border: 1px solid var(--line-5); color: var(--accent); }
-.step.on, .step.done { opacity: 1; }
-.step.on b { background: var(--accent-grad); color: var(--on-accent); border-color: var(--accent); box-shadow: 0 0 14px var(--glow); }
-.step.done b { background: #2e1b17; }
-a.step:hover span { color: var(--accent-hi); }
-.stepline { width: 34px; height: 1px; background: var(--accent); opacity: .4; display: block; }
+/* ---- flow tabs: Drop, Generate, Compose, Render. Plain tabs, all clickable ---- */
+.flowtabs { display: flex; align-items: center; gap: 4px; margin-bottom: 16px; }
+.ftab { padding: 7px 14px; border-radius: 6px; border: 1px solid transparent; font: 600 11px var(--display); letter-spacing: .16em; text-transform: uppercase; color: var(--muted); text-decoration: none; }
+.ftab:hover { color: var(--accent-hi); border-color: var(--line-3); }
+.ftab.on { color: var(--accent-hi); border-color: var(--line-5); background: var(--tint); box-shadow: inset 0 -2px 0 var(--accent); }
 
 /* ---- surfaces ---- */
 .glass { position: relative; background: linear-gradient(#12100d, #0d0c0a); border: 1px solid var(--line); border-radius: 10px; }
@@ -198,6 +194,10 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16
 .sg-bar.l { left: 7%; } .sg-bar.r { right: 7%; }
 .sg-floor { position: absolute; left: 0; right: 0; bottom: 0; height: 34%; background: linear-gradient(#0c0b0a, #030303 70%); }
 .sg-ring { position: absolute; left: 14%; right: 14%; bottom: 12%; height: 30%; border-radius: 50%; border: 1px solid var(--accent); box-shadow: 0 0 6px 1px var(--glow); }
+.s-show { background: #08080a; }
+.s-show .sg-panel { left: 12%; right: 12%; top: -6%; height: 12%; opacity: .7; }
+.s-show .sg-floor { background: linear-gradient(#0e0d0d, #050505 70%); }
+.s-show .sg-ring { border-color: #f2b56b; box-shadow: 0 0 4px rgba(242, 181, 107, .6); }
 .s-clear .checker, .checker { position: absolute; inset: 0; background: conic-gradient(#d9dce1 25%, #fff 0 50%, #d9dce1 0 75%, #fff 0) 0 0 / 10px 10px; }
 .s-cyc { background: radial-gradient(ellipse at 50% 30%, #fff, #e9ebee 60%, #d6d9de); }
 .sc-shadow { position: absolute; left: 26%; right: 26%; bottom: 20%; height: 12%; background: radial-gradient(ellipse, rgba(0, 0, 0, .22), transparent 70%); }

@@ -3,6 +3,7 @@
 import { icon } from './lib/icons.js';
 import { PROVIDERS, ENGINES, VIEWS, normalize, presetConfig, matchPreset, PRESETS } from './lib/engines.js';
 import { estimate } from './lib/pricing.js';
+import { isModelFile, importModel } from './lib/importer.js';
 
 export const $ = (s, root = document) => root.querySelector(s);
 export const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -21,6 +22,7 @@ export const state = {
   pending: { photos: [], views: {}, modelId: null }, // photos waiting on the setup screen for Generate
   frames: {}, // composer turntable frame per model, so "Render still" uses the current angle
   lastId: null, // model last opened in a flow screen
+  spend: null, // GET /api/spend: totals, daily series, per-model costs, balances and low-balance flags per provider
 };
 
 export async function api(path, opts = {}) {
@@ -61,7 +63,9 @@ export function upsert(m) {
   return m;
 }
 export const isGenerating = (m) => m.versions?.some((v) => v.status === 'generating');
-export const isRendered = (m) => Boolean(m.renders && ['studio360', 'studio180', 'transparent360', 'transparent180'].some((k) => m.renders[k]));
+// The turntables a model has been rendered as, in any look: [360, 180], [180] or [].
+export const renderedTurns = (m) => [360, 180].filter((t) => ['showroom', 'studio', 'transparent'].some((l) => m.renders?.[`${l}${t}`]));
+export const isRendered = (m) => renderedTurns(m).length > 0;
 export const thumbOf = (m, v = m) => (v === m && m.renders?.poster ? fileUrl(m, m.renders.poster) : v.thumb ? fileUrl(m, v.thumb) : v.source ? fileUrl(m, v.source) : '');
 export const sourceType = (file = '') => (/\.png$/i.test(file) ? 'PNG' : 'JPEG');
 
@@ -141,7 +145,10 @@ export function takePhotos(files) {
 // New photos go to the setup screen, where you choose the provider and press Generate. In 4-view mode they fill the
 // empty view slots in order. quick: straight into the queue with the last setup used (Generate screen, "drop more").
 export function addFiles(files, { quick = false } = {}) {
-  const photos = takePhotos(files);
+  const list = [...files];
+  const models = list.filter(isModelFile);
+  if (models.length) importModels(models);
+  const photos = takePhotos(list.filter((f) => !isModelFile(f)));
   if (!photos.length) return;
   if (quick) {
     const setup = normalize({ ...savedSetup(), mode: 'single' });
@@ -158,6 +165,20 @@ export function addFiles(files, { quick = false } = {}) {
   if (route.name === 'setup') refresh();
   else go('#/setup');
 }
+// 3D models skip Generate: each is converted to GLB in the page, saved, and the last one opens in Compose.
+async function importModels(files) {
+  let last;
+  for (const file of files) {
+    state.importing = file.name;
+    announce(`Importing ${file.name}`);
+    refresh();
+    try { last = upsert(await importModel(file)); } catch (e) { toast(e.message); }
+  }
+  state.importing = null;
+  refresh();
+  if (last) { announce(`${last.name} is ready`); go(`#/compose/${last.id}`); }
+}
+
 // Regenerate a model: the setup screen with its current photos (fetched back from the library) or new ones.
 export async function setupFor(m, files) {
   const v = m.versions.find((x) => x.n === m.activeVersion) || m;
@@ -334,18 +355,52 @@ function updateLater() {
   showUpdate();
 }
 
-// ---- the frame: rail, title bar status, stepper ----
-const FLOW = [['drop', 'Drop'], ['generate', 'Generate'], ['review', 'Review'], ['compose', 'Compose'], ['render', 'Render']];
+// ---- spend: the ledger summary (Settings → Spend) and a banner when a balance is under its alert ----
+// Top up opens the provider's billing page: through main.mjs in the app, a plain new tab in `npm run web`.
+export const topUp = (service) => (native?.openBilling ? native.openBilling(service).catch((e) => toast(e.message))
+  : window.open(PROVIDERS[service].billingUrl, '_blank', 'noopener'));
+let lowLater = false; // "Later" hides the banner until Flatform starts again
+export async function refreshSpend() {
+  try { state.spend = await api('/api/spend'); } catch { return; }
+  showLow();
+  refresh();
+}
+function showLow() {
+  const low = Object.entries(state.spend?.services || {}).filter(([, s]) => s.low);
+  const bar = $('#lowBalance');
+  if (low.length && !lowLater) {
+    const [service, s] = low[0];
+    $('#lowTitle').textContent = `${PROVIDERS[service].name} balance is low`;
+    $('#lowNote').textContent = [`${fmt(s.balance)} credits left, under your alert of ${fmt(s.threshold)}`,
+      s.daysLeft != null && `about ${s.daysLeft} days at this pace`, low.length > 1 && `${PROVIDERS[low[1][0]].name} is low too`].filter(Boolean).join(' · ');
+    $('#lowTopUp').dataset.service = service;
+    if (bar.hidden) announce($('#lowTitle').textContent);
+  }
+  bar.hidden = !low.length || lowLater;
+}
+$('#lowTopUp').addEventListener('click', (e) => topUp(e.target.dataset.service));
+$('#lowLater').addEventListener('click', () => { lowLater = true; showLow(); });
+
+// ---- files opened with Flatform (desktop app: "Open with", a second launch) go to the Drop flow ----
+native?.onOpenFiles?.(async (paths) => {
+  const files = [];
+  for (const p of paths) {
+    try { const { name, bytes } = await native.readDroppedFile(p); files.push(new File([bytes], name)); } catch (e) { toast(`${p}: ${e.message}`); }
+  }
+  if (files.length) addFiles(files); // photos to the setup screen, 3D models straight into Compose
+});
+
+// ---- the frame: rail, title bar status, flow tabs ----
+// Plain tabs, every one clickable at any time: Generate opens this car's progress (or the queue), Compose and
+// Render this car or the last ready one.
+const FLOW = [['drop', 'Drop'], ['generate', 'Generate'], ['compose', 'Compose'], ['render', 'Render']];
 export function stepper(active, m) {
-  const idx = FLOW.findIndex(([key]) => key === active);
-  return `<nav class="stepper" aria-label="Steps">${FLOW.map(([key, label], i) => {
-    const cls = i < idx ? 'done' : i === idx ? 'on' : '';
-    const inner = `<b>${i < idx ? icon('check', 12) : i + 1}</b><span>${label}</span>`;
-    const href = i === 0 ? '#/drop' : m && (i === 1 || m.status === 'ready') ? `#/${key}/${m.id}` : null;
-    const step = href && i !== idx ? `<a class="step ${cls}" href="${href}">${inner}</a>`
-      : `<div class="step ${cls}"${i === idx ? ' aria-current="step"' : ''}>${inner}</div>`;
-    return (i ? '<em class="stepline" aria-hidden="true"></em>' : '') + step;
-  }).join('')}</nav>`;
+  const ready = m?.status === 'ready' ? m : focusModel();
+  const hrefOf = (key) => (key === 'drop' ? '#/drop' : key === 'generate' ? (m ? `#/generate/${m.id}` : '#/generate')
+    : ready ? `#/${key}/${ready.id}` : '#/library');
+  return `<nav class="flowtabs" aria-label="Steps">${FLOW.map(([key, label]) => (key === active
+    ? `<a class="ftab on" href="${hrefOf(key)}" aria-current="page">${label}</a>`
+    : `<a class="ftab" href="${hrefOf(key)}">${label}</a>`)).join('')}</nav>`;
 }
 
 export function focusModel() {
@@ -357,7 +412,7 @@ function renderFrame() {
   const target = focusModel();
   const links = [
     ['New', 'plus', '#/drop', ['drop', 'setup', 'generate']],
-    ['Library', 'library', '#/library', ['library', 'review']],
+    ['Library', 'library', '#/library', ['library', 'model']],
     ['Scenes', 'scene', target ? `#/compose/${target.id}` : '#/library', ['compose']],
     ['Renders', 'film', target ? `#/render/${target.id}` : '#/library', ['render']],
     ['Settings', 'settings', '#/settings', ['settings']],
@@ -380,7 +435,7 @@ function renderFrame() {
 }
 
 // ---- routing ----
-const SCREENS = ['drop', 'setup', 'generate', 'review', 'compose', 'render', 'library', 'settings'];
+const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings'];
 export let route = { name: 'drop', id: null };
 let current = null;
 let navToken = 0;
@@ -388,6 +443,7 @@ export const go = (hash) => (location.hash === hash ? navigate() : (location.has
 
 async function navigate() {
   const [, name = 'drop', id = null] = location.hash.match(/^#\/(\w+)(?:\/([\w-]+))?/) || [];
+  if (name === 'review') return go(id ? `#/compose/${id}` : '#/library'); // Review was folded into Compose in v0.5
   if (!SCREENS.includes(name)) return go('#/drop');
   const token = ++navToken;
   const mod = await import(`./views/${name}.js`);
@@ -470,5 +526,7 @@ window.addEventListener('hashchange', navigate);
   refreshUpdate();
   setTimeout(refreshUpdate, 20000); // the server's first check runs a few seconds after it starts
   setInterval(refreshUpdate, 15 * 60000);
+  refreshSpend();
+  setInterval(refreshSpend, 5 * 60000);
   poll();
 })();

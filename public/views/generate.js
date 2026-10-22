@@ -2,7 +2,8 @@
 // Neither Tripo nor 3D AI Studio has a cancel endpoint, so submitted jobs can't be cancelled; only photos still in
 // Flatform's own upload queue can be removed. Photos dropped on the queue skip the setup screen and use the last setup.
 import { $, esc, state, route, stepper, findModel, fileUrl, sourceType, stagesOf, stageOf, statusText, addFiles, openPicker,
-  removeQueued, retryQueued, retryModel, creditsText, engineLabel, providerOf, savedSetup, setupLabel, costOf, isGenerating, go, busy } from '../app.js';
+  removeQueued, retryQueued, retryModel, creditsText, engineLabel, providerOf, savedSetup, setupLabel, costOf, isGenerating, go, busy,
+  accountOf, confirmDialog, fmtBalance } from '../app.js';
 import { PROVIDERS } from '../lib/engines.js';
 import { icon } from '../lib/icons.js';
 
@@ -71,16 +72,34 @@ export function mount(el, { id }) {
   add.addEventListener('click', () => openPicker({ quick: true }));
   add.addEventListener('dragover', (e) => { e.preventDefault(); add.classList.add('hot'); });
   add.addEventListener('dragleave', () => add.classList.remove('hot'));
-  add.addEventListener('drop', (e) => { e.preventDefault(); add.classList.remove('hot'); addFiles(e.dataTransfer.files, { quick: true }); });
+  add.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    add.classList.remove('hot');
+    const files = [...e.dataTransfer.files];
+    if (await affordable(savedSetup().provider, costOf(savedSetup()) * files.length)) addFiles(files, { quick: true });
+  });
   el.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-act]');
     if (!b) return;
     const { act, id: target } = b.dataset;
     if (act === 'remove') removeQueued(target);
     if (act === 'requeue') retryQueued(target);
-    if (act === 'retry') busy(b, () => retryModel(findModel(target)));
+    if (act === 'retry') {
+      busy(b, async () => {
+        const m = findModel(target);
+        const v = m.versions.find((x) => x.n === m.activeVersion) || m;
+        if (await affordable(providerOf(v), v.estimate ?? 0)) await retryModel(m);
+      });
+    }
   });
   update();
+}
+
+// More than the last known balance: ask first (the balance may be stale, so it never blocks outright).
+async function affordable(provider, credits) {
+  const a = accountOf(provider);
+  if (a?.balance == null || credits <= Number(a.balance)) return true;
+  return confirmDialog({ title: 'Not enough credits?', text: `This costs about ${credits} credits and your ${PROVIDERS[provider].name} balance is ${fmtBalance(a.balance)}. Send it anyway?`, ok: 'Generate anyway' });
 }
 
 export function update() {
@@ -106,11 +125,11 @@ export function update() {
     $('#fstage', root)?.style.setProperty('--p', `${m.status === 'ready' ? 100 : Math.max(4, pct)}%`);
     root.querySelector('.forming').classList.toggle('done', m.status === 'ready');
     const facts = failed ? `<button class="btn pri" type="button" data-act="retry" data-id="${m.id}">${icon('retry')}<span>Retry</span></button>`
-      : m.status === 'ready' ? `<a class="btn pri" href="#/review/${m.id}">${icon('eye')}<span>Review the model</span></a>`
+      : m.status === 'ready' ? `<a class="btn pri" href="#/compose/${m.id}">${icon('scene')}<span>Open in Compose</span></a>`
         : '<a class="btn sec" href="#/library">Run in background</a>';
     if ($('#facts', root).dataset.html !== facts) { $('#facts', root).dataset.html = facts; $('#facts', root).innerHTML = facts; }
     // Move on to Review by itself when the model you're watching finishes.
-    if (m.status === 'ready' && !shownReady) { shownReady = true; setTimeout(() => { if (route.name === 'generate' && route.id === m.id) go(`#/review/${m.id}`); }, 1200); }
+    if (m.status === 'ready' && !shownReady) { shownReady = true; setTimeout(() => { if (route.name === 'generate' && route.id === m.id) go(`#/compose/${m.id}`); }, 1200); }
   } else {
     const sending = state.queue.find((q) => q.status === 'uploading');
     $('#stageName', root).textContent = sending ? `Sending ${sending.name} to ${PROVIDERS[sending.setup.provider].name}…`

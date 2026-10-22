@@ -1,8 +1,9 @@
-// 04 · Compose: the scene composer. One Three.js studio, five scene presets, an inspector and a turntable timeline.
+// Compose: the scene composer, and the model's own panel (versions, approve, regenerate, clean up; this used to be
+// the Review step). One Three.js studio, the scene presets (Showroom first), an inspector and a turntable timeline.
 // The scene is saved per model (scene.json next to the model) so a render reproduces it exactly.
-import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh } from '../app.js';
+import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy, setupFor, engineLabel } from '../app.js';
 import { icon } from '../lib/icons.js';
-import { FRAMES, HALF, STEP, pad3 } from '../lib/pipeline.js';
+import { FRAMES, HALF, STEP, pad3, LOOKS, PLATES } from '../lib/pipeline.js';
 import { Studio, PRESETS, CAMERAS, defaultScene, lookOf } from '../lib/studio.js';
 
 let root;
@@ -19,6 +20,7 @@ let raf;
 
 const fixed = (n, d = 2) => Number(n).toFixed(d);
 const level = (v) => (v <= 0.02 ? 'Off' : v < 0.35 ? 'Soft' : v < 0.7 ? 'Medium' : 'Strong');
+const hasFloor = () => scene.preset === 'ring' || scene.preset === 'showroom'; // the presets with a reflective floor
 const softness = (v) => (v < 0.3 ? 'Hard' : v < 0.7 ? 'Soft' : 'Very soft');
 
 export async function mount(el, { id }) {
@@ -74,22 +76,27 @@ export async function mount(el, { id }) {
     </div>
     <aside class="insp glass" aria-label="Inspector">
       <div class="chips tabs" id="tabs">
-        <button class="chip" type="button" data-jump="grp-model" aria-selected="true">Model</button>
+        <button class="chip" type="button" data-jump="modelGroup" aria-selected="true">Model</button>
+        <button class="chip" type="button" data-jump="grp-model">Place</button>
         <button class="chip" type="button" data-jump="grp-camera">Camera</button>
         <button class="chip" type="button" data-jump="grp-light">Light</button>
         <button class="chip" type="button" data-jump="grp-ground">Ground</button>
       </div>
+      <div id="modelGroup"></div>
       <div id="inspector"></div>
+      <input type="file" id="betterPhoto" accept="image/png,image/jpeg,image/heic,image/heif,.heic,.heif" hidden>
     </aside>
   </section>`;
 
   renderScenes();
+  renderModel();
   renderInspector();
   renderTimeline();
   bind();
   let s;
   try {
     s = studio = new Studio($('#cv', el));
+    s.setRig(state.settings || {}); // the light rig and glass set on the Render step
   } catch {
     $('#hudMsg', el).textContent = 'The scene composer needs WebGL, which is not available here.';
     return;
@@ -145,8 +152,9 @@ function draw() {
 function renderHud() {
   const cam = CAMERAS[scene.camera] || CAMERAS.front34;
   $('#hudScene', root).innerHTML = `${icon('scene', 14)} ${esc(PRESETS[scene.preset].label)}`;
-  $('#hudCam', root).innerHTML = `${icon('camera', 14)} ${cam.label} · ${scene.lens} mm · ${cam.height}`;
-  $('#hudLook', root).textContent = lookOf(scene.preset) === 'studio' ? 'Studio look · 4:3 · 2048 px' : 'Transparent look · 1:1 · 2048 px';
+  $('#hudCam', root).innerHTML = `${icon('camera', 14)} ${PLATES[scene.preset] ? 'Camera matched to the photo · eye level' : `${cam.label} · ${scene.lens} mm · ${cam.height}`}`;
+  const look = lookOf(scene.preset);
+  $('#hudLook', root).textContent = `${look === 'studio' ? 'Studio' : LOOKS[look].label} look · ${look === 'transparent' ? '1:1' : '4:3'} · 2048 px`;
   $('#vp', root).classList.toggle('clear', scene.preset === 'transparent');
   $('#vp', root).classList.toggle('light', scene.preset === 'transparent' || scene.preset === 'cyclorama');
   if (studio && !$('#hudMsg', root).textContent.startsWith('Loading')) {
@@ -166,6 +174,7 @@ async function change(next, { inspector = true } = {}) {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(save, 400);
   if (inspector) renderInspector();
+  if ('autoOrient' in next || 'center' in next) renderModel();
   renderScenes();
   draw();
 }
@@ -211,6 +220,7 @@ function renderTimeline() {
 function renderScenes() {
   const art = {
     ring: '<div class="stage s-ring"><div class="sg-wall"></div><div class="sg-panel"></div><div class="sg-bar l"></div><div class="sg-bar r"></div><div class="sg-floor"></div><div class="sg-ring"></div></div>',
+    showroom: '<div class="stage s-show"><div class="sg-panel"></div><div class="sg-bar l"></div><div class="sg-bar r"></div><div class="sg-floor"></div><div class="sg-ring"></div></div>',
     transparent: '<div class="stage s-clear"><div class="checker"></div><div class="sc-shadow"></div></div>',
     cyclorama: '<div class="stage s-cyc"><div class="sc-shadow"></div></div>',
     miami: '<div class="stage s-miami"><div class="sm-sky"></div><div class="sm-city"></div><div class="sm-road"></div><div class="sm-neon"></div></div>',
@@ -222,9 +232,11 @@ function renderScenes() {
     const photo = file && /\.(jpe?g|png)$/i.test(file) ? `<img class="thumb" src="/backdrops/${encodeURIComponent(file)}" alt="">` : '';
     const note = (key === 'miami' || key === 'custom') && file ? `${file.endsWith('.hdr') || file.endsWith('.exr') ? 'HDRI' : 'Backdrop'} added · click again to replace` : p.note;
     const needs = (key === 'miami' || key === 'custom') && !file;
-    return `<button class="scn" type="button" data-preset="${key}" aria-pressed="${scene.preset === key}">
-      <div class="scn-th">${photo ? `<div class="stage">${photo}</div>` : art[key]}${needs ? `<div class="up">${icon('upload', 18)}</div>` : ''}</div>
-      <div class="scn-t"><b>${p.label}</b><span>${esc(note)}</span></div></button>`;
+    const plate = p.plate ? `<div class="stage"><img class="thumb" src="${p.thumb}" alt="" onerror="this.remove()"></div>` : '';
+    return `<button class="scn${key === 'showroom' ? ' pinned' : ''}" type="button" data-preset="${key}" aria-pressed="${scene.preset === key}">
+      <div class="scn-th">${plate || (photo ? `<div class="stage">${photo}</div>` : art[key])}${needs ? `<div class="up">${icon('upload', 18)}</div>` : ''}${key === 'showroom' ? '<span class="pin">Default</span>' : ''}</div>
+      <div class="scn-t"><b>${p.label}</b><span>${esc(note)}</span></div></button>${key === 'showroom' && scene.preset === 'showroom'
+      ? `<label class="tg scn-opt"><span>Modeled room<small>Instead of the photo, same camera</small></span><input class="sw" type="checkbox" role="switch" data-key="modeled" ${scene.modeled ? 'checked' : ''}></label>` : ''}`;
   }).join('');
   const box = $('#scenes', root);
   if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
@@ -258,17 +270,65 @@ function renderInspector() {
       ${toggle('flip', 'Flip front and back', 'Use it if the tail faces the camera at 0°', s.flip)}
     </div>
     <div class="grp" id="grp-camera"><h3>${icon('camera', 14)} Camera</h3>
-      <div class="chips" role="radiogroup" aria-label="Camera preset">${Object.entries(CAMERAS).map(([k, c]) => `<button class="chip" type="button" role="radio" data-camera="${k}" aria-checked="${s.camera === k}">${c.label}</button>`).join('')}</div>
-      ${slider('lens', 'Lens', 18, 135, 1, s.lens, valueText.lens(s.lens))}
+      ${PLATES[s.preset] ? '<p class="fine">Set by the photo: eye level, matched to its floor, so the car stands on it. Turn the car with Turn.</p>'
+      : `<div class="chips" role="radiogroup" aria-label="Camera preset">${Object.entries(CAMERAS).map(([k, c]) => `<button class="chip" type="button" role="radio" data-camera="${k}" aria-checked="${s.camera === k}">${c.label}</button>`).join('')}</div>
+      ${slider('lens', 'Lens', 18, 135, 1, s.lens, valueText.lens(s.lens))}`}
     </div>
     <div class="grp" id="grp-light"><h3>${icon('light', 14)} Light</h3>
       ${toggle('matchLighting', 'Match lighting to scene', 'Key, fill and rim follow the studio', s.matchLighting)}
       ${s.matchLighting ? '' : `<div class="lights">${slider('key', 'Key', 0, 3, 0.1, s.key, valueText.key(s.key))}${slider('fill', 'Fill', 0, 3, 0.1, s.fill, valueText.fill(s.fill))}${slider('rim', 'Rim', 0, 3, 0.1, s.rim, valueText.rim(s.rim))}</div>`}
     </div>
     <div class="grp" id="grp-ground"><h3>Ground</h3>
-      ${slider('reflection', 'Reflection', 0, 1, 0.01, s.reflection, s.preset === 'ring' ? level(s.reflection) : 'n/a', s.preset !== 'ring')}
+      ${slider('reflection', 'Reflection', 0, 1, 0.01, s.reflection, hasFloor() ? level(s.reflection) : 'n/a', !hasFloor())}
       ${slider('shadow', 'Shadow', 0, 1, 0.01, s.shadow, softness(s.shadow))}
     </div>`;
+}
+
+// The model itself: versions, approve, regenerate and clean up (what the Review step used to hold).
+function renderModel() {
+  const box = $('#modelGroup', root);
+  if (!box) return;
+  const thumb = (v) => (v.thumb ? fileUrl(m, v.thumb) : v.source ? fileUrl(m, v.source) : '');
+  const html = `<div class="grp model-grp"><h3>${icon('cube', 14)} Model</h3>
+      <p class="sub">${esc(m.name)} · ${m.status === 'ready' ? `${esc(engineLabel(m))}${m.credits != null ? ` · ${m.credits} credits` : ''}` : esc(statusText(m))}</p>
+      ${m.versions.length > 1 ? `<div class="vers">${m.versions.map((v) => `
+        <button class="ver" type="button" data-version="${v.n}" aria-pressed="${v.n === m.activeVersion}" title="${esc(engineLabel(v))}" ${v.status === 'ready' ? '' : 'disabled'}>
+          <div class="stage s-clear"><div class="checker"></div>${thumb(v) ? `<img class="thumb" src="${thumb(v)}" alt="Version ${v.n} of ${esc(m.name)}">` : ''}</div>
+          <span>Version ${v.n}</span><small>${v.status === 'ready' ? esc(engineLabel(v).replace('3D AI Studio · ', '')) : v.status === 'failed' ? 'Failed' : `${v.progress || 0}%`}</small>
+        </button>`).join('')}</div>` : ''}
+      <button class="btn sm ${m.approved ? 'ghostbtn' : 'pri'}" type="button" data-act="approve" aria-pressed="${Boolean(m.approved)}">${icon('check', 14)}<span>${m.approved ? 'Approved · undo' : 'Approve'}</span></button>
+      ${m.provider === 'upload' ? '' : `<div class="mg-row"><button class="btn sm sec" type="button" data-act="regen" title="Regenerate from the same photo" ${isGenerating(m) ? 'disabled' : ''}>${icon('retry', 14)}<span>Regenerate</span></button>
+      <button class="btn sm ghostbtn" type="button" data-act="better" title="Regenerate with a better photo" ${isGenerating(m) ? 'disabled' : ''}>${icon('upload', 14)}<span>New photo</span></button></div>
+      <p class="fine">Regenerating is a new paid job on the setup screen; older versions stay here.</p>`}
+      ${toggle('autoOrient', 'Auto-orient', 'Wheels down, nose to the camera', scene.autoOrient)}
+      ${toggle('center', 'Center and ground on floor', 'Applied here and in every render', scene.center)}
+    </div>`;
+  if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
+}
+
+export function update() {
+  const fresh = findModel(m?.id);
+  if (!fresh || !root?.isConnected) return;
+  const glb = m.glb;
+  m = fresh;
+  renderModel();
+  if (m.status === 'ready' && m.glb !== glb) loadModel();
+}
+
+async function loadModel() {
+  const s = studio;
+  if (!s) return;
+  $('#hudMsg', root).hidden = false;
+  $('#hudMsg', root).textContent = 'Loading model…';
+  try {
+    await s.load(fileUrl(m, m.glb));
+    if (studio !== s) return;
+    $('#hudMsg', root).hidden = !s.message;
+    $('#hudMsg', root).textContent = s.message;
+  } catch (e) {
+    if (studio === s) $('#hudMsg', root).textContent = `Could not load the model: ${e.message}`;
+  }
+  draw();
 }
 
 function bind() {
@@ -277,6 +337,19 @@ function bind() {
     const t = e.target.closest('button');
     if (!t) return;
     if (t.dataset.render) { state.renderIntent = t.dataset.render; location.hash = `#/render/${m.id}`; }
+    if (t.dataset.version) {
+      try { m = upsert(await send(`/api/models/${m.id}`, 'PATCH', { activeVersion: Number(t.dataset.version) })); } catch (err) { return toast(err.message); }
+      renderModel();
+      await loadModel();
+      refresh();
+    }
+    if (t.dataset.act === 'approve') {
+      try { m = upsert(await send(`/api/models/${m.id}`, 'PATCH', { approved: !m.approved })); } catch (err) { return toast(err.message); }
+      renderModel();
+      refresh();
+    }
+    if (t.dataset.act === 'regen') await busy(t, () => setupFor(m).catch((err) => toast(err.message)));
+    if (t.dataset.act === 'better') $('#betterPhoto', el).click();
     if (t.dataset.preset) {
       const key = t.dataset.preset;
       const file = state.settings?.backdrops?.[key];
@@ -309,12 +382,17 @@ function bind() {
     if (!k || e.target.type !== 'range') return;
     const v = Number(e.target.value);
     e.target.style.setProperty('--p', `${((v - e.target.min) / (e.target.max - e.target.min)) * 100}%`);
-    $(`#v-${k}`, el).textContent = k === 'reflection' && scene.preset !== 'ring' ? 'n/a' : valueText[k](v);
+    $(`#v-${k}`, el).textContent = k === 'reflection' && !hasFloor() ? 'n/a' : valueText[k](v);
     change({ [k]: v }, { inspector: false });
   });
   el.addEventListener('change', (e) => {
     const k = e.target.dataset.key;
-    if (k && e.target.type === 'checkbox') change({ [k]: e.target.checked, ...(k === 'sameSize' && e.target.checked && { scale: 1 }) });
+    if (k && e.target.type === 'checkbox') change({ [k]: e.target.checked, ...(k === 'sameSize' && e.target.checked && { scale: 1 }), ...(k === 'center' && { snap: e.target.checked }) });
+    if (e.target.id === 'betterPhoto' && e.target.files[0]) {
+      const files = [...e.target.files];
+      e.target.value = '';
+      setupFor(m, files).catch((err) => toast(err.message));
+    }
   });
   $('#backdropFile', el).addEventListener('change', async (e) => {
     const file = e.target.files[0];

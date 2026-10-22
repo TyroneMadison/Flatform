@@ -1,10 +1,12 @@
 """Flatform turntable renderer for Blender 4.x (Cycles).
 
     blender -b -P blender_turntable.py -- --glb car.glb --out frames/studio --slug audi-r8 --look studio \
-        --frames 72 --step 5 --res 2048x1536 [--scene scene.json] [--still 30 --still-out stills/x.png]
+        --frames 72 --step 5 --res 2048x1536 [--scene scene.json] [--rig '{"lighting": {...}, "glass": {...}}']
+        [--still 30 --still-out stills/x.png]
 
-Builds the Escalade ring studio (or the transparent look) in code, normalises the car exactly like the in-app
-renderer (public/lib/studio.js), then turns only the car by --step degrees per frame. The camera, lights and studio
+Builds the Escalade ring studio, the showroom or the transparent look in code, normalises and frames the car
+exactly like the in-app renderer (public/lib/studio.js), applies the Render step's light rig and glass, then turns
+only the car by --step degrees per frame. The camera, lights and studio
 never move. Prints "FLATFORM_FRAME <done> <total>" after each frame so Flatform can show progress.
 
 Coordinates: Flatform's studio is Y-up with the camera on +Z. Blender is Z-up; the glTF importer maps (x, y, z) to
@@ -21,6 +23,11 @@ from mathutils import Vector
 
 CAR_LENGTH = 4.6
 RING = (1.0, 0.195, 0.133)  # #ff7a66, the app's coral accent, in linear RGB
+GOLD = (0.888, 0.462, 0.147)  # #f2b56b, the showroom's floor ring
+FILL = {"wide": 0.7, "square": 0.84}  # share of the frame width the car's footprint diagonal spans, as studio.js
+LIGHTING = {"key": 1.0, "azimuth": -40.0, "elevation": 40.0, "kelvin": 5600.0, "fill": 1.0, "rim": 1.0}
+GLASS = {"on": True, "tint": "#14202a", "opacity": 0.15}
+GLASS_NAME = ("glass", "window", "windshield", "windscreen")
 CAMERAS = {  # elevation in degrees, as in studio.js
     "front34": 13.0,
     "side": 6.0,
@@ -39,11 +46,13 @@ def parse_args():
     p.add_argument("--glb", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--slug", default="car")
-    p.add_argument("--look", choices=["studio", "transparent"], default="studio")
+    p.add_argument("--look", choices=["studio", "showroom", "transparent"], default="studio")
     p.add_argument("--frames", type=int, default=72)
     p.add_argument("--step", type=float, default=5.0)
     p.add_argument("--res", default="2048x1536")
     p.add_argument("--scene")
+    p.add_argument("--rig")
+    p.add_argument("--plate")  # photo scenes: {"slug", "modeled", "camera": {position, target, vfov}, "light"}
     p.add_argument("--still", type=float)
     p.add_argument("--still-out")
     p.add_argument("--samples", type=int, default=128)
@@ -111,6 +120,134 @@ def world(strength, color=(1, 1, 1)):
     bpy.context.scene.world = w
 
 
+def kelvin_color(k):
+    """Same blackbody fit as studio.js kelvinColor, as sRGB 0-1."""
+    t = k / 100
+    r = 255 if t <= 66 else 329.698727446 * (t - 60) ** -0.1332047592
+    g = 99.4708025861 * math.log(t) - 161.1195681661 if t <= 66 else 288.1221695283 * (t - 60) ** -0.0755148492
+    b = 255 if t >= 66 else 0 if t <= 19 else 138.5177312231 * math.log(t - 10) - 305.0447927307
+    return tuple(min(255.0, max(0.0, v)) / 255 for v in (r, g, b))
+
+
+def srgb_to_linear(c):
+    return tuple(v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in c)
+
+
+def apply_rig(lighting):
+    """The Render step's light rig on top of the look's own key, fill and rim (multipliers, 1 = unchanged)."""
+    objs = bpy.context.scene.objects
+    az, el = math.radians(lighting["azimuth"]), math.radians(lighting["elevation"])
+    # studio.js puts the key at (sin az cos el, sin el, cos az cos el) in Y-up; Blender is (x, -z, y).
+    key = objs["key"]
+    key.data.energy *= lighting["key"]
+    key.data.color = srgb_to_linear(kelvin_color(lighting["kelvin"]))
+    aim(key, (math.sin(az) * math.cos(el) * 12, -math.cos(az) * math.cos(el) * 12, math.sin(el) * 12))
+    fill = objs["fill"]
+    fill.data.energy *= lighting["fill"]
+    aim(fill, (-math.sin(az) * 9, -math.cos(az) * 9, 3))
+    objs["rim"].data.energy *= lighting["rim"]
+    bg = bpy.context.scene.world.node_tree.nodes["Background"]
+    bg.inputs["Strength"].default_value *= lighting["rim"]
+
+
+def aim(obj, location, target=(0, 0, 0.6)):
+    obj.location = location
+    obj.rotation_euler = (Vector(target) - Vector(location)).to_track_quat("-Z", "Y").to_euler()
+
+
+def glass_bsdf(mat, glass):
+    """A named glass material: real glass, tinted, see-through by 1 - opacity."""
+    tint = srgb_to_linear(tuple(int(glass["tint"][i:i + 2], 16) / 255 for i in (1, 3, 5)))
+    mat.use_nodes = True
+    bsdf = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    for name in ("Base Color", "Roughness", "Metallic", "Transmission Weight"):
+        for link in list(bsdf.inputs[name].links):
+            mat.node_tree.links.remove(link)
+    bsdf.inputs["Base Color"].default_value = (*tint, 1)
+    bsdf.inputs["Roughness"].default_value = 0.05
+    bsdf.inputs["Metallic"].default_value = 0.0
+    bsdf.inputs["IOR"].default_value = 1.5
+    bsdf.inputs["Transmission Weight"].default_value = 1 - glass["opacity"]
+
+
+def tinted_glass(mat, glass):
+    """Tripo bakes the whole car into one texture. Like studio.js: dark, unsaturated, glossy texels are glass,
+    so they get roughness 0.05, no metal and the tint (by opacity). Done with nodes on the imported material."""
+    nt = mat.node_tree
+    bsdf = next((n for n in nt.nodes if n.type == "BSDF_PRINCIPLED"), None)
+    if not bsdf or not bsdf.inputs["Base Color"].links or not bsdf.inputs["Roughness"].links:
+        return
+    tint = srgb_to_linear(tuple(int(glass["tint"][i:i + 2], 16) / 255 for i in (1, 3, 5)))
+    base = bsdf.inputs["Base Color"].links[0].from_socket
+    rough = bsdf.inputs["Roughness"].links[0].from_socket
+    metal = bsdf.inputs["Metallic"].links[0].from_socket if bsdf.inputs["Metallic"].links else None
+
+    def math_node(op, a, b):
+        n = nt.nodes.new("ShaderNodeMath")
+        n.operation = op
+        for i, v in enumerate((a, b)):
+            if isinstance(v, (int, float)):
+                n.inputs[i].default_value = v
+            else:
+                nt.links.new(v, n.inputs[i])
+        return n.outputs[0]
+
+    sep = nt.nodes.new("ShaderNodeSeparateColor")
+    nt.links.new(base, sep.inputs[0])
+    r, g, b = sep.outputs
+    lum = math_node("ADD", math_node("ADD", math_node("MULTIPLY", r, 0.2126), math_node("MULTIPLY", g, 0.7152)), math_node("MULTIPLY", b, 0.0722))
+    spread = math_node("SUBTRACT", math_node("MAXIMUM", math_node("MAXIMUM", r, g), b), math_node("MINIMUM", math_node("MINIMUM", r, g), b))
+    mask = math_node("MULTIPLY", math_node("MULTIPLY", math_node("LESS_THAN", lum, 0.08), math_node("LESS_THAN", spread, 0.03)), math_node("LESS_THAN", rough, 0.43))
+    mix = nt.nodes.new("ShaderNodeMix")
+    mix.data_type = "RGBA"
+    nt.links.new(math_node("MULTIPLY", mask, glass["opacity"]), mix.inputs["Factor"])
+    nt.links.new(base, mix.inputs["A"])
+    mix.inputs["B"].default_value = (*tint, 1)
+    nt.links.new(mix.outputs["Result"], bsdf.inputs["Base Color"])
+    keep = math_node("SUBTRACT", 1.0, mask)
+    nt.links.new(math_node("ADD", math_node("MULTIPLY", rough, keep), math_node("MULTIPLY", mask, 0.05)), bsdf.inputs["Roughness"])
+    if metal:
+        nt.links.new(math_node("MULTIPLY", metal, keep), bsdf.inputs["Metallic"])
+
+
+def apply_glass(meshes, glass):
+    if not glass["on"]:
+        return
+    for o in meshes:
+        named = any(w in o.name.lower() for w in GLASS_NAME)
+        for slot in o.material_slots:
+            mat = slot.material
+            if not mat:
+                continue
+            if named or any(w in mat.name.lower() for w in GLASS_NAME):
+                glass_bsdf(mat, glass)
+            elif mat.use_nodes:
+                tinted_glass(mat, glass)
+
+
+def build_showroom(reflection):
+    """The modeled showroom (fallback to the photo), as studio.js: matte near-black room, dark glossy floor, thin
+    warm-gold ring inset in the floor, two tall white LED bars in the back corners, a big ceiling softbox."""
+    world(0.02)
+    floor = plane("floor", 80, 80, (0, 0, 0), mat=principled("floor", (0.004, 0.004, 0.004), 0.2 - 0.12 * reflection))
+    floor.data.materials[0].node_tree.nodes["Principled BSDF"].inputs["Specular IOR Level"].default_value = 0.3 + 0.4 * reflection
+    plane("wall", 60, 24, (0, 8, 12), rotation=(math.radians(90), 0, 0), mat=principled("wall", (0.006, 0.006, 0.006), 0.9))
+    bpy.ops.mesh.primitive_torus_add(major_radius=3.3, minor_radius=0.014, major_segments=320, minor_segments=12, location=(0, 0, 0.008))
+    add_object(bpy.context.active_object, emission("gold ring", GOLD, 7.0))
+    for x in (-4.8, 4.8):
+        bpy.ops.mesh.primitive_cube_add(size=1, location=(x, 4.2, 1.3))
+        bar = bpy.context.active_object
+        bar.scale = (0.1, 0.1, 2.6)
+        add_object(bar, emission("light bar", (1, 1, 1), 12.0))
+        light("AREA", "bar light", (x, 4.0, 1.3), 160, size=(0.3, 2.6), target=(0, 0, 0.8))
+    plane("ceiling", 60, 30, (0, 0, 6.02), rotation=(math.radians(180), 0, 0), mat=principled("ceiling", (0.004, 0.004, 0.004), 0.9))
+    plane("ceiling softbox", 9, 5, (0, 5.5, 6.0), rotation=(math.radians(180), 0, 0), mat=emission("softbox", srgb_to_linear(kelvin_color(6500)), 5.0))
+    light("AREA", "overhead softbox", (0, 0.6, 4.5), 550, size=(8, 5), target=(0, 0.6, 0), color=srgb_to_linear(kelvin_color(6500)))
+    light("SUN", "key", (-6, -7, 8), 2.0, color=(1.0, 0.95, 0.89))
+    light("SUN", "fill", (8, -6, 3), 0.5, color=(0.87, 0.91, 1.0))
+    light("SUN", "rim", (1, 10, 6), 1.9)
+
+
 def build_ring_studio(reflection):
     """Near-black room, glossy dark floor, coral ring, two light bars, overhead softbox, key/fill/rim."""
     world(0.02)
@@ -119,7 +256,7 @@ def build_ring_studio(reflection):
     plane("wall", 60, 24, (0, 8, 12), rotation=(math.radians(90), 0, 0), mat=principled("wall", (0.008, 0.007, 0.006), 0.92))
     bpy.ops.mesh.primitive_torus_add(major_radius=3.3, minor_radius=0.024, major_segments=320, minor_segments=12, location=(0, 0, 0.012))
     add_object(bpy.context.active_object, emission("ring", RING, 9.0))
-    for x in (-5.9, 5.9):
+    for x in (-4.6, 4.6):  # just inside the frame of the fitted camera
         bpy.ops.mesh.primitive_cube_add(size=1, location=(x, 3.8, 1.75))
         bar = bpy.context.active_object
         bar.scale = (0.12, 0.12, 3.5)
@@ -169,7 +306,7 @@ def import_car(path, s):
     lo, hi = bounds()
     size = hi - lo
     if s["autoOrient"] and size.x > size.y:
-        model.rotation_euler.z = math.pi / 2
+        model.rotation_euler.z = -math.pi / 2  # Tripo: along X, nose on +X; turn the nose to -Y, the camera
     if s["flip"]:
         model.rotation_euler.z += math.pi
     lo, hi = bounds()
@@ -183,16 +320,63 @@ def import_car(path, s):
     if s["snap"]:
         model.location.z -= lo.z
     pivot.location = (s["x"], 0, 0 if s["snap"] else s["y"])
-    return pivot
+    return pivot, meshes, hi - lo
 
 
-def place_camera(s, look):
-    aspect = 4 / 3 if look == "studio" else 1.0
+def hex_linear(h):
+    return srgb_to_linear(tuple(int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)))
+
+
+def build_plate(plate):
+    """A photo scene: the car alone on a shadow catcher, lit to match the photo. Film is transparent; Flatform lays
+    each frame over the plate (public/img/backplates/<slug>.jpg) when it makes the sprites."""
+    light_ = plate["light"]
+    sky, ground, ambient = light_["sky"]
+    world(ambient * 2.5, hex_linear(sky))
+    bpy.context.scene.render.film_transparent = True
+    catcher = plane("shadow catcher", 30, 30, (0, 0, 0), mat=principled("catcher", hex_linear(ground), 0.6))
+    catcher.is_shadow_catcher = True
+    light("SUN", "key", (-6, -7, 8), 2.4 * light_["key"])
+    light("SUN", "fill", (8, -6, 3), 1.2 * light_["fill"], color=(0.87, 0.91, 1.0))
+    light("SUN", "rim", (1, 10, 6), 1.4 * light_["rim"])
+    if plate["slug"] == "showroom":  # cool overhead softbox, white bars in the back corners, the ring's glow
+        light("AREA", "overhead softbox", (0, 0.6, 6.3), 700, size=(8, 5), target=(0, 0.6, 0), color=srgb_to_linear(kelvin_color(6500)))
+        for x in (-4.8, 4.8):
+            light("AREA", "bar light", (x, 4.0, 1.5), 160, size=(0.3, 2.6), target=(0, 0, 0.8))
+        glow = light("AREA", "ring glow", (0, 0, 0.01), 60 * light_["glow"][1], size=(6.6, 6.6), target=(0, 0, 1), color=hex_linear(light_["glow"][0]))
+        glow.data.size_y = 6.6
+
+
+def plate_lighting(lighting, sun):
+    """The rig moves and tints the photo's own sun, as in studio.js: its defaults leave the sun as matched."""
+    out = dict(lighting)
+    out["azimuth"] = sun["azimuth"] + lighting["azimuth"] - LIGHTING["azimuth"]
+    out["elevation"] = min(88.0, max(3.0, sun["elevation"] + lighting["elevation"] - LIGHTING["elevation"]))
+    out["kelvin"] = min(12000.0, max(1500.0, sun["kelvin"] + lighting["kelvin"] - LIGHTING["kelvin"]))
+    return out
+
+
+def plate_camera(cam, aspect):
+    """The camera pipeline.js plateCamera solved for the photo; Flatform's Y-up (x, y, z) is Blender's (x, -z, y)."""
+    (px, py, pz), (tx, ty, tz) = cam["position"], cam["target"]
+    data = bpy.data.cameras.new("camera")
+    data.sensor_fit = "HORIZONTAL"
+    data.angle = 2 * math.atan(math.tan(math.radians(cam["vfov"]) / 2) * aspect)
+    obj = bpy.data.objects.new("camera", data)
+    bpy.context.scene.collection.objects.link(obj)
+    obj.location = (px, -pz, py)
+    obj.rotation_euler = (Vector((tx, -tz, ty)) - obj.location).to_track_quat("-Z", "Y").to_euler()
+    bpy.context.scene.camera = obj
+
+
+def place_camera(s, look, size):
+    """Fitted to the car's footprint like studio.js applyCamera; size is the normalised car (x, y, z = height)."""
+    aspect = 1.0 if look == "transparent" else 4 / 3
     lens = float(s["lens"])
     hfov = 2 * math.atan(17.5 / lens)  # 35 mm film gauge, like studio.js
-    width = 10.4 if aspect > 1 else 7.4
+    width = math.hypot(size.x, size.y) / (FILL["wide"] if aspect > 1 else FILL["square"])
     distance = width / 2 / math.tan(hfov / 2)
-    target_z = 1.15 if aspect > 1 else 0.75
+    target_z = size.z / 2 + (0.06 * width if aspect > 1 else 0)
     el = math.radians(CAMERAS.get(s["camera"], 13.0))
     cam_data = bpy.data.cameras.new("camera")
     cam_data.sensor_fit = "HORIZONTAL"
@@ -254,13 +438,28 @@ def main():
             s.update({k: v for k, v in json.load(f).items() if k in DEFAULTS})
     width, height = (int(n) for n in args.res.lower().split("x"))
     bpy.ops.wm.read_factory_settings(use_empty=True)
+    rig = json.loads(args.rig) if args.rig else {}
+    lighting = {**LIGHTING, **rig.get("lighting", {})}
+    glass = {**GLASS, **rig.get("glass", {})}
+    plate = json.loads(args.plate) if args.plate and args.look != "transparent" else None
+    photo = bool(plate) and not plate["modeled"]
     if args.look == "transparent":
         build_transparent()
+    elif photo:
+        build_plate(plate)
+        lighting = plate_lighting(lighting, plate["light"]["sun"])
+    elif args.look == "showroom" or (plate and plate["slug"] == "showroom"):
+        build_showroom(float(s["reflection"]))
     else:
         build_ring_studio(float(s["reflection"]))
-    pivot = import_car(args.glb, s)
-    place_camera(s, args.look)
-    setup_render(width, height, args.look, args.samples)
+    apply_rig(lighting)
+    pivot, meshes, size = import_car(args.glb, s)
+    apply_glass(meshes, glass)
+    if plate:
+        plate_camera(plate["camera"], width / height)
+    else:
+        place_camera(s, args.look, size)
+    setup_render(width, height, "transparent" if photo else args.look, args.samples)
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.frames):
         # Same direction as the in-app renderer: positive yaw turns the car clockwise seen from above.

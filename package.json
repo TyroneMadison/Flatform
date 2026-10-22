@@ -1,7 +1,7 @@
 {
   "name": "flatform",
   "productName": "Flatform",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Drop a photo, get a 3D car from Tripo or 3D AI Studio, stage it in a studio and render 360/180 turntables for the web",
   "author": "Tyrone Madison",
   "license": "MIT",
@@ -14,7 +14,7 @@
   "scripts": {
     "app": "electron .",
     "web": "node --env-file=.env server.mjs",
-    "test": "node --test test.mjs test/pipeline.test.mjs test/pricing.test.mjs test/providers.test.mjs test/threedai.test.mjs test/updates.test.mjs",
+    "test": "node --test test.mjs test/pipeline.test.mjs test/pricing.test.mjs test/providers.test.mjs test/threedai.test.mjs test/updates.test.mjs test/ledger.test.mjs",
     "dist": "electron-builder --publish never"
   },
   "dependencies": {
@@ -36,6 +36,7 @@
       "server.mjs",
       "providers.mjs",
       "keys.mjs",
+      "ledger.mjs",
       "updates.mjs",
       "preload.cjs",
       "public/**/*",

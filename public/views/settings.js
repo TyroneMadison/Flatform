@@ -1,11 +1,12 @@
 // 07 · Settings: providers and keys, rendering, the output folder, updates and about. Only non-secret values are stored
 // in settings.json; keys go to the OS keychain and never come back to this page: it only learns whether one is saved.
-import { $, esc, state, api, send, toast, refresh, native, fmt, fmtBalance, saveKey, confirmDialog, arrowRadios, refreshUpdate } from '../app.js';
+import { $, esc, state, api, send, toast, refresh, native, fmt, fmtBalance, saveKey, confirmDialog, arrowRadios, refreshUpdate, refreshSpend, topUp } from '../app.js';
 import { PROVIDERS } from '../lib/engines.js';
 import { icon } from '../lib/icons.js';
+import { PRESETS } from '../lib/studio.js';
 
-const SCENES = [['ring', 'Escalade ring studio'], ['transparent', 'Transparent'], ['cyclorama', 'White cyclorama'], ['miami', 'Miami street at night (your HDRI)'], ['custom', 'Your backdrop or HDRI']];
-const SECTIONS = [['providers', 'Providers'], ['rendering', 'Rendering'], ['output', 'Output folder'], ['about', 'About']];
+const SCENES = Object.entries(PRESETS).map(([k, p]) => [k, k === 'showroom' ? 'Showroom (default)' : k === 'miami' ? 'Miami street at night (your HDRI)' : p.label]);
+const SECTIONS = [['providers', 'Providers'], ['spend', 'Spend'], ['rendering', 'Rendering'], ['output', 'Output folder'], ['about', 'About']];
 const RELEASES = 'https://github.com/TyroneMadison/Flatform/releases';
 const results = {}; // provider → { ok, text } from the last Test or key change
 let root;
@@ -31,6 +32,7 @@ export function mount(el, { id }) {
     arrowRadios(e);
   });
   update();
+  if (section === 'spend') refreshSpend();
 }
 
 const save = async (data) => {
@@ -87,6 +89,7 @@ async function onClick(e) {
     redraw();
     refresh();
   }
+  if (act === 'topup') topUp(t.dataset.service);
   if (act === 'renderer') save({ renderer: t.dataset.value });
   if (act === 'output') {
     if (native) { const dir = await native.pickFolder(); if (dir) save({ outputRoot: dir }); } else showField('outputField');
@@ -119,6 +122,7 @@ async function onChange(e) {
   if (t.name === 'alsoTransparent') save({ alsoTransparent: t.checked });
   if (t.name === 'defaultScene') save({ defaultScene: t.value });
   if (t.name === 'autoCheck') save({ updates: { autoCheck: t.checked } });
+  if (t.name === 'threshold' && t.value !== '') { await save({ spend: { thresholds: { [t.dataset.service]: Number(t.value) } } }); refreshSpend(); }
   if (t.name === 'region') { await save({ region: t.value }); if (state.settings.keys?.tripo !== 'none') test('tripo'); } // the balance comes from the new region
 }
 
@@ -241,9 +245,57 @@ function aboutHtml() {
   </div>`;
 }
 
+// ---- Spend: what each paid call cost, from the ledger (ledger.mjs), and the low-balance alert ----
+const money = (usd) => (usd == null ? '' : `$${Number(usd).toFixed(2)}`);
+const spent = (x) => `${fmt(x.credits)} <span class="muted">${money(x.usd)}</span>`;
+
+// Last 30 days as stacked bars, Tripo under 3D AI Studio. Plain SVG; each bar has its day and credits as a tooltip.
+function chart(days) {
+  const ids = Object.keys(PROVIDERS);
+  const colors = { tripo: 'var(--accent)', '3daistudio': 'var(--soft)' };
+  const max = Math.max(1, ...days.map((d) => ids.reduce((s, id) => s + d[id], 0)));
+  const w = 10;
+  const h = 90;
+  const bars = days.map((d, i) => {
+    let y = h;
+    return ids.map((id) => {
+      const bh = (d[id] / max) * h;
+      y -= bh;
+      return bh ? `<rect x="${i * (w + 4)}" y="${y.toFixed(1)}" width="${w}" height="${bh.toFixed(1)}" rx="2" style="fill:${colors[id]}"><title>${d.day} · ${PROVIDERS[id].name} ${fmt(d[id])} credits</title></rect>` : '';
+    }).join('');
+  }).join('');
+  const total = days.reduce((s, d) => s + ids.reduce((t, id) => t + d[id], 0), 0);
+  return `<svg viewBox="0 0 ${days.length * (w + 4)} ${h}" width="100%" height="${h}" preserveAspectRatio="none" role="img" aria-label="${fmt(total)} credits over the last 30 days">${bars}</svg>
+    <p class="fine">${ids.map((id) => `<span style="color:${colors[id]}">■</span> ${PROVIDERS[id].name}`).join(' &nbsp; ')} · ${esc(days[0]?.day)} to ${esc(days.at(-1)?.day)}</p>`;
+}
+
+function spendCard(id, s) {
+  const p = PROVIDERS[id];
+  const left = s.balance == null ? 'Balance unknown · add a key or press Test' : `${fmtBalance(s.balance)} credits${s.daysLeft != null ? ` · about ${fmt(s.daysLeft)} days left at ${fmt(s.burn)} a day` : ''}`;
+  return `<div class="card glass"><h2 class="label">${p.name}</h2>
+    <div class="field"><span class="flabel">Balance</span><div class="inp ${s.low ? 'warn' : ''}">${s.low ? 'Low · ' : ''}${esc(left)}</div>
+      <button class="btn ghostbtn" type="button" data-act="topup" data-service="${id}">${icon('external')}<span>Top up</span></button></div>
+    <div class="field"><span class="flabel">Spent</span><div class="inp">Today ${spent(s.today)} · Week ${spent(s.week)} · Month ${spent(s.month)} · All time ${spent(s.all)}</div></div>
+    <div class="field"><label class="flabel" for="thr-${id}">Alert under</label>
+      <input class="inp" id="thr-${id}" type="number" min="0" step="10" name="threshold" data-service="${id}" value="${s.threshold}"></div>
+    ${s.unlogged ? `<p class="fine">${fmt(s.unlogged)} credits left the balance beyond what Flatform expected (balance checks before and after each call).</p>` : ''}
+  </div>`;
+}
+
+function spendHtml() {
+  const sp = state.spend;
+  if (!sp) return '<div class="card glass"><h2 class="label">Spend</h2><p class="fine">Loading…</p></div>';
+  const rows = sp.models.map((m) => `<tr><td>${esc(PROVIDERS[m.service]?.name)}</td><td>${esc(m.model)}</td><td>${fmt(m.calls)}</td><td>${fmt(m.credits)}</td><td>${money(m.usd)}</td></tr>`).join('');
+  return `${Object.entries(sp.services).map(([id, s]) => spendCard(id, s)).join('')}
+    <div class="card glass"><h2 class="label">Last 30 days</h2>${chart(sp.daily)}</div>
+    <div class="card glass"><h2 class="label">Cost per model</h2>
+      ${rows ? `<table class="spendt"><thead><tr><th>Provider</th><th>Model</th><th>Calls</th><th>Credits</th><th>USD</th></tr></thead><tbody>${rows}</tbody></table>` : '<p class="fine">No paid calls yet.</p>'}</div>
+    <p class="fine">Credits are what each call costs on the providers' price lists. US dollars are an estimate at ${Object.entries(sp.usdPerCredit).map(([id, r]) => `${PROVIDERS[id].name} $${r}`).join(', ')} per credit. Flatform warns once a session when a balance drops under its alert.</p>`;
+}
+
 export function update() {
   if (!state.settings || !root?.isConnected) return;
-  const html = { providers: providersHtml, rendering: renderingHtml, output: outputHtml, about: aboutHtml }[section]();
+  const html = { providers: providersHtml, spend: spendHtml, rendering: renderingHtml, output: outputHtml, about: aboutHtml }[section]();
   const box = $('#settings', root);
   // Keep the page as it is while someone is typing in it.
   const focused = box.contains(document.activeElement) ? document.activeElement : null;

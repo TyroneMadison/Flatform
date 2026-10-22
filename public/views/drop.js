@@ -1,5 +1,6 @@
-// 01 · Drop: the big drop zone, tips with the next setup and the real balance, and recent models.
+// Drop: the big drop zone, tips with the next setup and the real balance, and recent models.
 // Photos go on to the setup screen, where the provider and quality are chosen before anything is paid for.
+// 3D models (GLB, GLTF, FBX, OBJ, USDZ) skip Generate and open in Compose (app.js addFiles).
 import { $, esc, state, stepper, addFiles, openPicker, pasteFromClipboard, creditsText, savedSetup, setupLabel, costOf, thumbOf, statusText, statusClass } from '../app.js';
 import { icon } from '../lib/icons.js';
 
@@ -13,12 +14,12 @@ export function mount(el) {
       <div class="dz-hit" role="button" tabindex="0" aria-label="Choose photos, or drop them here" aria-describedby="dzLead"></div>
       <div class="dz-orb" aria-hidden="true"><div class="dz-ring"></div><div class="dz-ring r2"></div><div class="ghost" id="ghost"></div></div>
       <h1>Drop a photo. Get a 3D car.</h1>
-      <p class="lead" id="dzLead">Drop photos here or choose them. Next you pick the provider and quality, then each car becomes a 3D model you can place in any scene.</p>
+      <p class="lead" id="dzLead">Drop photos here or choose them. Next you pick the provider and quality, then each car becomes a 3D model you can place in any scene. Already have a 3D model? Drop it too.</p>
       <div class="dz-actions">
-        <button class="btn pri" type="button" data-act="pick">${icon('upload')}<span>Choose photos</span></button>
+        <button class="btn pri" type="button" data-act="pick">${icon('upload')}<span>Choose photos or a model</span></button>
         <button class="btn ghostbtn" type="button" data-act="paste"><span>Paste from clipboard</span></button>
       </div>
-      <div class="dz-meta"><span>PNG, JPEG or HEIC</span><span>Up to 20 MB</span><span>One clear subject</span><span>Clean background</span></div>
+      <div class="dz-meta"><span>Photos: PNG, JPEG or HEIC, up to 20 MB</span><span>Models: GLB, GLTF, FBX, OBJ, USDZ</span><span>One clear subject</span></div>
       <p class="dz-status" id="dzStatus" aria-live="polite"></p>
     </div>
     <div class="tips">
@@ -34,7 +35,7 @@ export function mount(el) {
   const hot = (on) => {
     zone.classList.toggle('hot', on);
     $('#dzLead', el).textContent = on ? 'Release to set it up. Nothing is sent until you press Generate.'
-      : 'Drop photos here or choose them. Next you pick the provider and quality, then each car becomes a 3D model you can place in any scene.';
+      : 'Drop photos here or choose them. Next you pick the provider and quality, then each car becomes a 3D model you can place in any scene. Already have a 3D model? Drop it too.';
   };
   zone.addEventListener('dragover', (e) => { e.preventDefault(); hot(true); });
   zone.addEventListener('dragleave', (e) => { if (!zone.contains(e.relatedTarget)) hot(false); });
@@ -57,7 +58,7 @@ export function update() {
 
   const waiting = state.queue.filter((q) => q.status === 'waiting').length;
   const failed = state.queue.filter((q) => q.status === 'error');
-  $('#dzStatus', root).textContent = sending ? `Sending ${sending.name}…${waiting ? ` ${waiting} more waiting.` : ''}`
+  $('#dzStatus', root).textContent = state.importing ? `Importing ${state.importing}…` : sending ? `Sending ${sending.name}…${waiting ? ` ${waiting} more waiting.` : ''}`
     : failed.length ? `${failed.length} photo${failed.length > 1 ? 's' : ''} could not be sent. See the queue on the Generate screen.` : '';
 
   const next = savedSetup();
@@ -65,7 +66,7 @@ export function update() {
   $('#creditTip', root).textContent = `Change it on the next screen. ${creditsText(next.provider) || 'Your balance shows in Settings.'}`;
 
   const recent = state.models.slice(0, 4).map((m) => {
-    const href = m.status === 'ready' ? `#/review/${m.id}` : `#/generate/${m.id}`;
+    const href = `#/model/${m.id}`; // the model page: drop, settings, compose, renders
     const img = thumbOf(m) ? `<img class="thumb" src="${thumbOf(m)}" alt="${esc(m.name)}">` : '';
     return `<a class="mini glass" href="${href}"><div class="stage s-ring">${img}</div><div class="mt"><b>${esc(m.name)}</b><span class="st ${statusClass(m)}">${esc(statusText(m))}</span></div></a>`;
   }).join('') || '<p class="muted empty">Your models will show up here.</p>';

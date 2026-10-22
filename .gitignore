@@ -5,3 +5,5 @@ dist/
 design/
 .scratch/
 Flatform/
+__pycache__/
+assets/looks/showroom-reference.png
