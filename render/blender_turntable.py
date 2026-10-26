@@ -78,6 +78,10 @@ def parse_args():
     p.add_argument("--still", type=float)
     p.add_argument("--still-out")
     p.add_argument("--samples", type=int, default=128)
+    # The scene look (public/lib/look.js blenderLook): engine, tone mapping, exposure, background, hdri, lights.
+    p.add_argument("--scenelook")
+    # Painted pieces (public/lib/tenno.js blenderMaterial per piece key) and face groups, written by the server.
+    p.add_argument("--materials")
     return p.parse_args(argv)
 
 
@@ -351,6 +355,170 @@ def hex_linear(h):
     return srgb_to_linear(tuple(int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)))
 
 
+def piece_key(index, name, group=None):
+    """paint.js pieceKey: '<name>#<meshIndex>' or '<name>#<meshIndex>@<group>'."""
+    return f"{name or 'mesh'}#{index}" + ("" if group is None else f"@{group}")
+
+
+def mesh_key(meshes, obj):
+    """The key paint.js gave this mesh: by its glTF name (Blender may add .001), else by import order."""
+    base = obj.name.rsplit(".", 1)[0] if obj.name[-4:-3] == "." and obj.name[-3:].isdigit() else obj.name
+    return piece_key(meshes.index(obj), base)
+
+
+def group_faces(labels):
+    """infer.js groupFaces order: labels by face count, biggest first (ties keep first appearance)."""
+    counts = {}
+    for lab in labels:
+        counts[lab] = counts.get(lab, 0) + 1
+    order = sorted(counts, key=lambda lab: -counts[lab])
+    return order
+
+
+def principled_from(spec, source=None):
+    """A Principled BSDF material from tenno.js blenderMaterial, with Subsurface Weight / Radius (the subsurface_color
+    tints the radius: Blender 4.x scatters the base colour). source: the imported material whose textures to keep."""
+    mat = bpy.data.materials.new(spec.get("name", "piece"))
+    mat.use_nodes = True
+    nt = mat.node_tree
+    bsdf = nt.nodes["Principled BSDF"]
+    inputs = bsdf.inputs
+    inputs["Base Color"].default_value = (*hex_linear(spec["base_color"]), 1)
+    inputs["Metallic"].default_value = spec["metallic"]
+    inputs["Roughness"].default_value = spec["roughness"]
+    inputs["Coat Weight"].default_value = spec["coat_weight"]
+    inputs["Coat Roughness"].default_value = spec["coat_roughness"]
+    inputs["Sheen Weight"].default_value = spec["sheen_weight"]
+    inputs["Sheen Roughness"].default_value = spec["sheen_roughness"]
+    inputs["Sheen Tint"].default_value = (*hex_linear(spec["sheen_tint"]), 1)
+    inputs["Transmission Weight"].default_value = spec["transmission_weight"]
+    inputs["IOR"].default_value = spec["ior"]
+    inputs["Emission Color"].default_value = (*hex_linear(spec["emission_color"]), 1)
+    inputs["Emission Strength"].default_value = spec["emission_strength"]
+    inputs["Alpha"].default_value = spec["alpha"]
+    inputs["Subsurface Weight"].default_value = spec["subsurface_weight"]
+    tint = hex_linear(spec["subsurface_color"])
+    inputs["Subsurface Radius"].default_value = tuple(r * (0.5 + t) for r, t in zip(spec["subsurface_radius"], tint))
+    inputs["Subsurface Scale"].default_value = 1.0
+    if spec["transmission_weight"] > 0:
+        mat.blend_method = "BLEND"
+    if spec.get("textured") and source and source.use_nodes:
+        src = next((n for n in source.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+        if src is not None and src.inputs["Base Color"].links:
+            img = src.inputs["Base Color"].links[0].from_node
+            if img.type == "TEX_IMAGE":
+                tex = nt.nodes.new("ShaderNodeTexImage")
+                tex.image = img.image
+                if spec.get("slot"):  # a tint multiplies the diffuse, as in paint.js
+                    mix = nt.nodes.new("ShaderNodeMix")
+                    mix.data_type = "RGBA"
+                    mix.blend_type = "MULTIPLY"
+                    mix.inputs["Factor"].default_value = 1.0
+                    nt.links.new(tex.outputs["Color"], mix.inputs["A"])
+                    mix.inputs["B"].default_value = (*hex_linear(spec["base_color"]), 1)
+                    nt.links.new(mix.outputs["Result"], inputs["Base Color"])
+                else:
+                    nt.links.new(tex.outputs["Color"], inputs["Base Color"])
+    return mat
+
+
+def apply_materials(meshes, spec):
+    """Painted pieces: a Principled material per piece key, face groups split by label (infer.js groupFaces)."""
+    materials = spec.get("materials", {})
+    groups = spec.get("groups", {})
+    for obj in meshes:
+        key = mesh_key(meshes, obj)
+        mesh = obj.data
+        g = groups.get(key)
+        if g and len(mesh.polygons) * 1 >= 1:
+            raw = __import__("base64").b64decode(g["labels"])
+            labels = [None if b == 255 else g["names"][b] for b in raw]
+            if len(labels) == len(mesh.polygons):
+                order = group_faces(labels)
+                base = obj.material_slots[0].material if obj.material_slots else None
+                mesh.materials.clear()
+                for gi, lab in enumerate(order):
+                    piece = materials.get(piece_key(meshes.index(obj), key.split("#")[0], gi))
+                    mesh.materials.append(principled_from({**piece, "name": lab or "unlabelled"}, base) if piece else base)
+                index_of = {lab: i for i, lab in enumerate(order)}
+                for poly, lab in zip(mesh.polygons, labels):
+                    poly.material_index = index_of[lab]
+                continue
+        single = materials.get(key)
+        if single and obj.material_slots:
+            for slot in obj.material_slots:
+                slot.material = principled_from({**single, "name": key}, slot.material)
+        for gi, slot in enumerate(obj.material_slots):
+            piece = materials.get(piece_key(meshes.index(obj), key.split("#")[0], gi))
+            if piece and len(obj.material_slots) > 1:
+                slot.material = principled_from({**piece, "name": f"{key}@{gi}"}, slot.material)
+
+
+def apply_look(look, meshes):
+    """The scene look: engine, tone mapping and exposure, background, HDRI, light preset. None = untouched."""
+    if not look:
+        return
+    scene = bpy.context.scene
+    scene.render.engine = look.get("engine", "CYCLES")
+    try:
+        scene.view_settings.view_transform = look.get("tone", "Khronos PBR Neutral")
+    except TypeError:
+        pass
+    scene.view_settings.exposure = math.log2(max(look.get("exposure", 1.0), 1e-3))
+    world = scene.world
+    nt = world.node_tree
+    bg_node = nt.nodes["Background"]
+    out = next(n for n in nt.nodes if n.type == "OUTPUT_WORLD")
+    background = look.get("background") or {}
+    if background.get("kind") in ("solid", "gradient") and not scene.render.film_transparent:
+        bg_node.inputs["Color"].default_value = (*hex_linear(background["color"]), 1)
+        bg_node.inputs["Strength"].default_value = 1.0
+    hdri = look.get("hdri")
+    if hdri and hdri.get("path") and os.path.exists(hdri["path"]):
+        env = nt.nodes.new("ShaderNodeTexEnvironment")
+        env.image = bpy.data.images.load(hdri["path"])
+        mapping = nt.nodes.new("ShaderNodeMapping")
+        mapping.inputs["Rotation"].default_value = (0, 0, math.radians(hdri.get("rotation", 0)))
+        coord = nt.nodes.new("ShaderNodeTexCoord")
+        nt.links.new(coord.outputs["Generated"], mapping.inputs["Vector"])
+        nt.links.new(mapping.outputs["Vector"], env.inputs["Vector"])
+        lit = nt.nodes.new("ShaderNodeBackground")
+        lit.inputs["Strength"].default_value = hdri.get("intensity", 1.0)
+        nt.links.new(env.outputs["Color"], lit.inputs["Color"])
+        if hdri.get("background"):
+            nt.links.new(lit.outputs["Background"], out.inputs["Surface"])
+        else:  # the HDRI lights and reflects; the camera still sees the scene's own background
+            mix = nt.nodes.new("ShaderNodeMixShader")
+            path = nt.nodes.new("ShaderNodeLightPath")
+            nt.links.new(path.outputs["Is Camera Ray"], mix.inputs["Fac"])
+            nt.links.new(lit.outputs["Background"], mix.inputs[1])
+            nt.links.new(bg_node.outputs["Background"], mix.inputs[2])
+            nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
+    lights = look.get("lights")
+    if lights:
+        objs = scene.objects
+        for name in ("key", "fill", "rim"):
+            cfg = lights[name]
+            light_obj = objs.get(name)
+            if light_obj is None:
+                continue
+            light_obj.hide_render = not cfg["on"]
+            light_obj.data.energy = 2.2 * cfg["intensity"]
+            light_obj.data.color = hex_linear(cfg["color"])
+            az, el = math.radians(cfg["azimuth"]), math.radians(min(89.0, max(1.0, cfg["elevation"])))
+            dist = 12 if name == "key" else 9
+            aim(light_obj, (math.sin(az) * math.cos(el) * dist, -math.cos(az) * math.cos(el) * dist, math.sin(el) * dist))
+        key = objs.get("key")
+        if key is not None:
+            key.data.use_shadow = lights.get("shadows", True)
+            if key.data.type == "SUN":
+                key.data.angle = math.radians(0.5 + 8 * lights.get("softness", 0.5))
+    if scene.render.engine == "BLENDER_EEVEE_NEXT":
+        ao = look.get("ao") or {}
+        scene.eevee.use_gtao = bool(ao.get("on"))
+        scene.eevee.use_raytracing = True
+
+
 def build_plate(plate):
     """A photo scene: the car alone on a shadow catcher, lit to match the photo. Film is transparent; Flatform lays
     each frame over the plate (public/img/backplates/<slug>.jpg) when it makes the sprites."""
@@ -502,7 +670,11 @@ def main():
     apply_rig(lighting)
     pivot, meshes, size, sphere = import_car(args.glb, s)
     apply_glass(meshes, glass)
+    if args.materials and os.path.exists(args.materials):
+        with open(args.materials, encoding="utf-8") as f:
+            apply_materials(meshes, json.load(f))
     setup_render(width, height, "transparent" if photo else args.look, args.samples)
+    apply_look(json.loads(args.scenelook) if args.scenelook else None, meshes)
     if s["view"] == "free" and s["orbit"]:
         free_camera(s)
     elif plate:

@@ -5,6 +5,7 @@ import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upser
 import { icon } from '../lib/icons.js';
 import { FRAMES, HALF, STEP, pad3, LOOKS, PLATES } from '../lib/pipeline.js';
 import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf } from '../lib/studio.js';
+import { initPaint, renderPaintGroups, afterRender, onPaintClick, onPaintInput, onPaintChange, selectPiece } from './compose-paint.js';
 
 let root;
 let m;
@@ -34,6 +35,7 @@ export async function mount(el, { id }) {
     return;
   }
   scene = { ...defaultScene(state.settings), ...m.scene };
+  initPaint({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   el.innerHTML = `
   <div class="comp-top">${stepper('compose', m)}
     <div class="ctop-act">
@@ -83,10 +85,16 @@ export async function mount(el, { id }) {
         <button class="chip" type="button" data-jump="grp-camera">Camera</button>
         <button class="chip" type="button" data-jump="grp-light">Light</button>
         <button class="chip" type="button" data-jump="grp-ground">Ground</button>
+        <button class="chip" type="button" data-jump="grp-parts">Parts</button>
+        <button class="chip" type="button" data-jump="grp-color">Color</button>
+        <button class="chip" type="button" data-jump="grp-material">Material</button>
+        <button class="chip" type="button" data-jump="grp-scene">Scene</button>
+        <button class="chip" type="button" data-jump="grp-export">Export</button>
       </div>
       <div id="modelGroup"></div>
       <div id="inspector"></div>
       <input type="file" id="betterPhoto" accept="image/png,image/jpeg,image/heic,image/heif,.heic,.heif" hidden>
+      <input type="file" id="lookFile" hidden>
     </aside>
   </section>`;
 
@@ -156,6 +164,10 @@ function draw() {
     studio.render();
     const f = studio.frameRect;
     Object.assign($('#safe', root).style, { left: `${f.x + 6}px`, top: `${f.y + 6}px`, width: `${f.width - 12}px`, height: `${f.height - 12}px` });
+    if (studio.tracing && !studio.pt?.done) { // progressive path tracing: one sample per frame until done
+      $('#hudLook', root).textContent = `Path traced · ${studio.samples} samples`;
+      draw();
+    }
   });
   renderHud();
 }
@@ -309,7 +321,8 @@ function renderInspector() {
     <div class="grp" id="grp-ground"><h3>Ground</h3>
       ${slider('reflection', 'Reflection', 0, 1, 0.01, s.reflection, hasFloor() ? level(s.reflection) : 'n/a', !hasFloor())}
       ${slider('shadow', 'Shadow', 0, 1, 0.01, s.shadow, softness(s.shadow))}
-    </div>`;
+    </div>${renderPaintGroups()}`;
+  afterRender();
 }
 
 // The model itself: versions, approve, regenerate and clean up (what the Review step used to hold).
@@ -365,6 +378,7 @@ function bind() {
   el.addEventListener('click', async (e) => {
     const t = e.target.closest('button');
     if (!t) return;
+    if (await onPaintClick(t)) return;
     if (t.dataset.render) { state.renderIntent = t.dataset.render; location.hash = `#/render/${m.id}`; }
     if (t.dataset.version) {
       try { m = upsert(await send(`/api/models/${m.id}`, 'PATCH', { activeVersion: Number(t.dataset.version) })); } catch (err) { return toast(err.message); }
@@ -409,6 +423,7 @@ function bind() {
     if (t.id === 'play') play();
   });
   el.addEventListener('input', (e) => {
+    if (onPaintInput(e.target)) return;
     const k = e.target.dataset.key;
     if (!k || e.target.type !== 'range') return;
     const v = Number(e.target.value);
@@ -416,7 +431,8 @@ function bind() {
     $(`#v-${k}`, el).textContent = k === 'reflection' && !hasFloor() ? 'n/a' : valueText[k](v);
     change({ [k]: v }, { inspector: false });
   });
-  el.addEventListener('change', (e) => {
+  el.addEventListener('change', async (e) => {
+    if (await onPaintChange(e.target)) return;
     const k = e.target.dataset.key;
     if (k && e.target.type === 'checkbox') change({ [k]: e.target.checked, ...(k === 'sameSize' && e.target.checked && { scale: 1 }), ...(k === 'center' && { snap: e.target.checked }) });
     if (e.target.id === 'betterPhoto' && e.target.files[0]) {
@@ -482,4 +498,13 @@ function bind() {
     }
   });
   cv.addEventListener('pointerup', () => { drag = null; });
+  // A click (not a drag) on the model picks that piece for the Parts, Color and Material groups.
+  let down = null;
+  cv.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; }, true);
+  cv.addEventListener('click', (e) => {
+    if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4 || !studio?.model) return;
+    const r = cv.getBoundingClientRect();
+    const key = studio.pick(e.clientX - r.left, e.clientY - r.top);
+    if (key) { selectPiece(key); $('#grp-parts', el)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+  });
 }

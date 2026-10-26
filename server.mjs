@@ -13,6 +13,9 @@ import { randomUUID, createHash } from 'node:crypto';
 import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, PLATES, plateCamera } from './public/lib/pipeline.js';
 import { PROVIDERS, VIEWS, normalize, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
 import { estimate } from './public/lib/pricing.js';
+import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
+import { resolveColors, deserializeMaterial, blenderMaterial } from './public/lib/tenno.js';
+import { inferRegions, checkAnthropicKey } from './inference.mjs';
 import { threeDAIStudio, createLimiter, THREE_D_AI_BASE, HIGH } from './providers.mjs';
 import { createKeyStore } from './keys.mjs';
 import { createUpdater, parseVersion, updateOptions } from './updates.mjs';
@@ -21,6 +24,9 @@ import { SERVICES, CONVERT_CREDITS, entry, append, parse, summary, defaultThresh
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
 const THREE = path.join(ROOT, 'node_modules', 'three');
+// Path tracer modules served to the page like three's addons (their src/ ships inside the app).
+const VENDOR = { 'three-mesh-bvh': path.join(ROOT, 'node_modules', 'three-mesh-bvh', 'src'), 'three-gpu-pathtracer': path.join(ROOT, 'node_modules', 'three-gpu-pathtracer', 'src') };
+const MAX_INFER = 4 * 1024 * 1024; // a 256 px PNG of the photo plus its cluster statistics
 const VERSION = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 // The app page may only run its own files (and its inline import map). WebAssembly is for the Draco/Meshopt decoders.
 // GLTFLoader fetches a GLB's embedded textures from blob: URLs (and a .gltf's data: URIs), hence connect-src blob: data:.
@@ -121,6 +127,7 @@ export async function startServer({
   // three.js addons (loaders, controls, decoders). electron-builder drops every dependency's examples/ folder,
   // so the packaged app ships this one as a resource file too.
   threeAddons = path.join(THREE, 'examples', 'jsm'),
+  hdriDir = path.join(PUBLIC, 'img', 'hdri'), // built-in HDRIs for Blender (a resource file in the packaged app)
   updateUrl,
   updateDelayMs,
   onLowBalance, // (service, { balance, threshold }) when GET /api/spend finds a balance under its alert (main.mjs notifies)
@@ -146,6 +153,7 @@ export async function startServer({
     region: 'global', model, texture: true, pbr: true, provider: 'tripo', setups: {},
     renderer: 'three', blenderPath: '', outputRoot: '', defaultScene: 'showroom', alsoTransparent: true, backdrops: {},
     lighting: DEFAULT_LIGHTING, glass: DEFAULT_GLASS,
+    studioPresets: {}, // the user's saved scene looks (look.js), by name; the shipped ones live in the page
     updates: { autoCheck: true, skippedVersion: null },
     spend: { thresholds: defaultThresholds() }, // low-balance alert per provider, in credits
   };
@@ -607,6 +615,14 @@ export async function startServer({
     return { hasKey: true, ...balance };
   }
   const keySources = () => Object.fromEntries(Object.keys(PROVIDERS).map((p) => [p, keyStore.source(p)]));
+  // The vision key (Anthropic) is checked with a free models call, then saved like the provider keys.
+  async function saveVisionKey(key) {
+    key = String(key ?? '').trim();
+    if (!KEY_FORMAT.test(key)) throw new HttpError(400, 'That does not look like an Anthropic API key');
+    try { await checkAnthropicKey(key); } catch (e) { throw new HttpError(e.status || 502, e.message); }
+    await keyStore.set('anthropic', key);
+    return { hasKey: true };
+  }
   const providerParam = (p) => {
     if (!Object.hasOwn(PROVIDERS, p)) throw new HttpError(404, 'Unknown provider');
     return p;
@@ -755,6 +771,11 @@ export async function startServer({
         if (!v) throw new HttpError(400, `Bad ${k}`);
         next[k] = v;
       } else if (k === 'blenderPath') next.blenderPath = body.blenderPath === '' ? '' : await checkBlenderPath(body.blenderPath);
+      else if (k === 'studioPresets') {
+        const v = cleanStudioPresets(body.studioPresets);
+        if (!v || Object.keys(v).length > 100) throw new HttpError(400, 'Bad studio presets');
+        next.studioPresets = v;
+      }
       else if (k === 'updates') {
         // Only the automatic check is set here; a skipped version comes from POST /api/update/skip.
         if (typeof body.updates?.autoCheck !== 'boolean' || Object.keys(body.updates).length !== 1) throw new HttpError(400, 'updates must be { autoCheck: true or false }');
@@ -779,6 +800,7 @@ export async function startServer({
   const settingsView = () => ({
     ...settings, apiBase: apiBase(), regions: REGIONS, version: VERSION, libraryDir: dataDir,
     suggestedOutputRoot: suggestedOutputRoot(), platform: process.platform, keys: keySources(),
+    visionKey: keyStore.source('anthropic'), // the car material inference's vision model (saved, env or none)
   });
 
   // ---- Update checks (updates.mjs): this server asks GitHub, never the page ----
@@ -915,9 +937,19 @@ export async function startServer({
       const modeled = preset === 'showroom' && Boolean(m.scene?.modeled);
       return ['--plate', JSON.stringify({ slug: preset, modeled, camera: plateCamera(PLATES[preset].cam, 4 / 3), light: PLATES[preset].light })];
     };
+    // The scene look (look.js) and the painted pieces' materials (tenno.js), resolved here so the script only applies them.
+    const lookJson = mergeLook(m.scene?.look);
+    const hdri = lookJson.hdri.file;
+    const hdriPath = hdri ? (hdri.startsWith('builtin:') ? (Object.hasOwn(HDRIS, hdri.slice(8)) ? path.join(hdriDir, `${hdri.slice(8)}.hdr`) : null) : path.join(BACKDROPS, hdri)) : null;
+    const lookArg = ['--scenelook', JSON.stringify(blenderLook(lookJson, { hdriPath }))];
+    const paint = m.scene?.paint;
+    const materialsFile = path.join(MODELS, m.id, 'blender-materials.json');
+    const materials = paint?.pieces ? Object.fromEntries(Object.entries(paint.pieces).filter(([, p]) => p.material || p.slot || p.colors || p.region)
+      .map(([key, p]) => [key, { ...blenderMaterial(deserializeMaterial(p.material), resolveColors(paint, p)), slot: p.slot, textured: p.material?.textured !== false && !p.material?.color }])) : {};
     const job = { status: 'running', looks, look: looks[0], frame: 0, frames, error: null };
     jobs.set(m.id, job);
     (async () => {
+      await writeAtomic(materialsFile, { materials, groups: paint?.groups || {} });
       for (const look of looks) {
         job.look = look;
         job.frame = 0;
@@ -928,6 +960,7 @@ export async function startServer({
           '--look', look, '--frames', String(frames), '--step', String(STEP), '--res', `${width}x${height}`,
           ...(existsSync(sceneFile) ? ['--scene', sceneFile] : []),
           '--rig', JSON.stringify({ lighting: settings.lighting, glass: settings.glass }),
+          ...lookArg, '--materials', materialsFile,
           ...plateArg(look),
           ...(still !== undefined ? ['--still', String(still), '--still-out', path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still))] : []),
         ]);
@@ -988,6 +1021,7 @@ export async function startServer({
       if (parts[0] === 'backdrops') return serveFile(res, inside(BACKDROPS, parts.slice(1)));
       if (parts[0] === 'vendor' && parts[1] === 'three' && parts[2] === 'examples' && parts[3] === 'jsm') return serveFile(res, inside(threeAddons, parts.slice(4)));
       if (parts[0] === 'vendor' && parts[1] === 'three' && parts[2] === 'build') return serveFile(res, inside(THREE, parts.slice(2)));
+      if (parts[0] === 'vendor' && VENDOR[parts[1]] && parts[2] === 'src') return serveFile(res, inside(VENDOR[parts[1]], parts.slice(3)));
       const file = inside(PUBLIC, parts.length ? parts : ['index.html']);
       return serveFile(res, file, file.endsWith('.html') ? { 'Content-Security-Policy': CSP } : {});
     }
@@ -998,6 +1032,16 @@ export async function startServer({
       return send(res, 200, await account(providerParam(url.searchParams.get('provider') || 'tripo'), url.searchParams.has('fresh')));
     }
     // Keys go in and can be removed; nothing ever reads one back.
+    if (area === 'keys' && id === 'anthropic' && !sub) {
+      if (method === 'PUT') return send(res, 200, { ...(await saveVisionKey((await readJson(req)).key)), visionKey: keyStore.source('anthropic') });
+      if (method === 'DELETE') { await keyStore.remove('anthropic'); return send(res, 200, { visionKey: keyStore.source('anthropic') }); }
+    }
+    // Car material inference: labels the photo's colour clusters with the vision model, or the built-in rules.
+    if (area === 'infer' && !id && method === 'POST') {
+      const body = await readJson(req, MAX_INFER);
+      if (!Array.isArray(body.stats) || body.stats.length > 32) throw new HttpError(400, 'Bad cluster statistics');
+      return send(res, 200, await inferRegions({ stats: body.stats, image: typeof body.image === 'string' ? body.image : null, key: keyStore.get('anthropic') }));
+    }
     if (area === 'keys' && id && !sub) {
       const provider = providerParam(id);
       if (method === 'PUT') return send(res, 200, { ...(await saveKey(provider, (await readJson(req)).key)), keys: keySources() });
@@ -1037,7 +1081,7 @@ export async function startServer({
         await once(id, () => refreshModel(m));
         return send(res, 200, m);
       }
-      if (!sub && method === 'PATCH') return send(res, 200, await patchModel(m, await readJson(req, 64 * 1024)));
+      if (!sub && method === 'PATCH') return send(res, 200, await patchModel(m, await readJson(req, 4 * 1024 * 1024))); // a scene carries paint and face groups
       if (!sub && method === 'DELETE') {
         jobs.get(id)?.child?.kill();
         jobs.delete(id);
