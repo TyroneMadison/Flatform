@@ -2,6 +2,19 @@
 
 Newest first. Numbering: [VERSIONING.md](VERSIONING.md).
 
+## 1.4 (1.4.0)
+
+- **Several photos make ONE model.** Drop in a few photos of the same thing and Flatform builds one model from all
+  of them. Want one model per photo instead? Turn on Separate models (it is off unless you choose it).
+- **Angle chips on each photo.** Every photo gets a small label saying which side it shows (Front, Back, Left,
+  Right). Flatform guesses; click a chip to fix it. If no photo is marked Front, the clearest one is used.
+- **One price.** The cost shown is for the one model you are making, not one per photo.
+- **Photo limits per service.** Tripo takes 2 to 4 sides as one job (one photo still works as before). 3D AI Studio
+  takes up to 4 sides on Tripo 3.x, Hunyuan 3D Pro and Hitem3D; TRELLIS.2 uses the best photo and says so. A plain
+  line tells you how many photos go in.
+- **Extra photos are kept.** Photos past the limit are not sent, but they are saved with the model so you can check
+  the detail later.
+
 ## 1.3 (1.3.0)
 
 - **A joints screen anyone can use.** There is one Add joints button. It tries by itself; if it can't find the
