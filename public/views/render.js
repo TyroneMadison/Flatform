@@ -7,6 +7,7 @@ import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upser
 import { icon } from '../lib/icons.js';
 import * as P from '../lib/pipeline.js';
 import { Studio, defaultScene, kelvinColor } from '../lib/studio.js';
+import { roomThumb } from '../lib/rooms.js';
 import { tennogenApplies, tennogenCard, onTennogen, onTennogenSubmit, tennogenGate } from '../lib/tennogen-ui.js';
 import { makeSheets as makeSheetSet, downscale, toBlob } from '../lib/sheets.js';
 
@@ -97,7 +98,7 @@ function renderLeft() {
     ${opts.models && !tripo ? '<p class="fine" style="margin:-4px 0 10px 32px">Other formats come from Tripo’s converter, which only works on models made with Tripo direct.</p>' : ''}
     <h2 class="label">Looks</h2>
     <div class="looks">
-      ${look('showroom', 'Showroom', 'Default · 4:3', `<div class="stage"><img class="thumb" src="${P.plateThumb('showroom')}" alt=""></div>`)}
+      ${look('showroom', 'Showroom', 'Default · 4:3', `<div class="stage"><img class="thumb" src="${roomThumb('showroom')}" alt=""></div>`)}
       ${look('studio', 'Scene', 'From Compose · 4:3', sceneArt())}
       ${look('transparent', 'Transparent', '1:1 · RGBA', '<div class="stage s-clear"><div class="checker"></div><div class="sc-shadow"></div></div>')}
     </div>
@@ -118,7 +119,7 @@ function renderLeft() {
 // The composed scene's thumbnail for the "Scene" look tile.
 function sceneArt() {
   const preset = sceneFor(m, 'studio').preset;
-  return P.PLATES[preset] ? `<div class="stage"><img class="thumb" src="${P.plateThumb(preset)}" alt=""></div>`
+  return P.PLATES[preset] ? `<div class="stage"><img class="thumb" src="${roomThumb(preset)}" alt=""></div>`
     : '<div class="stage s-ring"><div class="sg-wall"></div><div class="sg-panel"></div><div class="sg-bar l"></div><div class="sg-bar r"></div><div class="sg-floor"></div><div class="sg-ring"></div></div>';
 }
 
@@ -330,26 +331,9 @@ function sceneFor(model, look) {
   const s = { ...defaultScene(state.settings), ...model.scene };
   if (look === 'transparent') return { ...s, preset: 'transparent' };
   if (look === 'showroom') return { ...s, preset: 'showroom', backdrop: null };
-  if (s.preset === 'transparent') return { ...s, preset: state.settings?.defaultScene && state.settings.defaultScene !== 'transparent' ? state.settings.defaultScene : 'showroom', backdrop: null };
+  if (s.preset === 'transparent') return { ...s, preset: state.settings?.defaultScene && state.settings.defaultScene !== 'transparent' ? state.settings.defaultScene : 'white-cyc-studio', backdrop: null };
   return s;
 }
-// The photo plate a look is laid over, or null (3D scenes and the modeled showroom).
-function plateFor(model, look) {
-  const s = sceneFor(model, look);
-  return look !== 'transparent' && P.PLATES[s.preset] && !(s.preset === 'showroom' && s.modeled) ? s.preset : null;
-}
-// Blender renders a photo scene's car on a transparent shadow catcher; this lays it over the plate (cover-fit).
-async function overPlate(img, plate) {
-  const c = document.createElement('canvas');
-  Object.assign(c, { width: img.naturalWidth, height: img.naturalHeight });
-  const g = c.getContext('2d');
-  g.imageSmoothingQuality = 'high';
-  const s = Math.max(c.width / plate.naturalWidth, c.height / plate.naturalHeight);
-  g.drawImage(plate, (c.width - plate.naturalWidth * s) / 2, (c.height - plate.naturalHeight * s) / 2, plate.naturalWidth * s, plate.naturalHeight * s);
-  g.drawImage(img, 0, 0);
-  return c;
-}
-
 // Draws frames into the web sprite sheets as they arrive (lib/sheets.js), in Flatform's own web/ layout.
 function makeSheets(look, turns) {
   const files = turns.flatMap((turn) => P.sheetFiles(look, turn).map((f) => ({ turn, width: f.width, type: f.type, name: `web/${f.name}` })));
@@ -490,19 +474,6 @@ async function renderBlender(slug, looks, turns, frames, manifests) {
   }
   const load = async (src) => { const img = new Image(); img.src = src; await img.decode(); return img; };
   const fileSrc = (rel) => `/api/renders/${model.id}/file?path=${encodeURIComponent(rel)}&t=${Date.now()}`;
-  // Photo scenes: Blender's frames (and still) go over the plate first, written back in place.
-  const plates = {};
-  for (const look of looks) {
-    const slug_ = plateFor(model, look);
-    if (!slug_) continue;
-    try { plates[look] = await load(P.plateUrl(slug_)); } catch { toast(`Backplate ${slug_}.jpg is missing · frames keep a transparent background`); }
-  }
-  if (opts.still) {
-    for (const look of looks.filter((l) => plates[l])) {
-      const rel = `stills/${P.stillName(slug, look, job.yaw)}`;
-      await put(rel, await toBlob(await overPlate(await load(fileSrc(rel)), plates[look]), 'image/png'));
-    }
-  }
   // Same sprite step as the in-app renderer, from the PNGs Blender wrote.
   for (const look of turns.length ? looks : []) {
     if (onScreen()) { previewLook = look; resetPreview(); }
@@ -510,11 +481,7 @@ async function renderBlender(slug, looks, turns, frames, manifests) {
     let poster;
     for (let i = 0; i < frames; i++) {
       await checkpoint();
-      let img = await load(fileSrc(P.framePath(slug, look, i)));
-      if (plates[look]) {
-        img = await overPlate(img, plates[look]);
-        await put(P.framePath(slug, look, i), await toBlob(img, 'image/png'));
-      }
+      const img = await load(fileSrc(P.framePath(slug, look, i)));
       const small = sheets.draw(i, img);
       if (i === 0) poster = small[512];
       if (onScreen() && previewLook === look) {

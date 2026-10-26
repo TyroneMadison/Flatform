@@ -157,6 +157,7 @@ app.whenReady().then(async () => {
       blenderScript: path.join(process.resourcesPath, 'render', 'blender_turntable.py'),
       threeAddons: path.join(process.resourcesPath, 'three', 'examples', 'jsm'),
       hdriDir: path.join(process.resourcesPath, 'hdri'), // Blender reads the built-in HDRIs from here
+      roomsDir: path.join(process.resourcesPath, 'rooms'), // and the rooms' HDRIs and floors
     }),
   });
   console.log(`Flatform server on 127.0.0.1:${port}`);

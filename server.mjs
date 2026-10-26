@@ -34,6 +34,7 @@ import { decalKind, DECAL_FILE } from './public/lib/decals.js';
 import { normalizeTemplate } from './public/lib/templates.js';
 import { localEngine as createLocalEngine, downloadWeights, weightsReady, checkCuda, UPSCALER_FILES } from './local.mjs';
 import { loadPoses } from './public/lib/poses.js';
+import { blenderRoom } from './public/lib/rooms.js';
 import { RETARGET, deserializePose, poseBones } from './public/lib/motion.js';
 const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
 import { ENHANCE, enhanceBlock } from './enhance.mjs';
@@ -157,6 +158,7 @@ export async function startServer({
   // so the packaged app ships this one as a resource file too.
   threeAddons = path.join(THREE, 'examples', 'jsm'),
   hdriDir = path.join(PUBLIC, 'img', 'hdri'), // built-in HDRIs for Blender (a resource file in the packaged app)
+  roomsDir = path.join(PUBLIC, 'img', 'rooms'), // the rooms' HDRIs and floor textures for Blender (rooms.js), likewise
   updateUrl,
   updateDelayMs,
   workspaces = null, // workspaces.mjs; startApp() passes it, tests may leave it out
@@ -194,7 +196,7 @@ export async function startServer({
   const defaults = {
     region: 'global', model, texture: true, pbr: true, provider: DEFAULT_PROVIDER, setups: {},
     localEngine: { weightsDir: '', python: '' }, // '' = <data folder>/local-engine/weights and "python" on PATH
-    renderer: 'three', blenderPath: '', ffmpegPath: '', outputRoot: '', defaultScene: 'showroom', alsoTransparent: true, backdrops: {},
+    renderer: 'three', blenderPath: '', ffmpegPath: '', outputRoot: '', defaultScene: 'white-cyc-studio', alsoTransparent: true, backdrops: {},
     lighting: DEFAULT_LIGHTING, glass: DEFAULT_GLASS,
     studioPresets: {}, // the user's saved scene looks (look.js), by name; the shipped ones live in the page
     updates: { autoCheck: true, skippedVersion: null },
@@ -1162,13 +1164,12 @@ export async function startServer({
     if (jobs.get(m.id)?.status === 'running') throw new HttpError(409, 'Blender is already rendering this car');
     const v = active(m);
     const sceneFile = path.join(MODELS, m.id, 'scene.json');
-    // Photo scenes: Blender renders the car on a shadow catcher with the plate's camera and light; the page lays
-    // the frames over the plate when it makes the sprites. The Showroom look always uses the showroom plate.
-    const plateArg = (look) => {
+    // Rooms (rooms.js): Blender builds the same 3D room as the app, with its camera, light, HDRI and floor. The
+    // Showroom look always uses the showroom; the room is scaled to the model's kind in the script.
+    const roomArg = (look) => {
       const preset = look === 'showroom' ? 'showroom' : look === 'transparent' ? null : m.scene?.preset || settings.defaultScene;
-      if (!PLATES[preset]) return [];
-      const modeled = preset === 'showroom' && Boolean(m.scene?.modeled);
-      return ['--plate', JSON.stringify({ slug: preset, modeled, camera: plateCamera(PLATES[preset].cam, 4 / 3), light: PLATES[preset].light })];
+      const room = blenderRoom(preset, { kind: m.kind, keyAzimuth: { ...DEFAULT_LIGHTING, ...settings.lighting }.azimuth, dir: roomsDir });
+      return room ? ['--room', JSON.stringify(room)] : [];
     };
     // The scene look (look.js) and the painted pieces' materials (tenno.js), resolved here so the script only applies them.
     const lookJson = mergeLook(m.scene?.look);
@@ -1195,7 +1196,7 @@ export async function startServer({
           ...(existsSync(sceneFile) ? ['--scene', sceneFile] : []),
           '--rig', JSON.stringify({ lighting: settings.lighting, glass: settings.glass }),
           ...lookArg, '--materials', materialsFile, ...poseArg,
-          ...plateArg(look),
+          ...roomArg(look),
           ...(still !== undefined ? ['--still', String(still), '--still-out', path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still))] : []),
         ]);
       }

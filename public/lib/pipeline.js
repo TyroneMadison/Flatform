@@ -72,25 +72,31 @@ export function cleanGlass(next, base = DEFAULT_GLASS) {
   return out;
 }
 
-// Backplate scenes: a photo stays fixed behind the car (right for a turntable, only the car turns) and the camera is
-// solved to the photo so the car stands on its floor. Calibration, in fractions of the 4:3 frame from the top:
+// Scene cameras and light. These began as photo backplates; since v3 every one is a 3D room (rooms.js) and only
+// the Dud Rents spin sets still lay frames over the showroom photo. The camera is still solved to the old photo,
+// eye level with the floor, so v0.5 scenes keep their framing. Calibration, in fractions of the 4:3 frame from the top:
 // horizon = where the eye-level horizon sits, ground = where the car's centre touches the floor, width = metres
 // visible across the frame at the car, hfov = horizontal field of view in degrees.
 // Light: sun = key direction (azimuth from the camera, negative = camera left; elevation) and colour temperature,
 // key/fill/rim = intensities, sky/ground = ambient colours and strength, shadow = contact shadow strength,
 // reflection = glossy floor reflection strength (0 = none), env = how much the photo shows in the paint.
-// Bundled plates are in public/img/backplates/<slug>.jpg (scene plates are 1280 x 720, low for 2048 px frames).
+// Only the showroom photo is still bundled (public/img/backplates/showroom.jpg), for the spin sets.
 export const PLATES = {
+  'white-cyc-studio': {
+    label: 'White Cyc Studio', note: 'Bright infinity cove · soft even light',
+    cam: { horizon: 0.5, ground: 0.72, width: 7.4, hfov: 45 },
+    light: { sun: { azimuth: -30, elevation: 60, kelvin: 6000 }, key: 0.9, fill: 0.7, rim: 0.4, sky: ['#ffffff', '#d8dade', 0.9], shadow: 0.6, reflection: 0.06, env: 1.0 },
+  },
+  'soft-studio': {
+    label: 'Soft studio', note: 'Grey room · big softboxes · gentle shadows',
+    cam: { horizon: 0.5, ground: 0.72, width: 7.4, hfov: 45 },
+    light: { sun: { azimuth: -25, elevation: 55, kelvin: 5600 }, key: 0.8, fill: 0.8, rim: 0.6, sky: ['#ffffff', '#9a9ca2', 0.7], shadow: 0.55, reflection: 0.04, env: 1.0 },
+  },
   showroom: {
     label: 'Showroom', note: 'Dark showroom · gold ring · ceiling softbox',
     // The ring in the reference photo: centre 71% down, 90% of the frame wide, seen 7° above the floor.
     cam: { horizon: 0.53, ground: 0.71, width: 7.3, hfov: 50 },
     light: { sun: { azimuth: 0, elevation: 70, kelvin: 6500 }, key: 1.0, fill: 0.15, rim: 1.6, sky: ['#d8dde6', '#2a1e10', 0.12], shadow: 0.85, reflection: 0.35, env: 0.9, glow: ['#f2b56b', 0.3] },
-  },
-  'white-cyc-studio': {
-    label: 'White Cyc Studio', note: 'Bright infinity cove · soft even light',
-    cam: { horizon: 0.5, ground: 0.72, width: 7.4, hfov: 45 },
-    light: { sun: { azimuth: -30, elevation: 60, kelvin: 6000 }, key: 0.9, fill: 0.7, rim: 0.4, sky: ['#ffffff', '#d8dade', 0.9], shadow: 0.6, reflection: 0.06, env: 1.0 },
   },
   'golden-hour-coast': {
     label: 'Golden Hour Coast', note: 'Palm Beach oceanfront · warm low sun',
@@ -119,7 +125,6 @@ export const PLATES = {
   },
 };
 export const plateUrl = (slug) => `/img/backplates/${slug}.jpg`;
-export const plateThumb = (slug) => `/img/backplates/${slug}-thumb.jpg`;
 
 // The camera that matches a plate, for a frame of the given aspect (the plate is cover-fitted, so its vertical
 // fractions hold). Returns { position: [x, y, z], target: [x, y, z], vfov } in metres and degrees, Y up, car at
