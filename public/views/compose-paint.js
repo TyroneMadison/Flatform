@@ -253,9 +253,9 @@ export function renderPaintGroups() {
       ${look.hdri.file ? `${sl('look', 'hdri.rotation', 'Rotation', 0, 360, 1, look.hdri.rotation, TEXT.rotation(look.hdri.rotation))}${sl('look', 'hdri.intensity', 'Intensity', 0, 4, 0.05, look.hdri.intensity)}${tg('look', 'hdri.background', 'Show as background', '', look.hdri.background)}${look.hdri.background ? sl('look', 'hdri.blur', 'Blur', 0, 1, 0.01, look.hdri.blur) : ''}` : ''}
       <h3>Lighting</h3>
       ${sel('act', 'light-preset', Object.entries(LIGHT_PRESETS).map(([k, p]) => [k, p.label]), look.lights.preset, 'Preset')}
-      ${look.lights.preset === 'match' ? '<p class="fine">Key, fill and rim follow the scene (and the Render step rig), as always.</p>' : `${lightRow('key', 'Key')}${lightRow('fill', 'Fill')}${lightRow('rim', 'Rim')}
+      ${look.lights.preset === 'match' ? '<p class="fine">Key, fill and rim follow the scene (and the render lighting below), as always.</p>' : `${lightRow('key', 'Key')}${lightRow('fill', 'Fill')}${lightRow('rim', 'Rim')}
         ${tg('look', 'lights.shadows', 'Shadows', '', look.lights.shadows)}${sl('look', 'lights.softness', 'Softness', 0, 1, 0.01, look.lights.softness)}`}
-      <h3>Render</h3>
+      <h3>Picture quality</h3>
       ${sel('look', 'quality', Object.entries(QUALITIES), look.quality, 'Quality')}
       ${sel('look', 'tone', Object.entries(TONE_MAPPINGS), look.tone, 'Tone mapping')}${sl('look', 'exposure', 'Exposure', 0.25, 3, 0.01, look.exposure, TEXT.exposure(look.exposure))}
       ${tg('look', 'ao.on', 'Ambient occlusion', look.quality === 'low' ? 'Off on Low quality' : look.quality === 'medium' ? 'SSAO on Medium, GTAO on High' : 'GTAO', look.ao.on)}${look.ao.on ? sl('look', 'ao.strength', 'AO strength', 0, 2, 0.05, look.ao.strength) : ''}
@@ -274,7 +274,7 @@ export function renderPaintGroups() {
         <button class="btn sm sec" type="button" data-act="export-tenno" ${studio?.model && outDir && !busyText ? '' : 'disabled'}>${icon('image', 14)}<span>TennoGen texture set</span></button>
         <button class="btn sm sec" type="button" data-act="export-glb" ${studio?.model && outDir && !busyText ? '' : 'disabled'}>${icon('cube', 14)}<span>GLB with named materials</span></button>
       </div>
-      <p class="fine">${outDir ? `${esc(exportPart)}_d/_e/_n/_r/_s/_t.png (2048², tint and emissive 1024²) go to <code>${esc(outDir)}${state.settings.platform === 'win32' ? '\\' : '/'}tennogen</code>; the GLB to <code>models</code>.` : 'Choose an output folder on the Render step first.'}</p>
+      <p class="fine">${outDir ? `${esc(exportPart)}_d/_e/_n/_r/_s/_t.png (2048², tint and emissive 1024²) go to <code>${esc(outDir)}${state.settings.platform === 'win32' ? '\\' : '/'}tennogen</code>; the GLB to <code>models</code>.` : 'Choose a handoff folder in the render area below first.'}</p>
       ${lastCompare ? `<div class="checklist" role="group" aria-label="TennoGen compare"><p class="fine"><b>${lastCompare.pass ? 'Ready to submit' : 'Fix before submitting'}</b> · checked against the TennoGen template set</p><ul>${lastCompare.checks.map((c) => `<li class="${c.pass ? 'ok' : 'bad'}">${c.pass ? 'Pass' : 'Fail'}: ${esc(c.label)}${!c.pass && c.got != null ? ` (got ${esc(String(c.got))})` : ''}</li>`).join('')}</ul></div>` : ''}
       ${lastWarnings.length ? `<ul class="warnlist">${lastWarnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     </div>`;
@@ -601,7 +601,7 @@ async function runExport(glb) {
   const studio = ctx.studio();
   const m = ctx.model();
   if (!studio?.model) return;
-  if (!state.settings?.outputRoot) return toast('Choose an output folder on the Render step first');
+  if (!state.settings?.outputRoot) return toast('Choose a handoff folder in the render area below first');
   busyText = glb ? 'Writing the GLB…' : 'Baking the TennoGen texture set…';
   ctx.renderInspector();
   try {

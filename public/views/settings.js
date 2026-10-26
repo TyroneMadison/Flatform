@@ -7,7 +7,7 @@ import { icon } from '../lib/icons.js';
 import { PRESETS } from '../lib/studio.js';
 import { EXTRA, EXTRA_HTML, wireExtra } from './settings-extra.js';
 
-const SCENES = Object.entries(PRESETS).map(([k, p]) => [k, k === 'showroom' ? 'Showroom (default)' : k === 'miami' ? 'Miami street at night (your HDRI)' : p.label]);
+const SCENES = Object.entries(PRESETS).map(([k, p]) => [k, k === 'cyclorama' ? 'White Cyc Studio (default)' : k === 'miami' ? 'Miami street at night (your HDRI)' : p.label]);
 const SECTIONS = [['providers', 'Providers'], ['spend', 'Spend'], ['rendering', 'Rendering'], ['output', 'Output folder'], ['appearance', 'Appearance'], ['history', 'History'], ...EXTRA, ['about', 'About']];
 const RELEASES = 'https://github.com/TyroneMadison/Flatform/releases';
 const results = {}; // provider → { ok, text } from the last Test or key change

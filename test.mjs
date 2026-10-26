@@ -496,7 +496,7 @@ test('old v0.2 library migrates and the model still opens', async () => {
   assert.equal(saved[1].glb, 'model.glb'); // v0.2 can still read it
   assert.deepEqual(m.scene, { preset: 'ring', turn: 30 });
   assert.deepEqual(JSON.parse(await readFile(path.join(oldData, 'models', old.id, 'scene.json'), 'utf8')), { preset: 'ring', turn: 30 });
-  assert.equal((await oldApp.j('/api/settings')).body.defaultScene, 'showroom'); // gold -> ring -> showroom (v0.5 default)
+  assert.equal((await oldApp.j('/api/settings')).body.defaultScene, 'cyclorama'); // gold -> ring -> showroom (v0.5) -> White Cyc Studio (v0.6 default)
 
   // The in-flight one is polled; Tripo no longer has its task, so it fails (and can be retried) instead of spinning forever.
   const gone = (await oldApp.j(`/api/models/${stuck.id}`)).body;

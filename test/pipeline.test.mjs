@@ -95,7 +95,7 @@ test('handoff text and viewer page', () => {
 
 test('three looks; the light rig and glass are validated and merged', () => {
   assert.deepEqual(Object.keys(P.LOOKS), ['showroom', 'studio', 'transparent']);
-  assert.deepEqual(P.DEFAULT_LOOKS, ['showroom', 'transparent']);
+  assert.deepEqual(P.DEFAULT_LOOKS, ['studio', 'transparent']); // v0.6: the Compose scene (White Cyc Studio by default)
   assert.deepEqual(P.frameSize('showroom', 512), { width: 512, height: 384 });
   assert.deepEqual(P.cleanLighting({ key: 1.5, kelvin: 3200 }), { ...P.DEFAULT_LIGHTING, key: 1.5, kelvin: 3200 });
   for (const bad of [{ key: 3 }, { kelvin: 1000 }, { azimuth: '10' }, { color: 1 }, [], null]) assert.equal(P.cleanLighting(bad), null);

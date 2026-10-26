@@ -13,6 +13,7 @@ import { initTestRig, renderTestRigGroup, onTestRigClick, stopTestRig } from './
 import { initTools, renderToolsGroup, onToolsClick, onToolsChange, onCanvasClick, onToolsKey } from './compose-tools.js';
 import { initPath, renderPathGroup, onPathClick, onPathChange } from './compose-path.js';
 import { initLighting, renderLightingGroup, onLightingClick } from './compose-lighting.js';
+import { mountRender, updateRender } from './compose-render.js';
 import { initPaint, renderPaintGroups, afterRender, onPaintClick, onPaintInput, onPaintChange, selectPiece, onPaintDragStart, onTextureDrop, onDecalCanvasClick } from './compose-paint.js';
 
 let root;
@@ -56,8 +57,7 @@ export async function mount(el, { id }) {
   el.innerHTML = `
   <div class="comp-top">${stepper('compose', m)}
     <div class="ctop-act">
-      <button class="btn sec" type="button" data-render="still">${icon('camera')}<span>Render still</span></button>
-      <button class="btn pri" type="button" data-render="turntable">${icon('film')}<span>Render turntable</span></button>
+      <button class="btn pri" type="button" data-render="show" title="Jump down to the render options under the scene">${icon('film')}<span>Render</span></button>
     </div>
   </div>
   <section class="compose">
@@ -118,17 +118,19 @@ export async function mount(el, { id }) {
       <input type="file" id="betterPhoto" accept="image/png,image/jpeg,image/heic,image/heif,.heic,.heif" hidden>
       <input type="file" id="lookFile" hidden>
     </aside>
-  </section>`;
+  </section>
+  <section class="renderarea glass" id="renderArea" aria-label="Render"></section>`;
 
   renderScenes();
   renderModel();
   renderInspector();
   renderTimeline();
   bind();
+  mountRender($('#renderArea', el), m, { onRig: () => { studio?.setRig(state.settings || {}); draw(); } });
   let s;
   try {
     s = studio = new Studio($('#cv', el));
-    s.setRig(state.settings || {}); // the light rig and glass set on the Render step
+    s.setRig(state.settings || {}); // the light rig and glass set in the render area below
     s.enableOrbit(onOrbit); // free roam: drag orbits, wheel zooms, right or Shift drag pans
   } catch {
     $('#hudMsg', el).textContent = 'The scene composer needs WebGL, which is not available here.';
@@ -320,8 +322,8 @@ function renderScenes() {
     const note = (key === 'miami' || key === 'custom') && file ? `${file.endsWith('.hdr') || file.endsWith('.exr') ? 'HDRI' : 'Backdrop'} added · click again to replace` : p.note;
     const needs = (key === 'miami' || key === 'custom') && !file;
     const plate = p.plate ? `<div class="stage"><img class="thumb" src="${p.thumb}" alt="" onerror="this.remove()"></div>` : '';
-    return `<button class="scn${key === 'showroom' ? ' pinned' : ''}" type="button" data-preset="${key}" aria-pressed="${scene.preset === key}">
-      <div class="scn-th">${plate || (photo ? `<div class="stage">${photo}</div>` : art[key])}${needs ? `<div class="up">${icon('upload', 18)}</div>` : ''}${key === 'showroom' ? '<span class="pin">Default</span>' : ''}</div>
+    return `<button class="scn${key === 'cyclorama' ? ' pinned' : ''}" type="button" data-preset="${key}" aria-pressed="${scene.preset === key}" title="Use ${esc(p.label)} as the background">
+      <div class="scn-th">${plate || (photo ? `<div class="stage">${photo}</div>` : art[key])}${needs ? `<div class="up">${icon('upload', 18)}</div>` : ''}${key === 'cyclorama' ? '<span class="pin">Default</span>' : ''}</div>
       <div class="scn-t"><b>${p.label}</b><span>${esc(note)}</span></div></button>${key === 'showroom' && scene.preset === 'showroom'
       ? `<label class="tg scn-opt"><span>Modeled room<small>Instead of the photo, same camera</small></span><input class="sw" type="checkbox" role="switch" data-key="modeled" ${scene.modeled ? 'checked' : ''}></label>` : ''}`;
   }).join('');
@@ -410,6 +412,7 @@ export function update() {
   const glb = m.glb;
   m = fresh;
   renderModel();
+  updateRender();
   if (m.status === 'ready' && m.glb !== glb) loadModel();
 }
 
@@ -442,7 +445,7 @@ function bind() {
     if (await onHandPoseClick(t)) return;
     if (await onTestRigClick(t)) return;
     if (await onPaintClick(t)) return;
-    if (t.dataset.render) { state.renderIntent = t.dataset.render; location.hash = `#/render/${m.id}`; }
+    if (t.dataset.render) $('#renderArea', el).scrollIntoView({ behavior: 'smooth', block: 'start' });
     if (t.dataset.version) {
       try { m = upsert(await send(`/api/models/${m.id}`, 'PATCH', { activeVersion: Number(t.dataset.version) })); } catch (err) { return toast(err.message); }
       renderModel();

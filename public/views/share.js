@@ -22,7 +22,7 @@ function draw() {
   <section class="share">
     <div class="card glass">
       ${m && thumbOf(m) ? `<img class="sh-thumb" src="${thumbOf(m)}" alt="">` : ''}
-      ${!ready ? `<p class="sub">Render this model first. The share page shows its picture or video.</p>${m ? `<a class="btn pri" href="#/render/${esc(m.id)}">Go to Render</a>` : ''}`
+      ${!ready ? `<p class="sub">Render this model first. The share page shows its picture or video.</p>${m ? `<a class="btn pri" href="#/compose/${esc(m.id)}/render" title="Open Compose at its render options">Render it in Compose</a>` : ''}`
         : !cur ? `<button class="btn pri huge" type="button" data-sh="make">Make a share link</button>`
         : `<p class="label">Your link</p>
           <div class="sh-link"><code id="shUrl">${esc(cur.url)}</code><button class="btn pri" type="button" data-sh="copy" data-url="${esc(cur.url)}">Copy</button></div>

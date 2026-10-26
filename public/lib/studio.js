@@ -43,13 +43,13 @@ export const CAMERAS = {
   low: { label: 'Low hero', turn: 30, elevation: 2.5, lens: 35, height: 'low' },
 };
 // 'ring' was called 'gold' before v0.4; the server renames it in saved scenes and settings.
-// Showroom comes first: it is the default scene and Dud Rents' house look. Backplate scenes (PLATES in pipeline.js)
-// put a fixed photo behind the car; the rest are built in 3D.
+// White Cyc Studio comes first: it is the default scene (v0.6; Showroom, Dud Rents' house look, was before).
+// Backplate scenes (PLATES in pipeline.js) put a fixed photo behind the car; the rest are built in 3D.
 export const PRESETS = {
+  cyclorama: { label: 'White Cyc Studio', note: 'Seamless white, soft top light' },
   ...Object.fromEntries(Object.entries(PLATES).map(([key, p]) => [key, { label: p.label, note: p.note, plate: true, thumb: plateThumb(key) }])),
   ring: { label: 'Escalade ring studio', note: 'Reflective floor · coral ring · side light bars' },
   transparent: { label: 'Transparent', note: 'RGBA PNG with soft contact shadow' },
-  cyclorama: { label: 'White cyclorama', note: 'Seamless white, soft top light' },
   miami: { label: 'Miami street at night', note: 'Add your Miami HDRI' },
   custom: { label: 'Your backdrop or HDRI', note: 'Upload a JPG, PNG, EXR or HDR' },
 };
@@ -64,7 +64,7 @@ const MATCHED = {
 
 export function defaultScene(settings = {}) {
   return {
-    preset: settings.defaultScene && settings.defaultScene !== 'transparent' ? settings.defaultScene : 'showroom',
+    preset: settings.defaultScene && settings.defaultScene !== 'transparent' ? settings.defaultScene : 'cyclorama',
     modeled: false, // Showroom only: the modeled room instead of the photo
     backdrop: null, x: 0, y: 0, snap: true, turn: 30, scale: 1, sameSize: true,
     camera: 'front34', lens: 50, matchLighting: true, key: 1.3, fill: 0.3, rim: 1.4,
@@ -437,7 +437,7 @@ export class Studio {
     key.shadow.normalBias = 0.02;
     key.shadow.radius = 3;
     this.scene.add(...Object.values(this.lights));
-    this.rig = { lighting: DEFAULT_LIGHTING, glass: DEFAULT_GLASS }; // the Render step's light rig and glass
+    this.rig = { lighting: DEFAULT_LIGHTING, glass: DEFAULT_GLASS }; // the render area's light rig and glass
     this.pmrem = new THREE.PMREMGenerator(this.renderer);
     this.envs = {};
     this.builds = 0; // a newer preset wins over one that is still loading its HDRI
@@ -497,7 +497,7 @@ export class Studio {
     return pickPiece(this.model, this.camera, (x / this.width) * 2 - 1, -(y / this.height) * 2 + 1);
   }
 
-  // The Render step's light rig and glass ({ lighting, glass } as saved in settings). Missing parts keep defaults.
+  // The render area's light rig and glass ({ lighting, glass } as saved in settings). Missing parts keep defaults.
   setRig({ lighting, glass } = {}) {
     const next = { lighting: { ...DEFAULT_LIGHTING, ...lighting }, glass: { ...DEFAULT_GLASS, ...glass } };
     const glassChanged = JSON.stringify(next.glass) !== JSON.stringify(this.rig.glass);
@@ -671,7 +671,7 @@ export class Studio {
     if (lights.preset === 'match') {
       for (const [k, l] of Object.entries(L)) { l.visible = true; l.color.setHex(this.baseRig[k].color); }
       L.rim.position.fromArray(this.baseRig.rim.position);
-      this.applyLights(); // key colour and the key/fill places come from the scene and the Render step's rig
+      this.applyLights(); // key colour and the key/fill places come from the scene and the render area's rig
       L.key.castShadow = true;
       L.key.shadow.radius = 3;
       return;

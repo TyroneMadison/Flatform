@@ -1,4 +1,4 @@
-// The "TennoGen check" card (Render step) and the before-export gate. Pure rules live in tennogen.js; this talks to
+// The "TennoGen check" card (Compose's render area) and the before-export gate. Pure rules live in tennogen.js; this talks to
 // POST /api/tennogen/check and /fix, keeps the folder and content type on the model (m.tennogen) and the
 // before-export mode in settings.tennogenCheck.
 import { $, esc, state, api, send, toast, native, upsert, confirmDialog } from '../app.js';

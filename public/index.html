@@ -18,7 +18,12 @@
 <div class="win">
   <header class="titlebar">
     <div class="tt"><img src="/img/icon-small.svg" alt="" width="18" height="18">Flatform</div>
-    <div class="tr" id="accountStatus"></div>
+    <div class="tr tstat" role="group" aria-label="Status">
+      <button class="tl-light" type="button" id="renderLight" data-light="idle" title="Renders you start in Compose show their progress here"><span class="dot idle"></span><span class="rl-t">Nothing rendering</span></button>
+      <span class="tl-light" id="blenderLight" title="Looking for Blender on this computer"><span class="dot wait"></span>Blender</span>
+      <a class="tl-light" id="accountStatus" href="#/settings/providers" title="Connecting"><span class="dot wait"></span>Tripo</a>
+      <span class="tl-ver" id="appVersion"></span>
+    </div>
   </header>
   <div><!-- banners share the frame's one banner row -->
   <section class="update" id="update" aria-labelledby="updateTitle" hidden>

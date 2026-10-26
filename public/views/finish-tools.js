@@ -55,7 +55,7 @@ const toggle = (key, label) => `<label class="toggle"><input type="checkbox" dat
 function draw() {
   if (!host) return;
   if (!m?.renders?.poster && !m?.renders?.stills?.length) {
-    host.innerHTML = `<div class="card glass"><h2 class="label">Picture</h2><p class="sub">Render this model once, then come back here to trim it, change the look and compare versions.</p><a class="btn pri" href="#/render/${esc(m?.id || '')}">Go to Render</a></div>`;
+    host.innerHTML = `<div class="card glass"><h2 class="label">Picture</h2><p class="sub">Render this model once, then come back here to trim it, change the look and compare versions.</p><a class="btn pri" href="#/compose/${esc(m?.id || '')}/render" title="Open Compose at its render options">Render it in Compose</a></div>`;
     return;
   }
   const vs = list.length ? list : [];

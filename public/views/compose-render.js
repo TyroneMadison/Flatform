@@ -1,9 +1,11 @@
-// 05 · Render / Export: renders the composed scene to the handoff folder.
+// Compose · Render: the render area under the scene (it was its own Render tab before v0.6). Renders the composed
+// scene to the handoff folder. Every render you start goes into the queue tray and runs one at a time.
 // In-app renderer: the same Three.js studio, offscreen at full size, turning only the car 5° per frame.
 // Blender renderer (optional): render/blender_turntable.py writes the frames; sprites are made here either way.
-// A render belongs to the car it started on and keeps going if you leave this screen.
-import { mountExport } from './render-export.js';
-import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, native, announce, providerOf, FORMATS } from '../app.js';
+// A render belongs to the car it started on and keeps going if you leave Compose; the top-bar light follows it.
+import { mountExport } from './compose-video.js';
+import { $, $$, esc, state, api, send, toast, findModel, fileUrl, upsert, refresh, native, announce, providerOf, FORMATS, setRenderLight, go } from '../app.js';
+import { statusLight, taskLabel, resultFile, nextTask, waitingCount, trimQueue, STATUS_TEXT } from '../lib/render-status.js';
 import { icon } from '../lib/icons.js';
 import * as P from '../lib/pipeline.js';
 import { Studio, defaultScene, kelvinColor } from '../lib/studio.js';
@@ -14,7 +16,9 @@ let root;
 let m; // the car on screen
 let opts;
 let previewLook = 'showroom';
-let job = null; // { model, yaw, renderer, frame, total, paused, cancelled, done, error, phaseText }
+let job = null; // { model, opts, task, yaw, renderer, frame, total, t0, f0, paused, cancelled, done, error, phaseText }
+let queue = []; // the queue tray: { id, model, opts, label, status, error, outDir, file }
+let hooks = {};
 const CELL = 64; // preview cell width
 const LOOK_KEYS = Object.keys(P.LOOKS); // showroom, studio (the composed scene), transparent
 let rigTimer;
@@ -26,13 +30,11 @@ const blenderReady = () => Boolean(state.blender?.found);
 const running = () => Boolean(job && !job.done);
 const onScreen = () => Boolean(job && m && job.model.id === m.id && root?.isConnected);
 
-export function mount(el, { id }) {
+// Draws the render area into el (a box inside Compose) for model m. hooks.onRig: the light rig changed.
+export function mountRender(el, model, h = {}) {
   root = el;
-  m = findModel(id);
-  if (!m || m.status !== 'ready') {
-    el.innerHTML = `${stepper('render', m)}<p class="muted">${m ? 'This model is not ready yet.' : 'Pick a model from the library first.'} <a class="link" href="${m ? `#/generate/${m.id}` : '#/library'}">${m ? 'Show progress' : 'Open library'}</a></p>`;
-    return;
-  }
+  m = model;
+  hooks = h;
   const intent = state.renderIntent;
   state.renderIntent = null;
   opts ||= { still: false, t360: true, t180: true, models: false, formats: new Set(), ...Object.fromEntries(LOOK_KEYS.map((l) => [l, P.DEFAULT_LOOKS.includes(l)])) };
@@ -40,40 +42,43 @@ export function mount(el, { id }) {
   if (intent === 'still') Object.assign(opts, { still: true, t360: false, t180: false });
   if (intent === 'turntable') Object.assign(opts, { t360: true, t180: true });
   if (!running()) opts.renderer = state.settings?.renderer === 'blender' && blenderReady() ? 'blender' : 'three';
-  el.innerHTML = `${stepper('render', m)}
-  <section class="export">
-    <div class="ex-left glass" id="left"></div>
-    <div class="ex-mid glass">
-      <div class="rowhead sheethead"><h2 class="label">Sprite sheet preview · 360°</h2>
+  el.innerHTML = `<div class="rowhead ra-head"><h2 class="ph2">${icon('film', 18)} Render</h2><span class="sub">Pick what you want below, then press the orange button. Finished renders go to your handoff folder and show up in Library.</span></div>
+  <div class="export">
+    <div class="ex-left" id="left"></div>
+    <div class="ex-mid">
+      <div class="rowhead sheethead"><h2 class="label">Sprite preview · 360°</h2>
         <div class="chips seg sm" role="radiogroup" aria-label="Preview look">
-          <button class="chip" type="button" role="radio" data-preview="showroom">Showroom</button>
-          <button class="chip" type="button" role="radio" data-preview="studio">Scene</button>
-          <button class="chip" type="button" role="radio" data-preview="transparent">Transparent</button>
+          <button class="chip" type="button" role="radio" data-preview="showroom" title="Show the Showroom look in the preview">Showroom</button>
+          <button class="chip" type="button" role="radio" data-preview="studio" title="Show your Compose scene in the preview">Compose scene</button>
+          <button class="chip" type="button" role="radio" data-preview="transparent" title="Show the see-through look in the preview">Transparent</button>
         </div></div>
-      <div class="sheet"><canvas id="sheet360" aria-label="Preview of the 360° sprite sheet"></canvas></div>
+      <div class="sheet"><canvas id="sheet360" aria-label="Preview of the 360° sprite sheet. It fills in frame by frame while rendering."></canvas></div>
       <div class="sheet-meta"><span>${P.COLUMNS} columns × ${P.spriteGrid(P.FRAMES).rows} rows</span><span>Frame 000 is front ¾</span><span>Web copies at 512 and 256 px, WebP + PNG</span></div>
-      <div class="rowhead sheethead"><h2 class="label">180° half turn · detail page</h2><span class="sub">Cut from the same ${P.FRAMES} frames, no re-render</span></div>
-      <div class="sheet"><canvas id="sheet180" aria-label="Preview of the 180° sprite sheet"></canvas></div>
+      <div class="rowhead sheethead"><h2 class="label">180° half turn · detail page</h2><span class="sub">Cut from the same ${P.FRAMES} frames, no extra rendering</span></div>
+      <div class="sheet"><canvas id="sheet180" aria-label="Preview of the 180° sprite sheet. It fills in frame by frame while rendering."></canvas></div>
       <div class="renderbar">
         <div><b id="rbTitle">Ready to render</b><span id="rbSub" aria-live="polite"></span></div>
         <div class="pbar big" role="progressbar" aria-label="Render progress" aria-valuemin="0" aria-valuemax="100" id="rbBar"><i style="width:0"></i></div>
         <div class="rb-act" id="rbAct"></div>
       </div>
     </div>
-    <aside class="ex-right glass" id="right"></aside>
-  </section>`;
-  el.addEventListener('click', onClick);
-  el.addEventListener('change', onChange);
-  el.addEventListener('submit', onSubmit);
-  el.addEventListener('input', onInput);
+    <aside class="ex-right" id="right"></aside>
+  </div>`;
+  // The area sits inside Compose: its clicks and slider moves are its own, not the scene composer's.
+  const own = (fn) => (e) => { e.stopPropagation(); fn(e); };
+  el.addEventListener('click', own(onClick));
+  el.addEventListener('change', own(onChange));
+  el.addEventListener('submit', own(onSubmit));
+  el.addEventListener('input', own(onInput));
   renderLeft();
   renderRight();
   renderBar();
   resetPreview();
-  mountExport(el, m);
+  mountExport(el, m, { track });
+  if (intent) requestAnimationFrame(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }));
 }
 
-export function update() {
+export function updateRender() {
   if (!root?.isConnected || !m) return;
   m = findModel(m.id) || m;
   renderLeft();
@@ -82,34 +87,34 @@ export function update() {
 
 // ---- panels ----
 function renderLeft() {
-  const busy = running();
-  const card = (key, title, desc) => `<label class="oc"><input type="checkbox" data-opt="${key}" ${opts[key] ? 'checked' : ''} ${busy ? 'disabled' : ''}><span class="cb">${icon('check', 12)}</span><div><b>${title}</b><span class="d">${desc}</span></div></label>`;
-  const look = (key, title, desc, art) => `<button class="look" type="button" data-look="${key}" aria-pressed="${opts[key]}" ${busy ? 'disabled' : ''}><div class="lk">${art}</div><b>${title}</b><span>${desc}</span></button>`;
-  const f = (x) => `<button class="chip" type="button" data-format="${x}" aria-pressed="${opts.formats.has(x)}" ${busy ? 'disabled' : ''}>${x}${m.exports?.[x]?.status === 'ready' ? ' ✓' : ''}</button>`;
+  const busy = running(); // options stay open while rendering: the next render waits in the queue
+  const card = (key, title, desc, tip) => `<label class="oc" title="${tip}"><input type="checkbox" data-opt="${key}" ${opts[key] ? 'checked' : ''}><span class="cb">${icon('check', 12)}</span><div><b>${title}</b><span class="d">${desc}</span></div></label>`;
+  const look = (key, title, desc, art, tip) => `<button class="look" type="button" data-look="${key}" aria-pressed="${opts[key]}" title="${tip}"><div class="lk">${art}</div><b>${title}</b><span>${desc}</span></button>`;
+  const f = (x) => `<button class="chip" type="button" data-format="${x}" aria-pressed="${opts.formats.has(x)}" title="Also save the model as ${x}">${x}${m.exports?.[x]?.status === 'ready' ? ' ✓' : ''}</button>`;
   const tripo = providerOf(m) === 'tripo'; // only Tripo can convert its own models to other formats
   const html = `<h2 class="label">What to render</h2>
-    ${card('still', 'Still image', `PNG · 2048 px · current angle (${stillYaw(m)}°)`)}
-    ${card('t360', '360° turntable', `${P.FRAMES} frames · ${P.STEP}° steps · loops`)}
-    ${card('t180', '180° half turn', `Frames 000–0${P.HALF - 1} · stops at both ends`)}
-    ${card('models', 'Model files', tripo ? 'GLB · GLTF · FBX · USDZ · OBJ · STL · 3MF' : 'GLB')}
-    ${opts.models && tripo ? `<div class="fmtpick" role="group" aria-label="Extra formats"><span class="chip on" aria-label="GLB is always included">GLB</span>${FORMATS.map(f).join('')}</div>
+    ${card('still', 'Still picture', `PNG · 2048 px · the angle you see now (${stillYaw(m)}°)`, 'One sharp picture from the angle the scene is turned to right now')}
+    ${card('t360', '360° turntable', `${P.FRAMES} frames · ${P.STEP}° steps · loops`, 'A full spin you can drag on a website. Makes the sprite sheets and a viewer page.')}
+    ${card('t180', '180° half turn', `Frames 000–0${P.HALF - 1} · stops at both ends`, 'Half a spin, front to back, for a detail page. Uses the same frames as the 360.')}
+    ${card('models', 'Model files', tripo ? 'GLB · GLTF · FBX · USDZ · OBJ · STL · 3MF' : 'GLB', 'Copy the 3D model itself into the handoff folder')}
+    ${opts.models && tripo ? `<div class="fmtpick" role="group" aria-label="Extra formats"><span class="chip on" aria-label="GLB is always included" title="GLB is always included">GLB</span>${FORMATS.map(f).join('')}</div>
       <p class="fine" style="margin:-4px 0 10px 32px">GLB is copied straight away. Other formats are converted by Tripo the first time, then copied.</p>` : ''}
     ${opts.models && !tripo ? '<p class="fine" style="margin:-4px 0 10px 32px">Other formats come from Tripo’s converter, which only works on models made with Tripo direct.</p>' : ''}
     <h2 class="label">Looks</h2>
     <div class="looks">
-      ${look('showroom', 'Showroom', 'Default · 4:3', `<div class="stage"><img class="thumb" src="${P.plateThumb('showroom')}" alt=""></div>`)}
-      ${look('studio', 'Scene', 'From Compose · 4:3', sceneArt())}
-      ${look('transparent', 'Transparent', '1:1 · RGBA', '<div class="stage s-clear"><div class="checker"></div><div class="sc-shadow"></div></div>')}
+      ${look('showroom', 'Showroom', '4:3 photo room', `<div class="stage"><img class="thumb" src="${P.plateThumb('showroom')}" alt=""></div>`, 'Render in the Showroom photo, the website’s house look')}
+      ${look('studio', 'Compose scene', 'What you set up above · 4:3', sceneArt(), 'Render exactly the scene you set up in Compose (White Cyc Studio unless you picked another)')}
+      ${look('transparent', 'Transparent', '1:1 · see-through PNG', '<div class="stage s-clear"><div class="checker"></div><div class="sc-shadow"></div></div>', 'No background, just the model and a soft shadow, for lists and cut-outs')}
     </div>
     ${rigPanel(busy)}
     ${tennogenApplies(m) ? tennogenCard(m, busy) : ''}
     <div class="renderer-pick">
-      <h2 class="label">Renderer</h2>
+      <h2 class="label">Quality</h2>
       <div class="chips" role="radiogroup" aria-label="Renderer">
-        <button class="chip" type="button" role="radio" data-renderer="three" aria-checked="${opts.renderer === 'three'}" ${busy ? 'disabled' : ''}>In-app</button>
-        <button class="chip" type="button" role="radio" data-renderer="blender" aria-checked="${opts.renderer === 'blender'}" ${busy || !blenderReady() ? 'disabled' : ''}>Render with Blender (Cycles)</button>
+        <button class="chip" type="button" role="radio" data-renderer="three" aria-checked="${opts.renderer === 'three'}" title="Renders right here in Flatform. Quick, and looks like the viewport.">Quick (in Flatform)</button>
+        <button class="chip" type="button" role="radio" data-renderer="blender" aria-checked="${opts.renderer === 'blender'}" ${!blenderReady() ? 'disabled' : ''} title="${blenderReady() ? 'Renders in Blender with Cycles. Slower, more realistic light.' : 'Needs Blender installed. Find it in Settings.'}">Best (Blender)</button>
       </div>
-      <p class="fine">${blenderReady() ? `Blender: ${esc(state.blender.path)}` : 'Blender: Not found · install Blender 4.x to render with Cycles, or locate it in Settings.'}</p>
+      <p class="fine">${blenderReady() ? `Blender: ${esc(state.blender.path)}` : 'Blender not found. Quick works fine; install Blender 4.x or find it in Settings for the Best option.'}</p>
     </div>`;
   const box = $('#left', root);
   if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
@@ -127,9 +132,13 @@ const pct = (v) => `${Math.round(v * 100)}%`;
 const RIG_TEXT = {
   key: pct, fill: pct, rim: pct, azimuth: (v) => `${Math.round(v)}°`, elevation: (v) => `${Math.round(v)}°`, kelvin: (v) => `${Math.round(v)} K`, opacity: pct,
 };
+const RIG_TIP = {
+  key: 'How bright the main light is', azimuth: 'Which side the main light comes from', elevation: 'How high the main light is',
+  kelvin: 'Warm (low) or cool (high) light', fill: 'Soft light that lifts the shadows', rim: 'Edge light and reflections from around the room', opacity: 'How see-through the windows are',
+};
 function rigSlider(group, key, label, min, max, step, value, disabled) {
   const p = ((value - min) / (max - min)) * 100;
-  return `<div class="sl"><label for="rig-${key}">${label}</label>
+  return `<div class="sl" title="${RIG_TIP[key]}"><label for="rig-${key}">${label}</label>
     <input class="range" type="range" id="rig-${key}" data-rig="${group}" data-key="${key}" min="${min}" max="${max}" step="${step}" value="${value}" style="--p:${p}%" ${disabled ? 'disabled' : ''}>
     <span class="v" id="rv-${key}">${RIG_TEXT[key](value)}</span></div>`;
 }
@@ -137,7 +146,7 @@ function rigPanel(busy) {
   const l = { ...P.DEFAULT_LIGHTING, ...state.settings?.lighting };
   const g = { ...P.DEFAULT_GLASS, ...state.settings?.glass };
   const swatch = `rgb(${kelvinColor(l.kelvin).map((v) => Math.round(v * 255)).join(',')})`;
-  return `<div class="grp rig"><h3>${icon('light', 14)} Lighting <button class="link" type="button" data-act="rig-reset" ${busy ? 'disabled' : ''}>Reset</button></h3>
+  return `<div class="grp rig"><h3>${icon('light', 14)} Render lighting <button class="link" type="button" data-act="rig-reset" ${busy ? 'disabled' : ''} title="Put the render lights back the way they started">Reset</button></h3>
       ${rigSlider('lighting', 'key', 'Key', 0, 2, 0.05, l.key, busy)}
       ${rigSlider('lighting', 'azimuth', 'Direction', -180, 180, 5, l.azimuth, busy)}
       ${rigSlider('lighting', 'elevation', 'Height', 5, 85, 1, l.elevation, busy)}
@@ -146,13 +155,14 @@ function rigPanel(busy) {
       ${rigSlider('lighting', 'rim', 'Rim · env', 0, 2, 0.05, l.rim, busy)}
     </div>
     <div class="grp rig"><h3>${icon('cube', 14)} Glass</h3>
-      <label class="tg"><span>Tinted glass<small>Found by name, or dark glossy texture on Tripo scans</small></span><input class="sw" type="checkbox" role="switch" data-glass="on" ${g.on ? 'checked' : ''} ${busy ? 'disabled' : ''}></label>
-      ${g.on ? `<div class="sl"><label for="rig-tint">Tint</label><input class="tint" type="color" id="rig-tint" data-glass="tint" value="${esc(g.tint)}" ${busy ? 'disabled' : ''}><span class="v">${esc(g.tint)}</span></div>
+      <label class="tg" title="Darken the windows like real tinted glass"><span>Tinted glass<small>Found by name, or dark glossy texture on Tripo scans</small></span><input class="sw" type="checkbox" role="switch" data-glass="on" ${g.on ? 'checked' : ''} ${busy ? 'disabled' : ''}></label>
+      ${g.on ? `<div class="sl"><label for="rig-tint">Tint</label><input class="tint" type="color" id="rig-tint" title="The colour of the window tint" data-glass="tint" value="${esc(g.tint)}" ${busy ? 'disabled' : ''}><span class="v">${esc(g.tint)}</span></div>
       ${rigSlider('glass', 'opacity', 'Opacity', 0, 1, 0.05, g.opacity, busy)}` : ''}
     </div>`;
 }
 function saveRig(group, patch) {
   state.settings = { ...state.settings, [group]: { ...state.settings?.[group], ...patch } };
+  hooks.onRig?.(); // the Compose viewport shows the new light at once
   clearTimeout(rigTimer);
   rigTimer = setTimeout(() => send('/api/settings', 'POST', { lighting: state.settings.lighting, glass: state.settings.glass })
     .then((s) => { state.settings = s; }).catch((e) => toast(e.message)), 300);
@@ -163,38 +173,57 @@ function renderRight() {
   const busy = running();
   const dir = outDir();
   const d = sep();
-  const html = `<h2 class="label">Output folder</h2>
-    <div class="path">${icon('folder')}<code>${dir ? esc(dir) : `Not chosen yet · suggested ${esc(s.suggestedOutputRoot || '')}`}</code></div>
-    <button class="btn ghostbtn wide" type="button" data-act="folder" ${busy ? 'disabled' : ''}><span>${dir ? 'Change folder' : 'Choose folder'}</span></button>
-    <form class="field pathform" id="folderForm" hidden><label for="folderIn">Folder</label><input class="inp mono" id="folderIn" name="outputRoot" value="${esc(s.outputRoot || s.suggestedOutputRoot || '')}" spellcheck="false"><button class="btn ghostbtn" type="submit">Save</button></form>
+  const html = `<h2 class="label">Handoff folder</h2>
+    <div class="path" title="Where finished renders are saved">${icon('folder')}<code>${dir ? esc(dir) : `Not chosen yet · suggested ${esc(s.suggestedOutputRoot || '')}`}</code></div>
+    <button class="btn ghostbtn wide" type="button" data-act="folder" title="Pick the folder renders are saved in" ${busy ? 'disabled' : ''}><span>${dir ? 'Change folder' : 'Choose folder'}</span></button>
+    <form class="field pathform" id="folderForm" hidden><label for="folderIn">Folder</label><input class="inp mono" id="folderIn" name="outputRoot" value="${esc(s.outputRoot || s.suggestedOutputRoot || '')}" spellcheck="false" title="The full path of the folder"><button class="btn ghostbtn" type="submit" title="Use this folder">Save</button></form>
+    <div class="cta">
+      <button class="btn pri" type="button" data-act="render" title="${busy ? 'Something is rendering: this waits in the queue and starts next' : 'Start rendering what you picked on the left'}">${icon('film')}<span>${busy ? 'Add to queue' : 'Render to handoff folder'}</span></button>
+      <button class="btn ghostbtn" type="button" data-act="open" title="Open the handoff folder on this computer" ${native && (m.renders?.outDir || s.outputRoot) ? '' : 'disabled'}>${icon('folder')}<span>Open folder</span></button>
+    </div>
+    ${trayHtml()}
+    <details class="ra-more"><summary title="What ends up in the handoff folder">What’s in the folder</summary>
     <div class="tree">
       <div class="tr-l">${icon('folder', 14)}<div><code>web${d}</code><span>360 + 180 sheets · 512 and 256 px · sprite json · posters</span></div></div>
       <div class="tr-l">${icon('folder', 14)}<div><code>frames${d}</code><span>${P.FRAMES} PNGs per look · 2048 px</span></div></div>
       <div class="tr-l">${icon('cube', 14)}<div><code>spin-viewer.js · viewer.html</code><span>Drag-to-spin viewer for the site and admin</span></div></div>
       <div class="tr-l">${icon('cube', 14)}<div><code>HANDOFF.md</code><span>What goes where, for the web team</span></div></div>
     </div>
-    <div class="dest"><h3>Where each piece goes</h3>${P.DESTINATIONS.map((x) => `<p><b>${x.label}</b>${esc(x.use)}</p>`).join('')}</div>
-    <div class="cta">
-      <button class="btn pri" type="button" data-act="render" ${busy ? 'disabled' : ''}>${icon('film')}<span>Render to handoff folder</span></button>
-      <button class="btn ghostbtn" type="button" data-act="open" ${native && (m.renders?.outDir || s.outputRoot) ? '' : 'disabled'}>${icon('folder')}<span>Open folder</span></button>
-    </div>`;
+    <div class="dest"><h3>Where each piece goes</h3>${P.DESTINATIONS.map((x) => `<p><b>${x.label}</b>${esc(x.use)}</p>`).join('')}</div></details>`;
   const box = $('#right', root);
-  if (box.dataset.html !== html && !box.contains(document.activeElement?.id === 'folderIn' ? document.activeElement : null)) { box.dataset.html = html; box.innerHTML = html; }
+  if (box.dataset.html !== html && !box.contains(document.activeElement?.id === 'folderIn' ? document.activeElement : null)) {
+    const open = box.querySelector('.ra-more')?.open;
+    box.dataset.html = html; box.innerHTML = html;
+    if (open) box.querySelector('.ra-more').open = true;
+  }
+}
+
+// The queue tray: every render and video started from here, newest last.
+function trayHtml() {
+  if (!queue.length) return '<div class="tray" aria-label="Queue"><h3>Queue</h3><p class="fine">Nothing waiting. Renders you start line up here and run one after another.</p></div>';
+  const row = (t) => `<li class="tq ${t.status}" title="${esc(t.error || STATUS_TEXT[t.status])}"><i class="dot ${t.status === 'done' ? 'ok' : t.status === 'running' ? 'busy' : t.status === 'waiting' ? 'wait' : ''}"></i>
+    <span><b>${esc(t.model.name)}</b><small>${esc(t.label)}</small></span><em>${t.status === 'running' && job?.task === t ? `${statusLight(job).pct}%` : STATUS_TEXT[t.status]}</em>
+    ${t.status === 'waiting' ? `<button class="link" type="button" data-remove="${t.id}" title="Take this one out of the queue">Remove</button>` : ''}
+    ${t.status === 'done' && t.file ? `<button class="link" type="button" data-reveal="${t.id}" title="Show the finished file in its folder" ${native ? '' : 'hidden'}>Show</button>` : ''}</li>`;
+  return `<div class="tray" aria-label="Queue"><h3>Queue <button class="link" type="button" data-act="clear-tray" title="Clear finished renders from this list">Clear finished</button></h3><ol>${queue.map(row).join('')}</ol></div>`;
 }
 
 function renderBar() {
-  const bar = $('#rbBar', root);
-  if (!bar || !root.isConnected) return;
-  const other = job && job.model.id !== m.id;
-  const pct = job?.total ? Math.round((job.frame / job.total) * 100) : job?.done && !job.error && !job.cancelled ? 100 : 0;
+  const other = job && job.model.id !== m?.id;
+  const light = statusLight(job, waitingCount(queue));
+  setRenderLight(light, job?.model.id); // the top bar shows it on every screen
+  document.getElementById('vp')?.classList.toggle('rendering', running()); // the Compose viewport glows while rendering
+  const bar = root?.isConnected && $('#rbBar', root);
+  if (!bar) return;
+  const pct = job?.done && !job.error && !job.cancelled ? 100 : light.pct;
   $('#rbTitle', root).textContent = !job ? 'Ready to render'
     : job.done ? `${other ? `${job.model.name}: ` : ''}${job.error ? 'Render stopped' : job.cancelled ? 'Render cancelled' : 'Render finished'}`
-      : `Rendering ${other ? job.model.name : ''} ${job.renderer === 'blender' ? 'in Blender' : 'in-app'}${job.paused ? ' · paused' : ''}`.replace(/\s+/g, ' ');
-  $('#rbSub', root).textContent = !job ? (outDir() ? 'Writes into the output folder on the right' : 'Choose an output folder first')
-    : job.error || job.phaseText || '';
+      : `Rendering ${other ? job.model.name : ''} ${job.renderer === 'blender' ? 'in Blender' : 'in Flatform'}${job.paused ? ' · paused' : ''}`.replace(/\s+/g, ' ');
+  $('#rbSub', root).textContent = !job ? (outDir() ? 'Saves into the handoff folder on the right' : 'Choose a handoff folder first')
+    : job.error || (running() ? `${job.phaseText || ''} · ${light.text.split(' · ').slice(1).join(' · ')}` : job.phaseText) || '';
   bar.setAttribute('aria-valuenow', pct);
   bar.firstElementChild.style.width = `${pct}%`;
-  const act = running() ? `${job.renderer === 'three' ? `<button class="btn ghostbtn" type="button" data-act="pause">${job.paused ? 'Resume' : 'Pause'}</button>` : ''}<button class="btn ghostbtn" type="button" data-act="cancel">Cancel</button>` : '';
+  const act = running() ? `${job.renderer === 'three' ? `<button class="btn ghostbtn" type="button" data-act="pause" title="${job.paused ? 'Carry on rendering' : 'Pause for now, carry on later'}">${job.paused ? 'Resume' : 'Pause'}</button>` : ''}<button class="btn ghostbtn" type="button" data-act="cancel" title="Stop this render. The queue moves on to the next one.">Cancel</button>` : '';
   if ($('#rbAct', root).dataset.html !== act) { $('#rbAct', root).dataset.html = act; $('#rbAct', root).innerHTML = act; }
 }
 
@@ -265,7 +294,10 @@ async function onClick(e) {
     } else { $('#folderForm', root).hidden = false; $('#folderIn', root).focus(); }
   }
   if (act === 'open') native?.openPath(m.renders?.outDir || state.settings.outputRoot).catch(() => native.openPath(state.settings.outputRoot)).catch((err) => toast(err.message));
-  if (act === 'render') start();
+  if (act === 'render') enqueue();
+  if (act === 'clear-tray') { queue = queue.filter((q) => ['waiting', 'running'].includes(q.status)); renderRight(); }
+  if (t.dataset.remove) { queue = queue.filter((q) => q.id !== t.dataset.remove || q.status !== 'waiting'); renderRight(); renderBar(); }
+  if (t.dataset.reveal) reveal(queue.find((q) => q.id === t.dataset.reveal));
   if (act === 'pause' && job) { job.paused = !job.paused; renderBar(); }
   if (act === 'cancel' && job) {
     job.cancelled = true;
@@ -315,12 +347,13 @@ async function put(rel, body) {
 }
 
 function progress(text, frame, total) {
+  if (total !== job.total || !job.t0 || frame < job.frame) Object.assign(job, { t0: Date.now(), f0: frame }); // a new phase: time it afresh
   Object.assign(job, { phaseText: text, frame, total });
   renderBar();
 }
 
 async function checkpoint() {
-  while (job.paused && !job.cancelled) await sleep(150);
+  if (job.paused) { while (job.paused && !job.cancelled) await sleep(150); Object.assign(job, { t0: Date.now(), f0: job.frame }); }
   if (job.cancelled) throw new Error('Cancelled');
 }
 
@@ -330,7 +363,7 @@ function sceneFor(model, look) {
   const s = { ...defaultScene(state.settings), ...model.scene };
   if (look === 'transparent') return { ...s, preset: 'transparent' };
   if (look === 'showroom') return { ...s, preset: 'showroom', backdrop: null };
-  if (s.preset === 'transparent') return { ...s, preset: state.settings?.defaultScene && state.settings.defaultScene !== 'transparent' ? state.settings.defaultScene : 'showroom', backdrop: null };
+  if (s.preset === 'transparent') return { ...s, preset: state.settings?.defaultScene && state.settings.defaultScene !== 'transparent' ? state.settings.defaultScene : 'cyclorama', backdrop: null };
   return s;
 }
 // The photo plate a look is laid over, or null (3D scenes and the modeled showroom).
@@ -357,26 +390,57 @@ function makeSheets(look, turns) {
 }
 
 
-async function start() {
+// "Render to handoff folder": checks the picks, then lines the render up in the queue tray.
+async function enqueue() {
   const looks = LOOK_KEYS.filter((l) => opts[l]);
-  const turns = [opts.t360 && 360, opts.t180 && 180].filter(Boolean);
-  if (running()) return;
-  if (!state.settings?.outputRoot) return toast('Choose an output folder first');
-  if (!looks.length) return toast('Pick at least one look');
-  if (!turns.length && !opts.still && !opts.models) return toast('Pick something to render');
+  if (!state.settings?.outputRoot) return toast('Choose a handoff folder first');
+  if (!looks.length && (opts.still || opts.t360 || opts.t180)) return toast('Pick at least one look');
+  if (!opts.t360 && !opts.t180 && !opts.still && !opts.models) return toast('Pick something to render');
   if (!(await tennogenGate(m))) { redrawLeft(); return; } // TennoGen names and sizes, for Warframe models with a texture folder
-  const model = m;
-  job = { model, yaw: stillYaw(model), renderer: opts.renderer, frame: 0, total: 0, paused: false, cancelled: false, done: false };
-  renderLeft();
+  const snap = { ...opts, formats: new Set(opts.formats), yaw: stillYaw(m) }; // the still uses the angle on screen now
+  queue = trimQueue([...queue, { id: crypto.randomUUID(), model: m, opts: snap, label: taskLabel(snap), status: 'waiting' }]);
+  if (running()) toast(`Added to the queue. It starts when the current render is done.`, 'info');
   renderRight();
   renderBar();
+  pump();
+}
+
+// Tracks work done elsewhere (a video export) in the same tray. Returns fn's result.
+async function track(model, label, fn) {
+  const t = { id: crypto.randomUUID(), model, label, status: 'running' };
+  queue = trimQueue([...queue, t]);
+  renderRight();
+  try { const r = await fn(); Object.assign(t, { status: 'done', file: r?.output }); return r; } catch (e) { Object.assign(t, { status: 'failed', error: e.message }); throw e; } finally { renderRight(); }
+}
+
+function pump() {
+  if (running()) return;
+  const t = nextTask(queue);
+  if (t) start(t).finally(pump);
+}
+
+const join = (dir, rel) => `${dir}${sep()}${rel.replaceAll('/', sep())}`;
+function reveal(t) {
+  if (!native || !t?.file) return;
+  native.showItemInFolder(t.outDir ? join(t.outDir, t.file) : t.file).catch(() => native.openPath(t.outDir)).catch((err) => toast(err.message));
+}
+
+async function start(task) {
+  const o = task.opts;
+  const looks = LOOK_KEYS.filter((l) => o[l]);
+  const turns = [o.t360 && 360, o.t180 && 180].filter(Boolean);
+  const model = findModel(task.model.id) || task.model;
+  task.status = 'running';
+  job = { model, opts: o, task, yaw: o.yaw, renderer: o.renderer, frame: 0, total: 0, paused: false, cancelled: false, done: false };
+  if (root?.isConnected) { renderLeft(); renderRight(); }
+  renderBar();
   try {
-    const formats = opts.models && providerOf(model) === 'tripo' ? [...opts.formats] : [];
-    const started = await send(`/api/renders/${model.id}/start`, 'POST', { looks: turns.length || opts.still ? looks : [], formats });
+    const formats = o.models && providerOf(model) === 'tripo' ? [...o.formats] : [];
+    const started = await send(`/api/renders/${model.id}/start`, 'POST', { looks: turns.length || o.still ? looks : [], formats });
     const slug = started.slug;
     const frames = turns.length ? Math.max(...turns.map(P.turnFrames)) : 0;
     const manifests = {};
-    if (turns.length || opts.still) {
+    if (turns.length || o.still) {
       if (job.renderer === 'blender') await renderBlender(slug, looks, turns, frames, manifests);
       else await renderInApp(slug, looks, turns, frames, manifests);
     }
@@ -386,25 +450,31 @@ async function start() {
       await put('spin-viewer.js', await (await fetch('/lib/spin-viewer.js')).blob());
       await put('viewer.html', new Blob([P.viewerHtml({ name: model.name, manifests })]));
     }
-    const stills = opts.still ? looks.map((look) => ({ look, angle: job.yaw })) : [];
+    const stills = o.still ? looks.map((look) => ({ look, angle: job.yaw })) : [];
     const models = [`${slug}.glb`, ...formats.map((f) => `${slug}.${f.toLowerCase()} (when Tripo finishes converting)`)];
     await put('HANDOFF.md', new Blob([P.handoffText({ slug, name: model.name, looks: turns.length ? looks : [], turns, stills, models, renderer: job.renderer, version })]));
-    upsert(await api(`/api/models/${model.id}`));
+    upsert(await api(`/api/models/${model.id}`)); // the Library picks up the new poster and badges from this
     job.done = true;
+    Object.assign(task, { status: 'done', outDir: started.outDir, file: resultFile({ slug, still: o.still, t360: o.t360, t180: o.t180, looks, yaw: job.yaw }) });
     progress(`Saved to ${started.outDir}`, job.total, job.total);
     announce(`${model.name}: render finished`);
-    toast(`${model.name} rendered to ${started.outDir}`, 'info');
+    toast(`${model.name} is rendered. It's in Library and your handoff folder.`, 'info', [
+      { label: 'Open', title: 'See the finished render in Library', run: () => go(`#/model/${model.id}`) },
+      ...(native ? [{ label: 'Show in folder', title: 'Show the finished file on this computer', run: () => reveal(task) }] : []),
+    ]);
   } catch (e) {
     job.done = true;
-    if (!job.cancelled) { job.error = e.message; toast(e.message); }
+    task.status = job.cancelled ? 'cancelled' : 'failed';
+    if (!job.cancelled) { job.error = task.error = e.message; toast(e.message); }
   }
   refresh();
+  if (root?.isConnected) { renderLeft(); renderRight(); }
   renderBar();
 }
 
 async function renderInApp(slug, looks, turns, frames, manifests) {
   const { model } = job;
-  const total = looks.length * (frames + (opts.still ? 1 : 0));
+  const total = looks.length * (frames + (job.opts.still ? 1 : 0));
   let done = 0;
   for (const look of looks) {
     if (onScreen()) { previewLook = look; resetPreview(); }
@@ -455,7 +525,7 @@ async function renderInApp(slug, looks, turns, frames, manifests) {
         progress(`${P.LOOKS[look].label} · frame ${P.pad3(i + 1)} of ${P.pad3(frames)}`, ++done, total);
         if (i % 4 === 3) await sleep(0); // let the page breathe
       }
-      if (opts.still) {
+      if (job.opts.still) {
         await checkpoint();
         studio.frame = 0;
         studio.state.turn = job.yaw;
@@ -478,7 +548,7 @@ async function renderInApp(slug, looks, turns, frames, manifests) {
 
 async function renderBlender(slug, looks, turns, frames, manifests) {
   const { model } = job;
-  await send(`/api/renders/${model.id}/blender`, 'POST', { looks, frames, ...(opts.still && { still: job.yaw }) });
+  await send(`/api/renders/${model.id}/blender`, 'POST', { looks, frames, ...(job.opts.still && { still: job.yaw }) });
   for (;;) {
     await sleep(700);
     const b = await api(`/api/renders/${model.id}/blender`);
@@ -497,7 +567,7 @@ async function renderBlender(slug, looks, turns, frames, manifests) {
     if (!slug_) continue;
     try { plates[look] = await load(P.plateUrl(slug_)); } catch { toast(`Backplate ${slug_}.jpg is missing · frames keep a transparent background`); }
   }
-  if (opts.still) {
+  if (job.opts.still) {
     for (const look of looks.filter((l) => plates[l])) {
       const rel = `stills/${P.stillName(slug, look, job.yaw)}`;
       await put(rel, await toBlob(await overPlate(await load(fileSrc(rel)), plates[look]), 'image/png'));

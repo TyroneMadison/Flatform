@@ -6,6 +6,7 @@ import { PROVIDERS, ENGINES, VIEWS, normalize, presetConfig, matchPreset, PRESET
 import { estimate } from './lib/pricing.js';
 import { isModelFile, importModel } from './lib/importer.js';
 import { installHotkeys } from './lib/hotkeys.js';
+import { blenderLight, accountLight } from './lib/render-status.js';
 
 export const $ = (s, root = document) => root.querySelector(s);
 export const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -36,13 +37,20 @@ export async function api(path, opts = {}) {
 }
 export const send = (path, method, data) => api(path, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
 
-export function toast(msg, kind = 'error') {
+// actions: [{ label, title, run }] buttons after the message (the "render done" toast has Open and Show in folder).
+export function toast(msg, kind = 'error', actions = []) {
   const t = $('#toast');
   t.textContent = msg;
   t.className = kind;
+  for (const a of actions) {
+    const b = document.createElement('button');
+    Object.assign(b, { type: 'button', className: 'btn sm ghostbtn', textContent: a.label, title: a.title || a.label });
+    b.addEventListener('click', () => { t.hidden = true; a.run(); });
+    t.append(b);
+  }
   t.hidden = false;
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => { t.hidden = true; }, 6000);
+  toast.timer = setTimeout(() => { t.hidden = true; }, actions.length ? 15000 : 6000);
 }
 export const announce = (msg) => { $('#live').textContent = msg; };
 
@@ -399,9 +407,9 @@ native?.onOpenFiles?.(async (paths) => {
 });
 
 // ---- the frame: rail, title bar status, flow tabs ----
-// Plain tabs, every one clickable at any time: Generate opens this car's progress (or the queue), Compose and
-// Render this car or the last ready one.
-const FLOW = [['drop', 'Drop'], ['generate', 'Generate'], ['compose', 'Compose'], ['render', 'Render']];
+// Plain tabs, every one clickable at any time: Generate opens this car's progress (or the queue), Compose this car
+// or the last ready one. Rendering lives inside Compose (v0.6), so there is no separate Render tab.
+const FLOW = [['drop', 'Drop'], ['generate', 'Generate'], ['compose', 'Compose']];
 export function stepper(active, m) {
   const ready = m?.status === 'ready' ? m : focusModel();
   const hrefOf = (key) => (key === 'drop' ? '#/drop' : key === 'generate' ? (m ? `#/generate/${m.id}` : '#/generate')
@@ -423,7 +431,6 @@ function renderFrame() {
     ['Warframe', 'cube', '#/warframe', ['warframe']],
     ['Library', 'library', '#/library', ['library', 'model']],
     ['Scenes', 'scene', target ? `#/compose/${target.id}` : '#/library', ['compose']],
-    ['Renders', 'film', target ? `#/render/${target.id}` : '#/library', ['render']],
     ['Spin set', 'retry', target ? `#/spin/${target.id}` : '#/spin', ['spin']],
     ['Finish', 'check', target ? `#/finish/${target.id}` : '#/library', ['finish']],
     ['Share', 'external', target ? `#/share/${target.id}` : '#/share', ['share']],
@@ -440,23 +447,42 @@ function renderFrame() {
   const { name } = PROVIDERS[provider];
   const a = state.accounts[provider];
   const text = !a ? `Connecting to ${name}` : a.error ? `${name} unreachable` : a.hasKey ? `${name} connected` : `No ${name} API key`;
-  $('#accountStatus').textContent = `${text}${state.settings ? ` · v${state.settings.version}` : ''}`;
+  // The title bar: the render light (setRenderLight), then Blender and the provider, each a dot and a word.
+  for (const [id, l] of [['blenderLight', blenderLight(state.blender)], ['accountStatus', accountLight(name, a)]]) {
+    const el = $(`#${id}`);
+    el.title = l.tip;
+    el.innerHTML = `<span class="dot ${l.ok ? 'ok' : l.ok == null ? 'wait' : ''}"></span>${esc(l.text)}`;
+  }
+  $('#appVersion').textContent = state.settings ? `v${state.settings.version}` : '';
   $('#railAccount .dot').className = `dot ${!a ? 'wait' : a.hasKey && !a.error ? 'ok' : ''}`;
   $('#railAccount .acctname').textContent = provider === 'tripo' ? 'Tripo' : '3D AI';
   $('#railAccount').title = text;
   $('#railAccount').setAttribute('aria-label', `${text}. Open settings`);
 }
 
+// The title bar's render light: { light, pct, text, tip } from lib/render-status.js. Click it to go to that render.
+export function setRenderLight(l, modelId) {
+  const b = $('#renderLight');
+  if (!b) return;
+  b.dataset.light = l.light;
+  b.dataset.id = modelId || '';
+  b.title = l.tip;
+  b.setAttribute('aria-label', `${l.text}. ${l.tip}`);
+  b.innerHTML = `<span class="dot ${l.light}"></span><span class="rl-t">${esc(l.text)}</span>${l.light === 'busy' || l.light === 'paused' ? `<span class="pbar rl-bar"><i style="width:${l.pct}%"></i></span>` : ''}`;
+}
+
 // ---- routing ----
-const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings', 'warframe', 'spin', 'preview', 'finish', 'share', 'usage'];
+const SCREENS = ['drop', 'setup', 'generate', 'compose', 'library', 'model', 'settings', 'warframe', 'spin', 'preview', 'finish', 'share', 'usage'];
 export let route = { name: 'drop', id: null };
 let current = null;
 let navToken = 0;
 export const go = (hash) => (location.hash === hash ? navigate() : (location.hash = hash));
 
 async function navigate() {
-  const [, name = 'drop', id = null] = location.hash.match(/^#\/(\w+)(?:\/([\w-]+))?/) || [];
+  const [, name = 'drop', id = null, sub = null] = location.hash.match(/^#\/(\w+)(?:\/([\w-]+))?(?:\/(\w+))?/) || [];
   if (name === 'review') return go(id ? `#/compose/${id}` : '#/library'); // Review was folded into Compose in v0.5
+  if (name === 'render') return go(id ? `#/compose/${id}/render` : '#/library'); // and Render in v0.6: old links land on its render area
+  if (name === 'compose' && sub === 'render') state.renderIntent ||= 'show';
   if (!SCREENS.includes(name)) return go('#/drop');
   if (state.presenting && name !== 'preview') return history.replaceState(null, '', `#/preview/${route.id}`); // client preview stays put until it is ended
   const token = ++navToken;
@@ -590,6 +616,12 @@ window.addEventListener('keydown', (e) => {
       if (!m) return toast('Pick a model first.');
       go(`#/${action === 'preview' ? 'preview' : 'finish'}/${m.id}`);
     },
+  });
+  $('#renderLight').addEventListener('click', (e) => {
+    const id = e.currentTarget.dataset.id;
+    if (!id) return go(focusModel() ? `#/compose/${focusModel().id}/render` : '#/library');
+    if (route.name === 'compose' && route.id === id) return $('#renderArea')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    go(`#/compose/${id}/render`);
   });
   await navigate();
   refreshAccount();

@@ -12,7 +12,7 @@ export const LOOKS = {
   transparent: { width: 2048, height: 2048, label: 'Transparent' }, // RGBA with a soft contact shadow
 };
 
-// The light rig and glass set on the Render step. Saved in settings, applied on top of each scene's own lights
+// The light rig and glass set in Compose's render area. Saved in settings, applied on top of each scene's own lights
 // by the in-app renderer and by render/blender_turntable.py. key, fill and rim are multipliers (1 = the scene's own).
 export const LIGHT_RANGES = {
   key: [0, 2], azimuth: [-180, 180], elevation: [5, 85], kelvin: [2700, 9000], fill: [0, 2], rim: [0, 2],
@@ -147,7 +147,7 @@ export const DESTINATIONS = [
   { look: 'transparent', turn: 360, width: 256, label: 'Transparent 360 · 256', use: 'admin portal lists and the edit page' },
   { look: 'showroom', turn: 180, width: 512, label: 'Showroom 180', use: "swipe view on the car's detail page" },
 ];
-export const DEFAULT_LOOKS = ['showroom', 'transparent']; // what the Render step has switched on to begin with
+export const DEFAULT_LOOKS = ['studio', 'transparent']; // switched on to begin with: the Compose scene (White Cyc Studio by default) and the cut-out
 
 export function slugify(name) {
   const slug = String(name ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()

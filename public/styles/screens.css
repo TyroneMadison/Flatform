@@ -469,3 +469,36 @@
 .tr-keys kbd { font: 600 11.5px var(--mono); color: var(--text); padding: 1px 6px; border: 1px solid var(--line-4); border-radius: 5px; justify-self: start; }
 .tr-exit { position: absolute; top: 16px; right: 16px; }
 .tr-hint { position: absolute; right: 16px; bottom: 16px; max-width: 300px; padding: 8px 12px; border-radius: 10px; background: rgba(5, 4, 4, .7); border: 1px solid var(--line-4); font-size: 12.5px; color: var(--soft); }
+
+/* ---- Compose · Render (v0.6: the render area under the scene, the top-bar lights, the done toast) ---- */
+.tstat { display: flex; align-items: center; gap: 14px; -webkit-app-region: no-drag; }
+.tl-light { display: inline-flex; align-items: center; gap: 6px; font: inherit; color: var(--muted); background: none; border: 0; padding: 2px 4px; border-radius: 4px; cursor: default; text-decoration: none; }
+button.tl-light, a.tl-light { cursor: pointer; }
+button.tl-light:hover, a.tl-light:hover { color: var(--text); }
+.tl-ver { opacity: .6; }
+.rl-bar { width: 70px; margin: 0; }
+.dot.idle { background: var(--dim); }
+.dot.busy { background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.dot.paused { background: var(--warn); }
+.dot.done { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.dot.error { background: var(--bad); }
+.content:has(> .renderarea) > .compose { flex: none; height: calc(100vh - 150px); min-height: 460px; }
+.renderarea { flex: none; margin-top: 14px; padding: 16px; display: grid; gap: 12px; scroll-margin-top: 10px; }
+.ra-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.ph2 { display: flex; align-items: center; gap: 8px; margin: 0; font: 600 16px var(--display); }
+.renderarea .export { flex: none; }
+.renderarea .ex-left, .renderarea .ex-mid, .renderarea .ex-right { overflow: visible; padding: 4px; }
+.viewport.rendering { box-shadow: 0 0 0 2px var(--accent), 0 0 26px var(--accent); animation: rglow 1.6s ease-in-out infinite alternate; }
+@keyframes rglow { to { box-shadow: 0 0 0 1px var(--accent-lo), 0 0 10px var(--accent-lo); } }
+@media (prefers-reduced-motion: reduce) { .viewport.rendering, .dot.busy { animation: none; } }
+.tray { margin-top: 14px; }
+.tray h3 { display: flex; justify-content: space-between; align-items: center; }
+.tray ol { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.tq { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 8px; align-items: center; font-size: 12px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.tq b, .tq small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tq small { opacity: .7; }
+.tq em { font-style: normal; color: var(--muted); }
+.tq.running { border-color: var(--accent); }
+.ra-more { margin-top: 14px; font-size: 12px; }
+.ra-more summary { cursor: pointer; color: var(--muted); }
+#toast .btn { margin-left: 10px; }

@@ -192,7 +192,7 @@ export async function startServer({
   const defaults = {
     region: 'global', model, texture: true, pbr: true, provider: DEFAULT_PROVIDER, setups: {},
     localEngine: { weightsDir: '', python: '' }, // '' = <data folder>/local-engine/weights and "python" on PATH
-    renderer: 'three', blenderPath: '', ffmpegPath: '', outputRoot: '', defaultScene: 'showroom', alsoTransparent: true, backdrops: {},
+    renderer: 'three', blenderPath: '', ffmpegPath: '', outputRoot: '', defaultScene: 'cyclorama', alsoTransparent: true, backdrops: {},
     lighting: DEFAULT_LIGHTING, glass: DEFAULT_GLASS,
     studioPresets: {}, // the user's saved scene looks (look.js), by name; the shipped ones live in the page
     updates: { autoCheck: true, skippedVersion: null },
@@ -207,6 +207,8 @@ export async function startServer({
   if (settings.defaultScene === 'gold') settings.defaultScene = 'ring';
   // v0.5: Showroom became the default scene. 'ring' was the old built-in default, so it moves over once.
   if (!settings.scenesV5) Object.assign(settings, { scenesV5: true, ...(settings.defaultScene === 'ring' && { defaultScene: 'showroom' }) });
+  // v0.6: White Cyc Studio became the default scene; Showroom was the default before, so it moves over once.
+  if (!settings.scenesV6) Object.assign(settings, { scenesV6: true, ...(settings.defaultScene === 'showroom' && { defaultScene: 'cyclorama' }) });
   const apiBase = () => fixedApiBase || REGIONS[settings.region] || REGIONS.global;
 
   // ponytail: whole library in one JSON file rewritten on each change; move to SQLite past a few thousand models
