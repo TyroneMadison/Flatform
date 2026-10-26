@@ -7,6 +7,8 @@ import { estimate } from './lib/pricing.js';
 import { isModelFile, importModel } from './lib/importer.js';
 import { installHotkeys } from './lib/hotkeys.js';
 import { blenderLight, accountLight } from './lib/render-status.js';
+import { installPalette } from './lib/palette.js';
+import { timeAgo } from './lib/session.js';
 
 export const $ = (s, root = document) => root.querySelector(s);
 export const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -27,6 +29,7 @@ export const state = {
   lastId: null, // model last opened in a flow screen
   spend: null, // GET /api/spend: totals, daily series, per-model costs, balances and low-balance flags per provider
   workspace: 'car', // 'car' or 'warframe': stamped on models created or imported from a home screen
+  recents: [], // the last few scenes worked on, newest first: [{ id, at, frame }] (session.mjs)
 };
 
 export async function api(path, opts = {}) {
@@ -599,6 +602,49 @@ window.addEventListener('keydown', (e) => {
   if (w) { e.preventDefault(); switchWorkspace(w.id); }
 });
 
+// ---- auto-save session: recents and "Restore last session" after Flatform closed unexpectedly ----
+// The recents whose model is still in the library: [{ id, at, frame, model }].
+export const recentItems = () => state.recents.map((r) => ({ ...r, model: findModel(r.id) })).filter((r) => r.model?.status === 'ready');
+// Reopens a recent exactly as saved: its scene (kept on the model) and the turntable frame it was on.
+export function openRecent(r) {
+  state.frames[r.id] = r.frame ?? 0;
+  go(`#/compose/${r.id}`);
+}
+async function loadSession() {
+  let s;
+  try { s = await api('/api/session'); } catch { return; }
+  state.recents = s.recents || [];
+  const last = s.crashed && s.last;
+  const m = last && findModel(last.modelId);
+  if (!m) return;
+  $('#restoreNote').textContent = `Your last scene, ${m.name}, was saved ${timeAgo(last.at)}. Open it as it was?`;
+  $('#restoreBar').hidden = false;
+  announce('Flatform closed unexpectedly. You can restore your last session.');
+  const done = () => { $('#restoreBar').hidden = true; send('/api/session/dismiss', 'POST', {}).catch(() => {}); };
+  $('#restoreNo').onclick = done;
+  $('#restoreYes').onclick = async () => {
+    try { upsert(await send(`/api/models/${m.id}`, 'PATCH', { scene: last.scene })); } catch (e) { return toast(e.message); }
+    done();
+    openRecent({ id: m.id, frame: last.frame });
+  };
+}
+// Ctrl+K: recents first, then the main screens.
+function paletteCommands() {
+  const m = focusModel();
+  const recents = recentItems().map((r) => ({ label: r.model.name, hint: `Edited ${timeAgo(r.at)}`, title: `Open ${r.model.name} in Compose, as you left it`, thumb: thumbOf(r.model), run: () => openRecent(r) }));
+  const screens = [
+    ['Start something new', 'Drop photos or a 3D model', '#/drop'],
+    ['Library', 'Everything you have made', '#/library'],
+    m && ['Compose', `Set up the scene for ${m.name}`, `#/compose/${m.id}`],
+    m && ['Render', `Make pictures and spins of ${m.name}`, `#/compose/${m.id}/render`],
+    ['Usage', 'What you have spent', '#/usage'],
+    ['Settings', 'Accounts, folders and shortcuts', '#/settings'],
+  ].filter(Boolean).map(([label, hint, href]) => ({ label, hint, run: () => go(href) }));
+  const reset = route.name === 'compose' && $('[data-act="reset-scene"]')
+    ? [{ label: 'Reset scene', hint: 'Back to how a new scene starts. You can undo it.', run: () => $('[data-act="reset-scene"]')?.click() }] : [];
+  return [...recents, ...reset, ...screens];
+}
+
 // Not top-level await: the screens import this module, so it has to finish loading before they can.
 (async () => {
   const [models, settings, blender] = await Promise.all([api('/api/models'), api('/api/settings'), api('/api/blender')]
@@ -608,6 +654,8 @@ window.addEventListener('keydown', (e) => {
   state.blender = blender;
   applyTheme(settings?.theme);
   await loadWorkspaces();
+  await loadSession();
+  installPalette({ commands: paletteCommands });
   installHotkeys({
     screen: () => route.name,
     run: (action) => {

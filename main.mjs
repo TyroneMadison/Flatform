@@ -143,7 +143,7 @@ app.whenReady().then(async () => {
     canEncrypt: () => safeStorage.isEncryptionAvailable(),
     env: process.env,
   });
-  const { port } = await startApp({
+  const flat = await startApp({
     dataDir: path.join(app.getPath('userData'), 'library'),
     keepAwake: (() => { let id = null; return (on) => { if (on && id == null) id = powerSaveBlocker.start('prevent-app-suspension'); if (!on && id != null) { powerSaveBlocker.stop(id); id = null; } }; })(),
     defaultOutputRoot: suggestedOutputRoot(), // E:\Claude Stuff\car-360-pipeline\handoff on Tyrone's PC
@@ -159,6 +159,8 @@ app.whenReady().then(async () => {
       hdriDir: path.join(process.resourcesPath, 'hdri'), // Blender reads the built-in HDRIs from here
     }),
   });
+  const { port } = flat;
+  app.on('will-quit', () => flat.markClean()); // a clean quit: no "Restore last session" next time
   console.log(`Flatform server on 127.0.0.1:${port}`);
   createWindow(port);
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(port); });

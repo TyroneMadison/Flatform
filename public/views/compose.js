@@ -3,7 +3,7 @@
 // The scene is saved per model (scene.json next to the model) so a render reproduces it exactly.
 import { createHistory, isUndo, isRedo } from '../lib/history.js';
 import { dimensions, gridSpec, REFERENCES } from '../lib/grid.js';
-import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy, setupFor, engineLabel, activeWorkspace } from '../app.js';
+import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy, setupFor, engineLabel, activeWorkspace, confirmDialog } from '../app.js';
 import { icon } from '../lib/icons.js';
 import { FRAMES, HALF, STEP, pad3, LOOKS, PLATES } from '../lib/pipeline.js';
 import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf } from '../lib/studio.js';
@@ -13,7 +13,9 @@ import { initTestRig, renderTestRigGroup, onTestRigClick, stopTestRig } from './
 import { initTools, renderToolsGroup, onToolsClick, onToolsChange, onCanvasClick, onToolsKey } from './compose-tools.js';
 import { initPath, renderPathGroup, onPathClick, onPathChange } from './compose-path.js';
 import { initLighting, renderLightingGroup, onLightingClick } from './compose-lighting.js';
-import { mountRender, updateRender } from './compose-render.js';
+import { mountRender, updateRender, resetRenderOptions } from './compose-render.js';
+import { initSession, noteEdit, stopSession, markSaved } from './compose-session.js';
+import { resetScene } from '../lib/session.js';
 import { initPaint, renderPaintGroups, afterRender, onPaintClick, onPaintInput, onPaintChange, selectPiece, onPaintDragStart, onTextureDrop, onDecalCanvasClick } from './compose-paint.js';
 
 let root;
@@ -37,6 +39,8 @@ const hasFloor = () => scene.preset === 'ring' || scene.preset === 'showroom'; /
 const softness = (v) => (v < 0.3 ? 'Hard' : v < 0.7 ? 'Soft' : 'Very soft');
 const carLike = () => studio?.carLike ?? true; // a tall model (humanoid) is never size-locked
 const sizeLocked = () => scene.sameSize && carLike();
+// How a new scene starts here. Warframe workspaces start in free roam.
+const baseScene = () => ({ ...defaultScene(state.settings), ...(activeWorkspace()?.camera === 'free' && { view: 'free' }) });
 
 export async function mount(el, { id }) {
   root = el;
@@ -46,7 +50,8 @@ export async function mount(el, { id }) {
     el.innerHTML = `${stepper('compose', m)}<p class="muted">${m ? 'This model is not ready yet.' : 'Pick a model from the library first.'} <a class="link" href="${m ? `#/generate/${m.id}` : '#/library'}">${m ? 'Show progress' : 'Open library'}</a></p>`;
     return;
   }
-  scene = { ...defaultScene(state.settings), ...(activeWorkspace()?.camera === 'free' && { view: 'free' }), ...m.scene }; // Warframe workspaces start in free roam
+  scene = { ...baseScene(), ...m.scene };
+  initSession({ root: el, model: () => m, scene: () => scene, frame: () => frame });
   initPaint({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initHandPose({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
@@ -57,6 +62,8 @@ export async function mount(el, { id }) {
   el.innerHTML = `
   <div class="comp-top">${stepper('compose', m)}
     <div class="ctop-act">
+      <span class="savednote" id="savedNote" role="status" title="Flatform saves your scene by itself as you work and keeps a few backups."></span>
+      <button class="btn ghostbtn" type="button" data-act="reset-scene" title="Put the background, lights, colours, materials, camera, pose and render options back to how a new scene starts. Your library and saved renders are not touched, and you can undo it.">${icon('retry')}<span>Reset scene</span></button>
       <button class="btn pri" type="button" data-render="show" title="Jump down to the render options under the scene">${icon('film')}<span>Render</span></button>
     </div>
   </div>
@@ -163,6 +170,7 @@ function onOrbit(orbit, settled) {
 }
 
 export function unmount() {
+  stopSession();
   hist.clear();
   gridOn = false;
   stopMotion();
@@ -219,14 +227,17 @@ function renderHud() {
 
 function save() {
   saveTimer = null;
-  send(`/api/models/${m.id}`, 'PATCH', { scene }).then(upsert).catch((e) => toast(e.message));
+  send(`/api/models/${m.id}`, 'PATCH', { scene }).then((x) => { upsert(x); markSaved(); }).catch((e) => toast(e.message));
 }
 
 async function change(next, { inspector = true, fromHistory = false } = {}) {
+  let step = fromHistory; // undo, redo and reset count as big edits for auto-save
   if (!fromHistory && Object.keys(next).length) {
-    if (Date.now() - lastPush > 600) hist.push(scene, Object.keys(next).join(', ')); // one step per burst (a slider drag)
+    step = Date.now() - lastPush > 600;
+    if (step) hist.push(scene, Object.keys(next).join(', ')); // one step per burst (a slider drag)
     lastPush = Date.now();
   }
+  if (Object.keys(next).length) noteEdit(step);
   Object.assign(scene, next);
   if (studio) {
     await studio.setState(scene);
@@ -247,6 +258,29 @@ async function stepHistory(redo) {
   for (const k of Object.keys(scene)) if (!(k in prev)) delete scene[k];
   lastPush = 0;
   await change(prev, { fromHistory: true });
+  renderGrid();
+}
+// Reset scene: everything about the look back to how a new scene starts, after a confirm. The model's own fixes
+// (auto-orient, center, flip) stay, and nothing in the library or the render folder is touched. Ctrl+Z brings the
+// scene back; the Undo on the note also brings back the render options and light rig.
+async function resetAll() {
+  const ok = await confirmDialog({ title: 'Reset this scene?', text: 'The background, lights, colours, materials, camera, pose and render options go back to how a new scene starts. Your library and saved renders stay as they are. You can undo this.', ok: 'Reset scene' });
+  if (!ok || !root?.isConnected) return;
+  const before = structuredClone(scene);
+  const undoRender = resetRenderOptions();
+  hist.push(scene, 'Reset scene');
+  await replaceScene(resetScene(scene, baseScene()));
+  toast('Scene reset to how a new scene starts.', 'info', [{ label: 'Undo', title: 'Bring back the scene and render options you had', run: async () => {
+    undoRender();
+    hist.push(scene, 'Undo reset');
+    await replaceScene(before);
+  } }]);
+}
+async function replaceScene(next) {
+  for (const k of Object.keys(scene)) if (!(k in next)) delete scene[k];
+  lastPush = 0;
+  await change(next, { fromHistory: true });
+  renderModel();
   renderGrid();
 }
 const gridUnit = () => state.settings?.gridUnit || 'm';
@@ -457,6 +491,7 @@ function bind() {
       renderModel();
       refresh();
     }
+    if (t.dataset.act === 'reset-scene') return resetAll();
     if (t.dataset.act === 'regen') await busy(t, () => setupFor(m).catch((err) => toast(err.message)));
     if (t.dataset.act === 'better') $('#betterPhoto', el).click();
     if (t.dataset.preset) {

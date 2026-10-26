@@ -37,8 +37,7 @@ export function mountRender(el, model, h = {}) {
   hooks = h;
   const intent = state.renderIntent;
   state.renderIntent = null;
-  opts ||= { still: false, t360: true, t180: true, models: false, formats: new Set(), ...Object.fromEntries(LOOK_KEYS.map((l) => [l, P.DEFAULT_LOOKS.includes(l)])) };
-  if (state.settings?.alsoTransparent === false && !running()) opts.transparent = false;
+  opts ||= freshOpts();
   if (intent === 'still') Object.assign(opts, { still: true, t360: false, t180: false });
   if (intent === 'turntable') Object.assign(opts, { t360: true, t180: true });
   if (!running()) opts.renderer = state.settings?.renderer === 'blender' && blenderReady() ? 'blender' : 'three';
@@ -76,6 +75,24 @@ export function mountRender(el, model, h = {}) {
   resetPreview();
   mountExport(el, m, { track });
   if (intent) requestAnimationFrame(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+}
+
+function freshOpts() {
+  const o = { still: false, t360: true, t180: true, models: false, formats: new Set(), ...Object.fromEntries(LOOK_KEYS.map((l) => [l, P.DEFAULT_LOOKS.includes(l)])) };
+  if (state.settings?.alsoTransparent === false && !running()) o.transparent = false;
+  return o;
+}
+// Reset scene: render options, light rig and glass back to how they start. Returns a function that undoes it.
+export function resetRenderOptions() {
+  const before = { opts, lighting: state.settings?.lighting, glass: state.settings?.glass };
+  const apply = (o, lighting, glass) => {
+    opts = { renderer: state.settings?.renderer === 'blender' && blenderReady() ? 'blender' : 'three', ...o };
+    saveRig('lighting', lighting);
+    saveRig('glass', glass);
+    if (root?.isConnected) { renderLeft(); renderRight(); }
+  };
+  apply(freshOpts(), { ...P.DEFAULT_LIGHTING }, { ...P.DEFAULT_GLASS });
+  return () => apply(before.opts || freshOpts(), before.lighting, before.glass);
 }
 
 export function updateRender() {

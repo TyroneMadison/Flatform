@@ -1,8 +1,9 @@
 // Drop: the big drop zone, tips with the next setup and the real balance, and recent models.
 // Photos go on to the setup screen, where the provider and quality are chosen before anything is paid for.
 // 3D models (GLB, GLTF, FBX, OBJ, USDZ) skip Generate and open in Compose (app.js addFiles).
-import { $, esc, state, stepper, addFiles, openPicker, pasteFromClipboard, creditsText, savedSetup, setupLabel, activeWorkspace, costOf, thumbOf, statusText, statusClass } from '../app.js';
+import { $, esc, state, stepper, addFiles, openPicker, pasteFromClipboard, creditsText, savedSetup, setupLabel, activeWorkspace, costOf, thumbOf, statusText, statusClass, recentItems, openRecent } from '../app.js';
 import { icon } from '../lib/icons.js';
+import { timeAgo } from '../lib/session.js';
 
 let root;
 
@@ -28,6 +29,7 @@ export function mount(el) {
       <div class="tip glass"><b>Keep the whole car in frame</b><span>Cropped bumpers and mirrors come back missing.</span></div>
       <div class="tip glass"><b id="modelTip"></b><span id="creditTip"></span></div>
     </div>
+    <div id="resume"></div>
     <div class="rowhead"><h2 class="label">Recent models</h2><a class="link" href="#/library">Open library</a></div>
     <div class="recent" id="recent"></div>
   </section>`;
@@ -47,6 +49,10 @@ export function mount(el) {
   el.querySelector('[data-act=add]')?.addEventListener('click', () => openPicker());
   el.querySelector('[data-act=pick]').addEventListener('click', () => openPicker());
   el.querySelector('[data-act=paste]').addEventListener('click', pasteFromClipboard);
+  $('#resume', el).addEventListener('click', (e) => {
+    const r = recentItems().find((x) => x.id === e.target.closest('[data-recent]')?.dataset.recent);
+    if (r) openRecent(r);
+  });
   update();
 }
 
@@ -72,6 +78,14 @@ export function update() {
     const img = thumbOf(m) ? `<img class="thumb" src="${thumbOf(m)}" alt="${esc(m.name)}">` : '';
     return `<a class="mini glass" href="${href}"><div class="stage s-ring">${img}</div><div class="mt"><b>${esc(m.name)}</b><span class="st ${statusClass(m)}">${esc(statusText(m))}</span></div></a>`;
   }).join('') || '<p class="muted empty">Your models will show up here.</p>';
+  // Pick up where you left off: the last scenes you edited, reopened exactly as they were.
+  const items = recentItems();
+  const resume = items.length ? `<div class="rowhead"><h2 class="label">Pick up where you left off</h2><span class="sub">Ctrl+K finds these anywhere</span></div>
+    <div class="recent">${items.map((x) => `<button class="mini glass" type="button" data-recent="${esc(x.id)}" title="Open ${esc(x.model.name)} in Compose, exactly as you left it">
+      <div class="stage s-ring">${thumbOf(x.model) ? `<img class="thumb" src="${thumbOf(x.model)}" alt="">` : ''}</div>
+      <div class="mt"><b>${esc(x.model.name)}</b><span class="st">Edited ${esc(timeAgo(x.at))}</span></div></button>`).join('')}</div>` : '';
+  const rs = $('#resume', root);
+  if (rs.dataset.html !== resume) { rs.dataset.html = resume; rs.innerHTML = resume; }
   const r = $('#recent', root);
   if (r.dataset.html !== recent) { r.dataset.html = recent; r.innerHTML = recent; }
 }

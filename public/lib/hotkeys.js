@@ -3,7 +3,7 @@
 // computer (localStorage), so nothing here touches the shared settings file.
 export const ACTIONS = { preview: { label: 'Client preview (clean full screen)', key: 'Ctrl+Shift+P' }, finish: { label: 'Check before export', key: 'Ctrl+Shift+H' } };
 const FIXED = {
-  all: [['Hold ?', 'Show this list'], ['Ctrl+1 to Ctrl+9', 'Switch workspace']],
+  all: [['Hold ?', 'Show this list'], ['Ctrl+K', 'Find anything, reopen recent work'], ['Ctrl+1 to Ctrl+9', 'Switch workspace']],
   drop: [['Ctrl+V', 'Paste a photo'], ['Enter', 'Choose photos']],
   setup: [['Ctrl+V', 'Paste a photo']],
   generate: [['Ctrl+V', 'Add a photo to the queue']],

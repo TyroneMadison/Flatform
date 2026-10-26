@@ -37,6 +37,11 @@
     <button class="btn sm pri" type="button" id="lowTopUp">Top up</button>
     <button class="btn sm ghostbtn" type="button" id="lowLater">Later</button>
   </section>
+  <section class="update" id="restoreBar" aria-labelledby="restoreTitle" hidden>
+    <p class="ut"><b id="restoreTitle">Flatform closed unexpectedly</b><span id="restoreNote"></span></p>
+    <button class="btn sm pri" type="button" id="restoreYes" title="Open the scene exactly as it was when Flatform last saved it">Restore last session</button>
+    <button class="btn sm ghostbtn" type="button" id="restoreNo" title="Start fresh. Your library and renders are safe either way.">No thanks</button>
+  </section>
   </div>
   <div class="body">
     <nav class="rail" aria-label="Main">
@@ -66,6 +71,12 @@
     <p class="muted" id="confirmText"></p>
     <div class="row"><button class="btn ghostbtn" value="cancel">Cancel</button><button class="btn dangerbtn" value="ok" id="confirmOk"></button></div>
   </form>
+</dialog>
+
+<dialog id="palette" class="palette" aria-label="Find anything">
+  <input id="paletteInput" class="inp" type="search" placeholder="Type to find a screen or something you worked on" title="Type a few letters, then press Enter. Esc closes." autocomplete="off" spellcheck="false" role="combobox" aria-controls="paletteList" aria-expanded="true">
+  <ul id="paletteList" role="listbox" aria-label="Results"></ul>
+  <p class="fine">Up and down to choose · Enter to open · Esc to close</p>
 </dialog>
 
 <div id="toast" role="alert" hidden></div>

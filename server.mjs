@@ -44,6 +44,7 @@ import { createPreviewLock } from './preview.mjs';
 import { disk, clearCache, renderTimes, enhanceSpend } from './usage.mjs';
 import { createSpinService } from './spin.mjs';
 import { identifyCar } from './public/lib/identify.js';
+import { createSession } from './session.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -173,6 +174,8 @@ export async function startServer({
   const BACKDROPS = path.join(dataDir, 'backdrops');
   const DECALS = path.join(dataDir, 'decals'); // decal images, named by their SHA-1 so the same file is stored once
   const LIB = path.join(dataDir, 'library.json');
+  const session = createSession({ dir: path.join(dataDir, 'session') }); // auto-save snapshots, crash marker, recents
+  session.start();
   const previewLock = createPreviewLock({ file: path.join(dataDir, 'preview.json') });
   const shares = createShares({ file: path.join(dataDir, 'shares.json'), baseUrl: () => settings?.share?.baseUrl || null });
   const SETTINGS = path.join(dataDir, 'settings.json');
@@ -1329,6 +1332,14 @@ export async function startServer({
     }
     if (area === 'local' && !id && method === 'GET') return send(res, 200, await localView());
     if (area === 'local' && id === 'download' && method === 'POST') { startDownload(); return send(res, 202, await localView()); }
+    // Auto-save: Compose's snapshots, "Restore last session" after a crash, and the recents on the home screen.
+    if (area === 'session') {
+      if (!id && method === 'GET') return send(res, 200, { crashed: session.crashed, last: session.crashed ? await session.latest() : null, recents: await session.recents() });
+      if (id === 'snapshots' && !sub && method === 'POST') {
+        try { return send(res, 201, await session.snapshot(await readJson(req, 2 * 1024 * 1024))); } catch (e) { throw e.status ? e : new HttpError(400, e.message); }
+      }
+      if (id === 'dismiss' && method === 'POST') { session.dismiss(); return send(res, 200, { crashed: false }); }
+    }
     // Your scene templates ("Save current scene as template"), per workspace, in templates.json.
     if (area === 'templates') {
       const w = /^[a-z0-9][a-z0-9-]{0,39}$/.test(url.searchParams.get('workspace') || '') ? url.searchParams.get('workspace') : 'car';
@@ -1655,9 +1666,10 @@ export async function startServer({
     ai.limiter.stop();
     updater.stop();
     localInst?.stop?.(); // the TRELLIS service closes with the app
+    session.markClean();
     return new Promise((ok) => server.close(ok));
   };
-  return { server, port: server.address().port, close };
+  return { server, port: server.address().port, close, markClean: session.markClean };
 }
 
 // The app with workspaces: dataDir is the base folder; each workspace runs the server on its own folder.
@@ -1676,7 +1688,7 @@ export async function startApp(opts) {
     await boot(port);
   }
   await boot(opts.port || 0);
-  return { get port() { return cur.port; }, get server() { return cur.server; }, close: () => cur.close(), workspaces };
+  return { get port() { return cur.port; }, get server() { return cur.server; }, close: () => cur.close(), markClean: () => cur.markClean(), workspaces };
 }
 
 // `node server.mjs`: browser version, keys from TRIPO_API_KEY and THREE_D_AI_STUDIO_KEY.
