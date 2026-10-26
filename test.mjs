@@ -586,8 +586,34 @@ test('Blender: detection and a fake blender run through spawn', async () => {
   assert.deepEqual([opt('look'), opt('frames'), opt('step'), opt('res'), opt('slug')], ['studio', '37', '5', '2048x1536', 'audi-r8']);
   assert.match(opt('glb'), /model\.glb$/);
   assert.equal(opt('out'), path.join(slugDir, 'frames', 'studio'));
+  const look = JSON.parse(opt('scenelook'));
+  assert.deepEqual([look.engine, look.tone, look.hdri, look.lights], ['CYCLES', 'Khronos PBR Neutral', null, null]); // the default look: Cycles, neutral, the script's own rig
+  assert.match(opt('materials'), /blender-materials\.json$/);
+  assert.deepEqual(JSON.parse(await readFile(opt('materials'), 'utf8')), { materials: {}, groups: {} });
 
   assert.equal((await app.json('/api/settings', 'POST', { blenderPath: '' })).status, 200);
+});
+
+test('studio presets save in settings; inference falls back without a key; path tracer modules are served', async () => {
+  const look = { background: { kind: 'solid', color: '#101010' }, ssr: { on: true, strength: 0.7 }, pathTraced: true, quality: 'pathTraced' };
+  const saved = await app.json('/api/settings', 'POST', { studioPresets: { 'My Dark': look } });
+  assert.equal(saved.status, 200);
+  assert.deepEqual([saved.body.studioPresets['My Dark'].ssr, saved.body.studioPresets['My Dark'].pathTraced, saved.body.studioPresets['My Dark'].tone], [{ on: true, strength: 0.7 }, true, 'neutral']);
+  assert.equal((await app.json('/api/settings', 'POST', { studioPresets: { '': look } })).status, 400);
+  assert.equal((await app.json('/api/settings', 'POST', { studioPresets: [look] })).status, 400);
+  assert.equal((await app.j('/api/settings')).body.visionKey, 'none');
+  // No Anthropic key: the built-in rules label the clusters and nothing leaves the machine.
+  const before = seen.length;
+  const inferred = await app.json('/api/infer', 'POST', { stats: [{ r: 180, g: 30, b: 30, x: 0.5, y: 0.5, share: 0.8, n: 80 }, { r: 10, g: 10, b: 10, x: 0.4, y: 0.9, share: 0.2, n: 20 }], image: 'data:image/png;base64,AA==' });
+  assert.equal(inferred.status, 200);
+  assert.deepEqual([inferred.body.source, inferred.body.labels.map((l) => l.label)], ['heuristic', ['paint', 'rubber']]);
+  assert.equal(seen.length, before);
+  assert.equal((await app.json('/api/infer', 'POST', { stats: 'x' })).status, 400);
+  assert.equal((await app.json('/api/keys/anthropic', 'PUT', { key: 'abc' })).status, 400);
+  for (const p of ['/vendor/three-gpu-pathtracer/src/index.js', '/vendor/three-mesh-bvh/src/index.js', '/vendor/three/examples/jsm/postprocessing/GTAOPass.js', '/img/hdri/studio_small_03.hdr']) {
+    assert.equal((await fetch(app.base + p)).status, 200, p);
+  }
+  assert.equal((await fetch(`${app.base}/vendor/three-mesh-bvh/src/..%2Fpackage.json`)).status, 404);
 });
 
 test('HEIC photos are converted to JPEG before upload', async () => {

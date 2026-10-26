@@ -1,6 +1,7 @@
 // Flatform front end: shared state, API calls, routing, the window frame and the upload queue.
 // Each screen is a module in views/ with mount(el, params), and optionally update() and unmount().
 import { icon } from './lib/icons.js';
+import { applyTheme } from './lib/theme.js';
 import { PROVIDERS, ENGINES, VIEWS, normalize, presetConfig, matchPreset, PRESETS } from './lib/engines.js';
 import { estimate } from './lib/pricing.js';
 import { isModelFile, importModel } from './lib/importer.js';
@@ -516,6 +517,52 @@ window.addEventListener('paste', (e) => {
 });
 window.addEventListener('hashchange', navigate);
 
+// ---- Workspaces: a pill under the logo (Warframe, Car, + New workspace), Ctrl+1 / Ctrl+2 to switch ----
+export async function loadWorkspaces() {
+  try { state.workspaces = await api('/api/workspaces'); } catch { state.workspaces = null; }
+  drawWorkspaces();
+}
+export const activeWorkspace = () => state.workspaces?.list.find((w) => w.id === state.workspaces.active) || null;
+function drawWorkspaces() {
+  const el = $('#wsPill');
+  const ws = state.workspaces;
+  if (!el) return;
+  el.hidden = !ws;
+  if (!ws) return;
+  const cur = activeWorkspace();
+  el.innerHTML = `<button class="wsbtn" type="button" id="wsBtn" aria-haspopup="menu" aria-expanded="false" title="Workspace (Ctrl+1, Ctrl+2)"><span class="wsico ${esc(cur?.kind)}" aria-hidden="true"></span><span>${esc(cur?.name || 'Workspace')}</span></button>
+    <div class="wsmenu glass" id="wsMenu" role="menu" hidden>${ws.list.map((w, i) => `<button type="button" role="menuitemradio" aria-checked="${w.id === ws.active}" data-ws="${esc(w.id)}"><span class="wsico ${esc(w.kind)}" aria-hidden="true"></span>${esc(w.name)}${i < 9 ? `<small>Ctrl+${i + 1}</small>` : ''}</button>`).join('')}
+    <button type="button" role="menuitem" data-ws-new>+ New workspace</button></div>`;
+}
+export async function switchWorkspace(id) {
+  if (!state.workspaces || id === state.workspaces.active) return;
+  try {
+    const r = await send('/api/workspaces/active', 'POST', { id });
+    announce('Switching workspace');
+    if (r.restarting) { for (let i = 0; i < 50; i++) { await new Promise((ok) => setTimeout(ok, 200)); try { await api('/api/workspaces'); break; } catch { /* restarting */ } } }
+    location.hash = '#/library';
+    location.reload();
+  } catch (e) { toast(e.message); }
+}
+document.addEventListener('click', async (e) => {
+  if (e.target.closest('#wsBtn')) { const m = $('#wsMenu'); m.hidden = !m.hidden; $('#wsBtn').setAttribute('aria-expanded', String(!m.hidden)); return; }
+  const pick = e.target.closest('[data-ws]');
+  if (pick) return switchWorkspace(pick.dataset.ws);
+  if (e.target.closest('[data-ws-new]')) {
+    const name = prompt('Name the new workspace');
+    if (!name) return;
+    const kind = confirm('Is it for Warframe models? OK for Warframe, Cancel for cars.') ? 'warframe' : 'car';
+    try { state.workspaces = await send('/api/workspaces', 'POST', { name, kind }); drawWorkspaces(); } catch (err) { toast(err.message); }
+    return;
+  }
+  if (!e.target.closest('#wsPill') && $('#wsMenu')) $('#wsMenu').hidden = true;
+});
+window.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || !/^[1-9]$/.test(e.key) || !state.workspaces) return;
+  const w = state.workspaces.list[Number(e.key) - 1];
+  if (w) { e.preventDefault(); switchWorkspace(w.id); }
+});
+
 // Not top-level await: the screens import this module, so it has to finish loading before they can.
 (async () => {
   const [models, settings, blender] = await Promise.all([api('/api/models'), api('/api/settings'), api('/api/blender')]
@@ -523,6 +570,8 @@ window.addEventListener('hashchange', navigate);
   state.models = models || [];
   state.settings = settings;
   state.blender = blender;
+  applyTheme(settings?.theme);
+  await loadWorkspaces();
   await navigate();
   refreshAccount();
   setInterval(() => refreshAccount(), 60000);

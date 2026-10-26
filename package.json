@@ -14,12 +14,14 @@
   "scripts": {
     "app": "electron .",
     "web": "node --env-file=.env server.mjs",
-    "test": "node --test test.mjs test/pipeline.test.mjs test/pricing.test.mjs test/providers.test.mjs test/threedai.test.mjs test/updates.test.mjs test/ledger.test.mjs test/camera.test.mjs test/tennogen.test.mjs test/import.test.mjs",
+    "test": "node --test test.mjs test/pipeline.test.mjs test/pricing.test.mjs test/providers.test.mjs test/threedai.test.mjs test/updates.test.mjs test/ledger.test.mjs test/camera.test.mjs test/tenno.test.mjs test/look.test.mjs test/infer.test.mjs test/motion.test.mjs test/turntable.test.mjs test/batch.test.mjs test/phase4.test.mjs test/tennogen.test.mjs test/import.test.mjs",
     "dist": "electron-builder --publish never"
   },
   "dependencies": {
     "heic-convert": "2.1.0",
-    "three": "0.186.1"
+    "three": "0.186.1",
+    "three-gpu-pathtracer": "0.0.27",
+    "three-mesh-bvh": "0.9.16"
   },
   "devDependencies": {
     "electron": "44.5.1",
@@ -39,6 +41,10 @@
       "ledger.mjs",
       "updates.mjs",
       "png.mjs",
+      "inference.mjs",
+      "batch.mjs",
+      "video.mjs",
+      "workspaces.mjs",
       "preload.cjs",
       "public/**/*",
       "package.json",
@@ -53,6 +59,10 @@
       {
         "from": "node_modules/three/examples/jsm",
         "to": "three/examples/jsm"
+      },
+      {
+        "from": "public/img/hdri",
+        "to": "hdri"
       }
     ],
     "directories": {

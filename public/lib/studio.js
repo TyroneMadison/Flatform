@@ -21,6 +21,10 @@ import { GroundedSkybox } from 'three/addons/objects/GroundedSkybox.js';
 import { HorizontalBlurShader } from 'three/addons/shaders/HorizontalBlurShader.js';
 import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { mergeLook, effectsFor, hdriUrl } from './look.js';
+import { Post, PathTraced, TONE } from './post.js';
+import { applyPaint, regroup, pickPiece, listPieces } from './paint.js';
+import { applyMotion } from './rig.js';
 import { STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, PLATES, plateUrl, plateThumb, plateCamera, CAR_LENGTH, hfovOf, isCarShape, modelScale, fitDistance, frameOrbit } from './pipeline.js';
 
 RectAreaLightUniformsLib.init();
@@ -64,6 +68,9 @@ export function defaultScene(settings = {}) {
     // Camera view mode. 'car': the preset above (matched to the photo, eye level), unchanged since v0.4. 'free': an
     // orbit camera, kept in orbit = { position, target } so renders use it too. fit: 'all' after "Frame all" in car view.
     view: 'car', orbit: null, fit: 'footprint',
+    // v0.5: the scene look (look.js: background, HDRI, lights, AO, tone mapping, effects) and the paint project
+    // (tenno.js: pieces, colours, materials). null = defaults = exactly the v0.4 look.
+    look: null, paint: null,
   };
 }
 export const VIEWS = { car: 'Car view', free: 'Free roam' };
@@ -370,6 +377,26 @@ class ContactShadow {
   }
 }
 
+// A vertical two-colour gradient as a background texture (cached by its colours).
+const gradients = {};
+function gradientTexture(top, bottom) {
+  const key = `${top}:${bottom}`;
+  if (!gradients[key]) {
+    const c = document.createElement('canvas');
+    Object.assign(c, { width: 4, height: 256 });
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, top);
+    grad.addColorStop(1, bottom);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 4, 256);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    gradients[key] = tex;
+  }
+  return gradients[key];
+}
+
 function disposeTree(obj) {
   obj.traverse((o) => {
     o.geometry?.dispose();
@@ -397,6 +424,7 @@ export class Studio {
     this.lights.key.position.set(-6, 8, 7);
     this.lights.fill.position.set(8, 3, 6);
     this.lights.rim.position.set(1, 6, -10);
+    this.baseRig = Object.fromEntries(Object.entries(this.lights).map(([k, l]) => [k, { color: l.color.getHex(), position: l.position.toArray() }]));
     const key = this.lights.key;
     key.castShadow = true;
     key.shadow.mapSize.set(4096, 4096);
@@ -410,6 +438,9 @@ export class Studio {
     this.envs = {};
     this.builds = 0; // a newer preset wins over one that is still loading its HDRI
     this.state = defaultScene();
+    this.pieceMats = new Map(); // piece key → its MeshPhysicalMaterial (paint.js)
+    this.hdris = {}; // loaded HDRIs by file
+    this.ptDirty = true; // the path tracer must rebuild its scene
     this.frame = 0;
     this.width = canvas.width;
     this.height = canvas.height;
@@ -436,10 +467,28 @@ export class Studio {
       o.userData.material = o.material;
     });
     this.pivot.add(this.model);
+    this.pieceMats.clear();
     this.applyModel();
-    this.applyGlass();
+    this.applyPaint();
     this.applyCamera();
+    this.ptDirty = true;
     return this.model;
+  }
+
+  // Pieces, colours and materials (state.paint, see paint.js). Starts from the glass pass so a reverted piece
+  // goes back to its original or tinted-glass material.
+  applyPaint() {
+    if (!this.model) return;
+    this.applyGlass();
+    regroup(this.model, this.state.paint);
+    applyPaint(this.model, this.state.paint, this.pieceMats);
+    this.ptDirty = true;
+  }
+  pieces() { return this.model ? listPieces(this.model) : []; }
+  // The piece under a canvas point (CSS px), or null.
+  pick(x, y) {
+    if (!this.model) return null;
+    return pickPiece(this.model, this.camera, (x / this.width) * 2 - 1, -(y / this.height) * 2 + 1);
   }
 
   // The Render step's light rig and glass ({ lighting, glass } as saved in settings). Missing parts keep defaults.
@@ -448,7 +497,7 @@ export class Studio {
     const glassChanged = JSON.stringify(next.glass) !== JSON.stringify(this.rig.glass);
     this.rig = next;
     this.applyLights();
-    if (glassChanged) this.applyGlass();
+    if (glassChanged) this.applyPaint();
   }
 
   applyGlass() {
@@ -476,11 +525,115 @@ export class Studio {
   async setState(next) {
     const prev = this.state;
     this.state = { ...prev, ...next };
-    if (!this.built || prev.preset !== this.state.preset || prev.backdrop !== this.state.backdrop || Boolean(prev.modeled) !== Boolean(this.state.modeled)) await this.buildPreset();
+    const a = mergeLook(prev.look), b = mergeLook(this.state.look);
+    const lookRebuild = a.background.kind !== b.background.kind || a.background.image !== b.background.image || a.hdri.file !== b.hdri.file || a.hdri.background !== b.hdri.background;
+    if (!this.built || prev.preset !== this.state.preset || prev.backdrop !== this.state.backdrop || Boolean(prev.modeled) !== Boolean(this.state.modeled) || lookRebuild) await this.buildPreset();
     this.applyModel();
     this.applyLights();
     this.applyCamera();
+    if (JSON.stringify(prev.paint) !== JSON.stringify(this.state.paint)) this.applyPaint();
+    await this.applyLook();
   }
+
+  // The look (look.js): background, HDRI, light preset, tone mapping, effects. Runs after the preset and the
+  // scene's own lights, so with the default look nothing here changes a thing.
+  async applyLook() {
+    const build = this.builds;
+    const look = this.look = mergeLook(this.state.look);
+    const r = this.renderer;
+    r.toneMapping = TONE[look.tone] ?? THREE.NeutralToneMapping;
+    r.toneMappingExposure = look.exposure;
+    // Background.
+    const bg = look.background;
+    if (bg.kind === 'solid') this.scene.background = new THREE.Color(bg.color);
+    else if (bg.kind === 'gradient') this.scene.background = gradientTexture(bg.color, bg.color2);
+    else if (bg.kind === 'image' && bg.image) {
+      try {
+        const tex = await new THREE.TextureLoader().loadAsync(`/backdrops/${encodeURIComponent(bg.image)}`);
+        if (build !== this.builds) { tex.dispose(); return; }
+        tex.colorSpace = THREE.SRGBColorSpace;
+        this.backdropTexture?.dispose();
+        this.backdropTexture = tex;
+        this.scene.background = tex;
+        this.coverBackground();
+      } catch { this.message = 'Could not load that background image'; }
+    }
+    // HDRI environment (and background).
+    const h = look.hdri;
+    if (h.file) {
+      try {
+        const { env, tex } = await this.hdri(h.file);
+        if (build !== this.builds) return;
+        this.scene.environment = env;
+        this.scene.environmentRotation.set(0, THREE.MathUtils.degToRad(h.rotation), 0);
+        this.scene.environmentIntensity *= h.intensity;
+        if (h.background) {
+          this.scene.background = tex;
+          this.scene.backgroundRotation.set(0, THREE.MathUtils.degToRad(h.rotation), 0);
+          this.scene.backgroundBlurriness = h.blur;
+          this.scene.backgroundIntensity = h.intensity;
+        }
+      } catch { this.message = 'Could not load that HDRI'; }
+    } else { this.scene.environmentRotation.set(0, 0, 0); this.scene.backgroundBlurriness = 0; this.scene.backgroundIntensity = 1; }
+    this.applyRig(look.lights);
+    this.applyEffects();
+  }
+
+  async hdri(file) {
+    if (!this.hdris[file]) {
+      const url = hdriUrl(file);
+      const tex = /\.exr$/i.test(url) ? await new EXRLoader().loadAsync(url) : await new HDRLoader().loadAsync(url);
+      tex.mapping = THREE.EquirectangularReflectionMapping;
+      this.hdris[file] = { tex, env: this.pmrem.fromEquirectangular(tex).texture };
+    }
+    return this.hdris[file];
+  }
+
+  // A light preset's key/fill/rim (on, intensity, colour, azimuth, elevation, shadows, softness). 'match' = the
+  // scene's own rig as applyLights set it, with the base colours and the rim's place restored.
+  applyRig(lights) {
+    const L = this.lights;
+    if (lights.preset === 'match') {
+      for (const [k, l] of Object.entries(L)) { l.visible = true; l.color.setHex(this.baseRig[k].color); }
+      L.rim.position.fromArray(this.baseRig.rim.position);
+      this.applyLights(); // key colour and the key/fill places come from the scene and the Render step's rig
+      L.key.castShadow = true;
+      L.key.shadow.radius = 3;
+      return;
+    }
+    for (const k of ['key', 'fill', 'rim']) {
+      const c = lights[k];
+      const az = THREE.MathUtils.degToRad(c.azimuth);
+      const el = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(c.elevation, 1, 89));
+      L[k].visible = c.on;
+      L[k].intensity = c.intensity;
+      L[k].color.set(c.color);
+      L[k].position.set(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)).multiplyScalar(k === 'key' ? 12 : 9);
+    }
+    L.key.castShadow = lights.shadows;
+    L.key.shadow.radius = 1 + lights.softness * 6;
+  }
+
+  // Realtime effects for the look at the current quality (look.js effectsFor): composer passes, path tracing.
+  applyEffects() {
+    const look = this.look || mergeLook(this.state.look);
+    const fx = this.fx = effectsFor(look);
+    if (fx.composer) {
+      this.post ||= new Post(this.renderer, this.scene, this.camera);
+      this.post.configure(look, fx, this.width, this.height, this.renderer.getPixelRatio());
+    } else if (this.post) { this.post.dispose(); this.post = null; }
+    this.tracing = fx.pathTraced;
+    if (this.tracing) {
+      this.pt ||= new PathTraced(this.renderer);
+      if (this.ptDirty) {
+        this.ptDirty = false;
+        this.ptBusy = true;
+        this.ptReady = this.pt.setScene(this.scene, this.camera).then(() => { this.ptBusy = false; }, (e) => { this.message = `Path tracing is not available here: ${e.message}`; this.tracing = false; this.ptBusy = false; });
+      } else this.pt.cameraMoved();
+    } else if (this.pt) { this.pt.dispose(); this.pt = null; this.ptDirty = true; }
+  }
+  // Progress of the path-traced preview: samples done (0 when not tracing).
+  get samples() { return this.tracing ? this.pt?.samples || 0 : 0; }
 
   setFrame(i) {
     this.frame = i;
@@ -516,6 +669,42 @@ export class Studio {
     this.applyYaw();
     this.carHeight = size.y;
     this.carSize = size.clone();
+    if (s.motion) applyMotion(this, s.motion, this.clipTime ?? null); // motion.js: stance, pose, clip frame
+  }
+
+  // Animation preview: show the clip at time t (seconds), or null for the still pose.
+  setClipTime(t) { this.clipTime = t; this.applyModel(); this.ptDirty = true; }
+
+  // Reference grid (Compose only, never in renders): floor and back grid, scale silhouettes. Returns the model size in m.
+  modelSize() {
+    if (!this.model) return null;
+    this.pivot.updateMatrixWorld(true);
+    const size = new THREE.Box3().setFromObject(this.model).getSize(new THREE.Vector3());
+    return { x: size.x, y: size.y, z: size.z };
+  }
+  setGrid(on, { cell = 1, divisions = 10, refs = [] } = {}) {
+    if (this.refGrid) { this.scene.remove(this.refGrid); this.refGrid.traverse((o) => { o.geometry?.dispose(); o.material?.dispose?.(); }); this.refGrid = null; }
+    if (on) {
+      const g = new THREE.Group();
+      g.name = 'referenceGrid';
+      const size = cell * divisions;
+      const floor = new THREE.GridHelper(size, divisions, 0xff7a66, 0x555555);
+      floor.position.y = 0.001;
+      const back = new THREE.GridHelper(size, divisions, 0xff7a66, 0x555555);
+      back.rotation.x = Math.PI / 2;
+      back.position.set(0, size / 2, -size / 2);
+      g.add(floor, back);
+      let x = -size / 2 + 0.6;
+      for (const r of refs) {
+        const box = new THREE.Mesh(new THREE.BoxGeometry(r.width, r.height, r.depth), new THREE.MeshBasicMaterial({ color: 0x9fd3ff, wireframe: true, transparent: true, opacity: 0.6 }));
+        box.position.set(x + r.width / 2, r.height / 2, -size / 4);
+        x += r.width + 0.4;
+        g.add(box);
+      }
+      this.refGrid = g;
+      this.scene.add(g);
+    }
+    this.ptDirty = true;
   }
 
   applyLights() {
@@ -544,6 +733,7 @@ export class Studio {
   // The camera is placed so the lens changes perspective, not the size of the car in the frame.
   applyCamera() {
     const s = this.state;
+    if (this.tracing) this.pt?.cameraMoved();
     if (s.view === 'free') return this.applyFreeCamera();
     if (this.controls) this.controls.enabled = false;
     if (plateOf(s)) return this.applyPlateCamera(plateOf(s).cam);
@@ -679,6 +869,7 @@ export class Studio {
       this.floor.material.uniforms.texel.value.set(1 / w, 1 / h);
     }
     this.applyCamera();
+    if (this.post || this.tracing) this.applyEffects();
   }
 
   clearStage() {
@@ -965,11 +1156,17 @@ export class Studio {
   render() {
     if (this.model) this.shadow.update(this.renderer, this.scene, this.state.shadow);
     this.shadow.plane.visible = Boolean(this.model);
-    this.renderer.render(this.scene, this.camera);
+    if (this.tracing && this.pt?.tracer && !this.ptDirty && !this.ptBusy) { if (this.pt.renderSample() || this.pt.done) return; }
+    if (this.post?.composer) this.post.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 
   dispose() {
     this.controls?.dispose();
+    this.post?.dispose();
+    this.pt?.dispose();
+    for (const h of Object.values(this.hdris)) { h.tex.dispose(); h.env.dispose(); }
+    for (const m of this.pieceMats.values()) m.dispose();
     this.clearStage();
     if (this.model) disposeTree(this.model);
     for (const t of Object.values(this.envs)) t.dispose();
