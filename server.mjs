@@ -33,7 +33,7 @@ import { createTextureLibrary } from './textures.mjs';
 import { decalKind, DECAL_FILE } from './public/lib/decals.js';
 import { normalizeTemplate } from './public/lib/templates.js';
 import { localEngine as createLocalEngine, downloadWeights, weightsReady, checkCuda, UPSCALER_FILES } from './local.mjs';
-import { loadPoses } from './public/lib/poses.js';
+import { loadPoses, validatePose } from './public/lib/poses.js';
 const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
 import { ENHANCE, enhanceBlock } from './enhance.mjs';
 import { createShares } from './share.mjs';
@@ -1511,6 +1511,18 @@ export async function startServer({
         }
       }
       return send(res, 200, loadPoses(files));
+    }
+    // Pose by hand: save a pose to <library>/poses/<id>.json so it lists with the presets. A bundled id gets a
+    // "my-" prefix so it never replaces a built-in pose; saving the same name again replaces your own.
+    if (area === 'poses' && !id && method === 'POST') {
+      const pose = (await readJson(req, 64 * 1024)).pose;
+      const errors = validatePose(pose);
+      if (errors.length || pose.kind !== 'humanoid') throw new HttpError(400, `That pose could not be saved: ${errors[0] || 'not a body pose'}`);
+      if (existsSync(path.join(ROOT, 'public', 'poses', `${pose.id}.json`))) pose.id = `my-${pose.id}`.slice(0, 40);
+      const dir = path.join(dataDir, 'poses');
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, `${pose.id}.json`), JSON.stringify(pose, null, 2));
+      return send(res, 200, { ok: true, pose });
     }
     // Named presets saved by the Sadie tools (camera moves, sky playlists, material sets). One small JSON file
     // per kind in the data folder. POST { name, data } saves or replaces, { name, remove: true } deletes.

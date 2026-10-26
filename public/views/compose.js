@@ -8,6 +8,7 @@ import { icon } from '../lib/icons.js';
 import { FRAMES, HALF, STEP, pad3, LOOKS, PLATES } from '../lib/pipeline.js';
 import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf } from '../lib/studio.js';
 import { initMotion, renderMotionGroup, onMotionClick, onMotionInput, onMotionChange, stopMotion } from './compose-motion.js';
+import { initHandPose, renderHandPoseGroup, onHandPoseClick, onHandPoseInput, onHandPoseChange, syncHandPose, stopHandPose, isPosing } from './compose-handpose.js';
 import { initTools, renderToolsGroup, onToolsClick, onToolsChange, onCanvasClick, onToolsKey } from './compose-tools.js';
 import { initPath, renderPathGroup, onPathClick, onPathChange } from './compose-path.js';
 import { initLighting, renderLightingGroup, onLightingClick } from './compose-lighting.js';
@@ -46,6 +47,7 @@ export async function mount(el, { id }) {
   scene = { ...defaultScene(state.settings), ...(activeWorkspace()?.camera === 'free' && { view: 'free' }), ...m.scene }; // Warframe workspaces start in free roam
   initPaint({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
+  initHandPose({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initTools({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initPath({ scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initLighting({ scene: () => scene, studio: () => studio, change, renderInspector, modelUrl: () => (m?.glb ? fileUrl(m, m.glb) : null) });
@@ -160,6 +162,7 @@ export function unmount() {
   hist.clear();
   gridOn = false;
   stopMotion();
+  stopHandPose();
   stop();
   observer?.disconnect();
   cancelAnimationFrame(raf);
@@ -182,6 +185,7 @@ function draw() {
   if (!studio) return;
   cancelAnimationFrame(raf);
   raf = requestAnimationFrame(() => {
+    syncHandPose(); // the Pose by hand dots follow their joints
     studio.render();
     const f = studio.frameRect;
     Object.assign($('#safe', root).style, { left: `${f.x + 6}px`, top: `${f.y + 6}px`, width: `${f.width - 12}px`, height: `${f.height - 12}px` });
@@ -371,7 +375,7 @@ function renderInspector() {
     <div class="grp" id="grp-ground"><h3>Ground</h3>
       ${slider('reflection', 'Reflection', 0, 1, 0.01, s.reflection, hasFloor() ? level(s.reflection) : 'n/a', !hasFloor())}
       ${slider('shadow', 'Shadow', 0, 1, 0.01, s.shadow, softness(s.shadow))}
-    </div>${renderLightingGroup()}${renderToolsGroup()}${renderPathGroup()}${renderMotionGroup()}${renderPaintGroups()}`;
+    </div>${renderLightingGroup()}${renderToolsGroup()}${renderPathGroup()}${renderMotionGroup()}${renderHandPoseGroup()}${renderPaintGroups()}`;
   afterRender();
 }
 
@@ -432,6 +436,7 @@ function bind() {
     if (await onPathClick(t)) return;
     if (await onLightingClick(t)) return;
     if (await onMotionClick(t)) return;
+    if (await onHandPoseClick(t)) return;
     if (await onPaintClick(t)) return;
     if (t.dataset.render) { state.renderIntent = t.dataset.render; location.hash = `#/render/${m.id}`; }
     if (t.dataset.version) {
@@ -478,6 +483,7 @@ function bind() {
   });
   el.addEventListener('input', (e) => {
     if (onMotionInput(e.target)) return;
+    if (onHandPoseInput(e.target)) return;
     if (onPaintInput(e.target)) return;
     const k = e.target.dataset.key;
     if (!k || e.target.type !== 'range') return;
@@ -490,6 +496,7 @@ function bind() {
     if (onToolsChange(e.target)) return;
     if (onPathChange(e.target)) return;
     if (await onMotionChange(e.target)) return;
+    if (onHandPoseChange(e.target)) return;
     if (await onPaintChange(e.target)) return;
     const k = e.target.dataset.key;
     if (k && e.target.type === 'checkbox') change({ [k]: e.target.checked, ...(k === 'sameSize' && e.target.checked && { scale: 1 }), ...(k === 'center' && { snap: e.target.checked }) });
@@ -559,7 +566,7 @@ function bind() {
   const cv = $('#cv', el);
   cv.addEventListener('keydown', keys);
   let drag = null;
-  cv.addEventListener('pointerdown', (e) => { if (scene.view === 'free') return; stop(); cv.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, frame, sx: scene.x, sy: scene.y }; });
+  cv.addEventListener('pointerdown', (e) => { if (scene.view === 'free' || isPosing()) return; stop(); cv.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, frame, sx: scene.x, sy: scene.y }; });
   cv.addEventListener('pointermove', (e) => {
     if (!drag) return;
     const dx = e.clientX - drag.x;

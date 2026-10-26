@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { STANCE_DEFAULT, carClipFrame, humanoidClipFrame, poseBones, mapBones, guessTag, detectModelType } from './motion.js';
 import { listPieces } from './paint.js';
+import { applyHips, keyPose } from './handpose.js';
 
 const D2R = Math.PI / 180;
 const rest = (o) => (o.userData.rest ||= { p: o.position.clone(), q: o.quaternion.clone() });
@@ -66,6 +67,9 @@ export function applyMotion(studio, motion = {}, t = null) {
     let euler = {};
     if (motion.pose?.preset) euler = poseBones(motion.pose.preset, motion.pose.bones);
     if (motion.clip && t != null) euler = { ...euler, ...humanoidClipFrame(motion.clip, t, { speed: motion.speed || 1 }) };
+    const key = t != null ? keyPose(motion.keys, t) : null; // Pose by hand keyframes: each key is a whole pose
+    if (key) euler = key.bones;
+    if (bones[map.Hips]) applyHips(studio.pivot, bones[map.Hips], key ? key.hips : motion.pose?.hips);
     for (const [std, deg] of Object.entries(euler)) {
       const b = bones[map[std]];
       if (!b) continue;

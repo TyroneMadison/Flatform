@@ -141,7 +141,7 @@ export function posesFor(list, kind, found = {}) {
 }
 
 // Adapters to the Phase 3 motion system (motion.js): canonical bones to Mixamo names, a car preset to a stance.
-const MIXAMO = { hips: 'Hips', spine: 'Spine', chest: 'Spine2', neck: 'Neck', head: 'Head', shoulder: 'Shoulder', upperArm: 'Arm', lowerArm: 'ForeArm', hand: 'Hand', upperLeg: 'UpLeg', lowerLeg: 'Leg', foot: 'Foot' };
+export const MIXAMO = { hips: 'Hips', spine: 'Spine', chest: 'Spine2', neck: 'Neck', head: 'Head', shoulder: 'Shoulder', upperArm: 'Arm', lowerArm: 'ForeArm', hand: 'Hand', upperLeg: 'UpLeg', lowerLeg: 'Leg', foot: 'Foot' };
 export function mixamoBones(pose) {
   const out = {};
   for (const [canon, t] of Object.entries(pose.bones || {})) {

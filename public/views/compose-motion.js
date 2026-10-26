@@ -4,7 +4,8 @@ import { $, esc } from '../app.js';
 import { MODEL_TYPES, STANCES, STANCE_DEFAULT, STANCE_LIMITS, applyStance, availableStances, POSES, BONES, clipsFor, TAGS, deserializePose } from '../lib/motion.js';
 import { tagsFor, modelInfo } from '../lib/rig.js';
 import { listPieces } from '../lib/paint.js';
-import { posesFor, detectParts, mixamoBones, carStance } from '../lib/poses.js';
+import { posesFor, detectParts, carStance } from '../lib/poses.js';
+import { fromPreset } from '../lib/handpose.js';
 
 let PRESETS = null; // from /api/poses (public/poses/*.json plus <library>/poses/*.json)
 async function loadPresets() {
@@ -12,6 +13,8 @@ async function loadPresets() {
   try { const r = await fetch('/api/poses'); PRESETS = r.ok ? (await r.json()).poses : []; } catch { PRESETS = []; }
   ctx?.renderInspector?.();
 }
+/** After a pose is saved (Pose by hand): list it with the others. */
+export function reloadPresets() { PRESETS = null; loadPresets(); }
 function presetChips(kind, model, current) {
   if (!PRESETS) { loadPresets(); return '<p class="fine">Loading poses...</p>'; }
   const found = kind === 'car' && model ? detectParts(listPieces(model).map((p) => ({ name: p.name }))) : {};
@@ -85,7 +88,7 @@ export async function onMotionClick(t) {
     if (!p) return true;
     stop();
     if (p.kind === 'car') await setMotion({ presetId: p.id, stance: { ...STANCE_DEFAULT, ...carStance(p) } });
-    else await setMotion({ presetId: p.id, pose: { preset: 'tpose', bones: mixamoBones(p) } });
+    else await setMotion({ presetId: p.id, pose: { preset: 'tpose', ...fromPreset(p) } });
     return true;
   }
   if (t.dataset.moStance) { stop(); await setMotion({ stance: applyStance(motionOf().stance, t.dataset.moStance) }); return true; }
@@ -108,7 +111,7 @@ export function onMotionInput(t) {
   else if (k.startsWith('bone.')) {
     const p = deserializePose(mo.pose || { preset: 'tpose' });
     const cur = [...(p.bones[boneSel] || [0, 0, 0])]; cur[Number(k.slice(5))] = v;
-    setMotion({ pose: { preset: p.preset, bones: { ...p.bones, [boneSel]: cur } } }, { inspector: false });
+    setMotion({ pose: { ...mo.pose, preset: p.preset, bones: { ...p.bones, [boneSel]: cur } } }, { inspector: false });
   }
   return true;
 }
