@@ -44,7 +44,7 @@ export const DEFAULT_TOOL = { scene: 'world', model: 'recipe', finish: 'check' }
 // Which parts of the Scene screen each dock tool shows (element ids in views/compose.js and its modules).
 export const SCENE_GROUPS = {
   world: ['scenes', 'grp-place', 'grp-model', 'grp-ground', 'grp-grid'],
-  look: ['grp-templates', 'grp-parts', 'grp-color', 'grp-material', 'grp-decals'],
+  look: ['grp-roles', 'grp-role', 'grp-templates', 'grp-parts', 'grp-color', 'grp-material', 'grp-decals'],
   light: ['grp-lighting', 'grp-light', 'grp-scene'],
   camera: ['grp-camera', 'grp-path', 'turntable'],
   pose: ['grp-testrig', 'grp-handpose', 'grp-motion'],

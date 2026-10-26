@@ -30,6 +30,7 @@ import { buildEnvironment, buildRain } from './env3d.js';
 import { envScale, skyRotation, ROOMS, roomFor } from './environments.js';
 import { Post, PathTraced, TONE } from './post.js';
 import { applyPaint, regroup, pickPiece, listPieces, previewColors, partNames } from './paint.js';
+import { withTestColors, rolesOf, pulseAt } from './roles.js';
 import { applyMotion } from './rig.js';
 import { mirrorAttributes, depthRange, boneWeights, heat } from './model-tools.js';
 import { samplePath, skyAt, normalizePath } from './camera-path.js';
@@ -449,13 +450,19 @@ export class Studio {
 
   // Pieces, colours and materials (state.paint, see paint.js). Starts from the glass pass so a reverted piece
   // goes back to its original or tinted-glass material.
+  // testColors: Part colors' preview, every role in a bright test color (roles.js withTestColors), not saved.
   applyPaint() {
     if (!this.model) return;
     this.applyGlass();
-    regroup(this.model, this.state.paint);
-    applyPaint(this.model, this.state.paint, this.pieceMats);
+    const paint = this.testColors && this.state.paint ? withTestColors(this.state.paint) : this.state.paint;
+    regroup(this.model, paint);
+    applyPaint(this.model, paint, this.pieceMats);
+    // Energy pieces pulse while the view draws (render), at Part colors' speed.
+    const { pulse, strength } = rolesOf(paint);
+    this.pulse = paint?.roles && pulse > 0 ? [...this.pieceMats.values()].filter((m) => m.userData.energy).map((mat) => ({ mat, strength: strength.energy, speed: pulse })) : [];
     this.ptDirty = true;
   }
+  setTestColors(on) { if (Boolean(on) !== Boolean(this.testColors)) { this.testColors = Boolean(on); this.applyPaint(); } }
   // Colour wheel drag: new colours on the pieces' existing materials, nothing rebuilt. A piece that has no material
   // yet (its first colour) gets one, once, at the start of the drag. Returns how many pieces show the colour.
   previewPaint(paint) {
@@ -1264,9 +1271,10 @@ export class Studio {
   }
 
   // True while the scene moves on its own (rain), so views keep drawing frames.
-  get animating() { return Boolean(this.rain || this.lookRain); }
+  get animating() { return Boolean(this.rain || this.lookRain || this.pulse?.length); }
 
   render() {
+    for (const p of this.pulse || []) p.mat.emissiveIntensity = pulseAt(p.strength, p.speed, performance.now() / 1000);
     this.rain?.userData.update(performance.now() / 1000);
     this.lookRain?.userData.update(performance.now() / 1000);
     if (this.model) this.shadow.update(this.renderer, this.scene, this.state.shadow);

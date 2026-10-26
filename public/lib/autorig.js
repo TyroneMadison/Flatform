@@ -920,7 +920,8 @@ export function unriggedVersion(model) {
   return v && !v.rigged ? v.n : model.activeVersion;
 }
 
-/** The one plain message for a failed rig, and whether clicking the landmarks may help. */
+/** The one plain sentence for a failed rig, and that clicking the spots (the placement screen) may help. */
 export function rigFailure(problems = []) {
-  return { error: `Could not place the joints by itself: ${problems[0] || 'the shape was not clear'}. Show me where the joints are instead.`, fallback: 'markers' };
+  const why = (problems[0] || 'the shape was not clear').split('. ')[0].replace(/\.$/, '');
+  return { error: `Flatform could not find the joints by itself (${why[0].toLowerCase()}${why.slice(1)}), so click the 10 spots on the model.`, fallback: 'markers' };
 }

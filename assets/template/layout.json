@@ -1,0 +1,430 @@
+{
+ "t": "ft",
+ "v": 1,
+ "sheet": "NVSASH",
+ "units": "mm",
+ "page_mm": [
+  215.9,
+  279.4
+ ],
+ "dpi": 300,
+ "px_per_mm": 11.811023622047244,
+ "markers_mm": {
+  "0": [
+   8,
+   8,
+   15,
+   15
+  ],
+  "1": [
+   192.9,
+   8,
+   15,
+   15
+  ],
+  "2": [
+   192.9,
+   256.4,
+   15,
+   15
+  ],
+  "3": [
+   8,
+   256.4,
+   15,
+   15
+  ]
+ },
+ "marker_outer_corner": "corner index = marker id (0 TL,1 TR,2 BR,3 BL)",
+ "qr_mm": [
+  166.9,
+  8,
+  22,
+  22
+ ],
+ "qr_payload": {
+  "t": "ft",
+  "v": 1,
+  "p": "<page>",
+  "s": "<sheet id>",
+  "g": "0 only on guide-free blank pages"
+ },
+ "pages": [
+  {
+   "index": 1,
+   "p": "cover",
+   "title": "Character drawing kit",
+   "regions_mm": {
+    "swatches": {
+     "Primary": [
+      60,
+      94,
+      26,
+      13
+     ],
+     "Secondary": [
+      60,
+      111,
+      26,
+      13
+     ],
+     "Tertiary": [
+      60,
+      128,
+      26,
+      13
+     ],
+     "Accent": [
+      60,
+      145,
+      26,
+      13
+     ],
+     "Glow": [
+      60,
+      162,
+      26,
+      13
+     ],
+     "Energy": [
+      60,
+      179,
+      26,
+      13
+     ]
+    }
+   },
+   "regions_px": {
+    "swatches": {
+     "Primary": [
+      709,
+      1110,
+      307,
+      154
+     ],
+     "Secondary": [
+      709,
+      1311,
+      307,
+      154
+     ],
+     "Tertiary": [
+      709,
+      1512,
+      307,
+      154
+     ],
+     "Accent": [
+      709,
+      1713,
+      307,
+      154
+     ],
+     "Glow": [
+      709,
+      1913,
+      307,
+      154
+     ],
+     "Energy": [
+      709,
+      2114,
+      307,
+      154
+     ]
+    }
+   }
+  },
+  {
+   "index": 2,
+   "p": "front",
+   "title": "Front view",
+   "regions_mm": {
+    "front": [
+     33,
+     46,
+     150,
+     200
+    ]
+   },
+   "regions_px": {
+    "front": [
+     390,
+     543,
+     1772,
+     2362
+    ]
+   }
+  },
+  {
+   "index": 3,
+   "p": "back",
+   "title": "Back view",
+   "regions_mm": {
+    "back": [
+     33,
+     46,
+     150,
+     200
+    ]
+   },
+   "regions_px": {
+    "back": [
+     390,
+     543,
+     1772,
+     2362
+    ]
+   }
+  },
+  {
+   "index": 4,
+   "p": "left",
+   "title": "Left side",
+   "regions_mm": {
+    "left": [
+     33,
+     46,
+     150,
+     200
+    ]
+   },
+   "regions_px": {
+    "left": [
+     390,
+     543,
+     1772,
+     2362
+    ]
+   }
+  },
+  {
+   "index": 5,
+   "p": "right",
+   "title": "Right side",
+   "regions_mm": {
+    "right": [
+     33,
+     46,
+     150,
+     200
+    ]
+   },
+   "regions_px": {
+    "right": [
+     390,
+     543,
+     1772,
+     2362
+    ]
+   }
+  },
+  {
+   "index": 6,
+   "p": "detail",
+   "title": "Close-ups",
+   "regions_mm": {
+    "helmet": [
+     10,
+     46,
+     94,
+     98
+    ],
+    "hands": [
+     111.9,
+     46,
+     94,
+     98
+    ],
+    "chest": [
+     10,
+     152,
+     94,
+     98
+    ],
+    "feet": [
+     111.9,
+     152,
+     94,
+     98
+    ]
+   },
+   "regions_px": {
+    "helmet": [
+     118,
+     543,
+     1110,
+     1157
+    ],
+    "hands": [
+     1322,
+     543,
+     1110,
+     1157
+    ],
+    "chest": [
+     118,
+     1795,
+     1110,
+     1157
+    ],
+    "feet": [
+     1322,
+     1795,
+     1110,
+     1157
+    ]
+   }
+  },
+  {
+   "index": 7,
+   "p": "colormap",
+   "title": "Color map",
+   "regions_mm": {
+    "front": [
+     10,
+     46,
+     94,
+     125.3
+    ],
+    "back": [
+     111.9,
+     46,
+     94,
+     125.3
+    ],
+    "keys": {
+     "Primary": [
+      10.0,
+      186,
+      28.5,
+      14
+     ],
+     "Secondary": [
+      43.5,
+      186,
+      28.5,
+      14
+     ],
+     "Tertiary": [
+      77.0,
+      186,
+      28.5,
+      14
+     ],
+     "Accent": [
+      110.5,
+      186,
+      28.5,
+      14
+     ],
+     "Glow": [
+      144.0,
+      186,
+      28.5,
+      14
+     ],
+     "Energy": [
+      177.5,
+      186,
+      28.5,
+      14
+     ]
+    }
+   },
+   "regions_px": {
+    "front": [
+     118,
+     543,
+     1110,
+     1480
+    ],
+    "back": [
+     1322,
+     543,
+     1110,
+     1480
+    ],
+    "keys": {
+     "Primary": [
+      118,
+      2197,
+      337,
+      165
+     ],
+     "Secondary": [
+      514,
+      2197,
+      337,
+      165
+     ],
+     "Tertiary": [
+      909,
+      2197,
+      337,
+      165
+     ],
+     "Accent": [
+      1305,
+      2197,
+      337,
+      165
+     ],
+     "Glow": [
+      1701,
+      2197,
+      337,
+      165
+     ],
+     "Energy": [
+      2096,
+      2197,
+      337,
+      165
+     ]
+    }
+   }
+  }
+ ],
+ "keys": {
+  "Primary": "#FF0000",
+  "Secondary": "#00FF00",
+  "Tertiary": "#0000FF",
+  "Accent": "#FFFF00",
+  "Glow": "#00FFFF",
+  "Energy": "#FF00FF"
+ },
+ "guide": {
+  "color": "#A4DDED",
+  "head_top_norm": 0.0958904109589041,
+  "ground_norm": 0.9041095890410958,
+  "note": "guide drawn in design units 94x146 scaled by box height, centered"
+ },
+ "colormap_alignment": "COLOR MAP boxes use the same aspect (0.75) and the same normalized guide as the FRONT/BACK boxes; map by (x-x0)/w,(y-y0)/h",
+ "legend": {
+  "Primary": {
+   "controls": "Main armor plates: chest, shoulders, thighs, shins",
+   "effect": "Color"
+  },
+  "Secondary": {
+   "controls": "Under-suit between the plates",
+   "effect": "Color"
+  },
+  "Tertiary": {
+   "controls": "Straps, belts, joints and trim",
+   "effect": "Color"
+  },
+  "Accent": {
+   "controls": "Edges, stripes, crest, knuckles",
+   "effect": "Color only"
+  },
+  "Glow": {
+   "controls": "Eyes, visor, vents, light lines",
+   "effect": "Color + lights up"
+  },
+  "Energy": {
+   "controls": "Chest core, palms, weapon charge",
+   "effect": "Color + lights up + pulses"
+  }
+ }
+}

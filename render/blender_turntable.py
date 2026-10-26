@@ -88,6 +88,7 @@ def parse_args():
     p.add_argument("--materials")
     p.add_argument("--pose")  # blender.mjs blenderPose: {"bones": {name: [x, y, z] three.js Euler degrees}, "hips": ...}
     p.add_argument("--report-bones", action="store_true")  # tests: print each posed bone's head
+    p.add_argument("--report-parts", action="store_true")  # tests: print every material, its colour, glow and faces
     # Render ideas (public/lib/render-types.js): {"explode": 0..1 of the model's size, "override": "clay" | "blueprint"}
     p.add_argument("--effect")
     p.add_argument("--extras")  # shelf items (studio.js applyExtras): [{ path, group, at: [x, z], turn }]
@@ -168,6 +169,10 @@ def kelvin_color(k):
 
 def srgb_to_linear(c):
     return tuple(v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in c)
+
+
+def linear_to_srgb(v):
+    return v * 12.92 if v <= 0.0031308 else 1.055 * v ** (1 / 2.4) - 0.055
 
 
 def apply_rig(lighting):
@@ -437,6 +442,21 @@ def group_faces(labels):
     return order
 
 
+PULSES = []  # (Emission Strength input, strength, pulses a second) of every Energy piece that pulses
+PULSE_FPS = 30.0  # ponytail: the turntable video's default frame rate; a pulse's speed is per second of that video
+
+
+def pulse_at(strength, speed, t):
+    """roles.js pulseAt: full strength at t = 0, down to 30% at the low point."""
+    return strength * (0.65 + 0.35 * math.cos(2 * math.pi * speed * t)) if speed > 0 else strength
+
+
+def set_pulse(frame):
+    for socket, strength, speed in PULSES:
+        socket.default_value = pulse_at(strength, speed, frame / PULSE_FPS)
+        print(f"FLATFORM_PULSE {frame} {socket.default_value:.3f}", flush=True)
+
+
 def principled_from(spec, source=None):
     """A Principled BSDF material from tenno.js blenderMaterial, with Subsurface Weight / Radius (the subsurface_color
     tints the radius: Blender 4.x scatters the base colour). source: the imported material whose textures to keep."""
@@ -464,6 +484,8 @@ def principled_from(spec, source=None):
     inputs["Subsurface Scale"].default_value = 1.0
     if spec["transmission_weight"] > 0:
         mat.blend_method = "BLEND"
+    if spec.get("pulse"):  # Part colors Energy: pulses frame by frame (main sets it before each picture)
+        PULSES.append((inputs["Emission Strength"], spec["pulse"]["strength"], spec["pulse"]["speed"]))
     src_bsdf = next((n for n in source.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None) if source and source.use_nodes else None
     if spec.get("keep_color") and src_bsdf is not None:  # no colour picked: the imported colour, as in the app
         inputs["Base Color"].default_value = tuple(src_bsdf.inputs["Base Color"].default_value)
@@ -520,24 +542,33 @@ def apply_materials(meshes, spec):
             obj.material_slots[i].material = principled_from({**piece, "name": key}, obj.material_slots[i].material)
         del materials[key]  # placed by node and slot, not by the key below
     groups = spec.get("groups", {})
-    for obj in meshes:
-        key = mesh_key(meshes, obj)
+    grouped = set()
+    for gkey, g in groups.items():
+        # The object: by its node name (glb-pieces.mjs paintSpec), else by the key paint.js gave the mesh.
+        obj = next((o for o in meshes if base_name(o.name) == g["node"]), None) if g.get("node") else next((o for o in meshes if mesh_key(meshes, o) == gkey), None)
+        if obj is None or obj in grouped:
+            continue
         mesh = obj.data
-        g = groups.get(key)
-        if g and len(mesh.polygons) * 1 >= 1:
-            raw = __import__("base64").b64decode(g["labels"])
-            labels = [None if b == 255 else g["names"][b] for b in raw]
-            if len(labels) == len(mesh.polygons):
-                order = group_faces(labels)
-                base = obj.material_slots[0].material if obj.material_slots else None
-                mesh.materials.clear()
-                for gi, lab in enumerate(order):
-                    piece = materials.get(piece_key(meshes.index(obj), key.split("#")[0], gi))
-                    mesh.materials.append(principled_from({**piece, "name": lab or "unlabelled"}, base) if piece else base)
-                index_of = {lab: i for i, lab in enumerate(order)}
-                for poly, lab in zip(mesh.polygons, labels):
-                    poly.material_index = index_of[lab]
-                continue
+        raw = __import__("base64").b64decode(g["labels"])
+        labels = [None if b == 255 else g["names"][b] for b in raw]
+        if len(labels) != len(mesh.polygons):
+            print(f"FLATFORM_GROUPS {gkey} skipped {len(labels)} {len(mesh.polygons)}", flush=True)
+            continue
+        order = group_faces(labels)
+        base = obj.material_slots[0].material if obj.material_slots else None
+        mesh.materials.clear()
+        for gi, lab in enumerate(order):
+            piece = materials.get(f"{gkey}@{gi}")
+            mesh.materials.append(principled_from({**piece, "name": lab or "unlabelled"}, base) if piece else base)
+        index_of = {lab: i for i, lab in enumerate(order)}
+        for poly, lab in zip(mesh.polygons, labels):
+            poly.material_index = index_of[lab]
+        grouped.add(obj)
+        print(f"FLATFORM_GROUPS {gkey} {len(order)}", flush=True)
+    for obj in meshes:
+        if obj in grouped:
+            continue
+        key = mesh_key(meshes, obj)
         single = materials.get(key)
         if single and obj.material_slots:
             for slot in obj.material_slots:
@@ -546,6 +577,22 @@ def apply_materials(meshes, spec):
             piece = materials.get(piece_key(meshes.index(obj), key.split("#")[0], gi))
             if piece and len(obj.material_slots) > 1:
                 slot.material = principled_from({**piece, "name": f"{key}@{gi}"}, slot.material)
+
+
+def report_parts(meshes):
+    """Tests: every material on the model, its base colour, glow and how many faces wear it."""
+    for obj in meshes:
+        counts = {}
+        for poly in obj.data.polygons:
+            counts[poly.material_index] = counts.get(poly.material_index, 0) + 1
+        for i, slot in enumerate(obj.material_slots):
+            m = slot.material
+            bsdf = next((n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None) if m and m.use_nodes else None
+            if bsdf is None:
+                continue
+            c = bsdf.inputs["Base Color"].default_value
+            hexed = "#" + "".join(f"{round(max(0.0, min(1.0, linear_to_srgb(v))) * 255):02x}" for v in c[:3])
+            print(f"FLATFORM_PART {base_name(obj.name)} {m.name} {hexed} {bsdf.inputs['Emission Strength'].default_value:.3f} {counts.get(i, 0)}", flush=True)
 
 
 def apply_look(look, meshes):
@@ -1256,6 +1303,8 @@ def main():
             spec = json.load(f)
         apply_materials(meshes, spec)
         apply_hidden(meshes, spec)
+        if args.report_parts:
+            report_parts(meshes)
     if effect.get("override") in ("clay", "blueprint"):
         override_materials(meshes, effect["override"])
     if float(effect.get("explode") or 0) > 0:
@@ -1279,6 +1328,7 @@ def main():
     for i in range(args.frames):
         # Same direction as the in-app renderer: positive yaw turns the car clockwise seen from above.
         pivot.rotation_euler.z = -math.radians(float(s["turn"]) + i * args.step)
+        set_pulse(i)
         render_to(os.path.join(args.out, f"{args.slug}_{i:03d}.png"), args.stamp)
         print(f"FLATFORM_FRAME {i + 1} {args.frames}", flush=True)
     if args.still is not None and args.still_out:

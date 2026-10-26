@@ -137,3 +137,6 @@ html.presenting #view { position: fixed; inset: 0; padding: 0; margin: 0; z-inde
 /* Big targets (mock-up): main choices on the new screens are 44px tall, row buttons 36px. */
 .share .seg .chip, .ft-side .seg .chip { min-height: 44px; padding: 0 18px; font-size: 15px; }
 .usage .btn.sm, .share .btn.sm, .pl-list .btn.sm { min-height: 36px; padding: 0 14px; }
+.hv-models { display: grid; gap: 8px; margin-top: 14px; max-width: 720px; }
+.hv-mlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.hv-mlist li { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; }

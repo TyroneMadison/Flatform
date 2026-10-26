@@ -135,14 +135,15 @@ export function deserializeMaterial(json) {
 // What the Blender script needs for a piece: Principled BSDF inputs including Subsurface Weight/Radius/Color.
 // slot: the piece's colour slot, as in paint.js pieceMaterial: its colour tints the piece (energy and emissive glow).
 // keep_color: no own or slot colour, so Blender keeps the imported material's base colour, as the app does.
-export function blenderMaterial(m, colors, slot = null) {
+// glow: how bright a Glow or Energy piece is (roles.js glowOf), else at least 2 as before.
+export function blenderMaterial(m, colors, slot = null, glowStrength = null) {
   const tint = slot && slot !== 'energy' ? colors?.[slot] : null;
   const glow = slot === 'emissive' || slot === 'energy';
   const base = m.color || tint || colors?.primary || DEFAULT_COLORS.primary;
   return {
     base_color: base, keep_color: !m.color && !tint, metallic: m.metalness, roughness: m.roughness, coat_weight: m.clearcoat, coat_roughness: m.clearcoatRoughness,
     sheen_weight: m.sheen, sheen_roughness: m.sheenRoughness, sheen_tint: m.sheenColor, transmission_weight: m.transmission, ior: m.ior,
-    emission_color: glow ? colors?.[slot] || m.emissive : m.emissive, emission_strength: glow ? Math.max(m.emissiveIntensity, 2) : m.emissiveIntensity,
+    emission_color: glow ? colors?.[slot] || m.emissive : m.emissive, emission_strength: glow ? glowStrength ?? Math.max(m.emissiveIntensity, 2) : m.emissiveIntensity,
     normal_strength: m.normalScale, alpha: m.opacity,
     subsurface_weight: m.sss, subsurface_radius: [1, 0.2, 0.1].map((v) => v * m.sssRadius * 0.01), subsurface_color: m.sssColor, // radius in metres
   };

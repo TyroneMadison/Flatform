@@ -99,7 +99,7 @@ export function update() {
     $('#pbar', root).setAttribute('aria-valuenow', pct);
     $('#genP', root).setAttribute('stroke-dasharray', ringDash(pct));
     $('#fbNote', root).textContent = failed ? `${plainError(statusText(m)).replace(/\.$/, '')}. Try again sends the same photos and recipe to ${PROVIDERS[providerOf(m)].name}.`
-      : m.status === 'ready' ? 'Opening it in Scene and render…' : `${timeLeft(pct, Date.now() - Date.parse(m.versions?.find((x) => x.n === m.activeVersion)?.created_at || m.created_at))}. You can keep working.`;
+      : m.status === 'ready' ? `${m.fillNote ? `${m.fillNote}. ` : ''}Opening it in Scene and render…` : `${timeLeft(pct, Date.now() - Date.parse(m.versions?.find((x) => x.n === m.activeVersion)?.created_at || m.created_at))}. You can keep working.`;
     root.querySelector('.forming').classList.toggle('done', m.status === 'ready');
     const facts = failed ? `<button class="btn pri" type="button" data-act="retry" data-id="${m.id}" title="Send the same photos and recipe again">${icon('retry')}<span>Try again</span></button>`
       : m.status === 'ready' ? `<a class="btn pri" href="#/compose/${m.id}" title="Put your model in a scene and make pictures">${icon('scene')}<span>Open in Scene and render</span></a>`

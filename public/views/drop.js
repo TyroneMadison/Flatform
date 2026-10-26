@@ -1,9 +1,12 @@
 // Drop: the big drop zone, tips with the next setup and the real balance, and recent models.
 // Photos go on to the setup screen, where the provider and quality are chosen before anything is paid for.
-// 3D models (GLB, GLTF, FBX, OBJ, USDZ) skip Generate and open in Compose (app.js addFiles).
+// 3D models (GLB, GLTF, FBX, OBJ, USDZ) skip Generate and open in Compose (app.js addFiles). Warframe mode adds the
+// Drawing kit (views/drawing.js): the printable template and photos of it, and the drawing tips card beside the
+// drop zone (lib/drawing-tips.js).
 import { $, esc, state, addFiles, openPicker, pasteFromClipboard, creditsText, savedSetup, setupLabel, activeWorkspace, costOf, thumbOf, statusText, statusClass, recentItems, openRecent } from '../app.js';
 import { icon } from '../lib/icons.js';
 import { timeAgo } from '../lib/session.js';
+import { tipsCard, isClosed, remember } from '../lib/drawing-tips.js';
 
 let root;
 
@@ -13,6 +16,7 @@ export function mount(el) {
   const wf = state.mode === 'warframe';
   el.innerHTML = `
   <section class="dropwrap">
+    <div class="dz-row${wf ? ' with-tips' : ''}">
     <div class="dropzone glass breathe" id="dropzone">
       <div class="dz-hit" role="button" tabindex="0" aria-label="Choose photos, or drop them here" aria-describedby="dzLead"></div>
       <div class="dz-orb" aria-hidden="true"><div class="dz-ring"></div><div class="dz-ring r2"></div><div class="ghost" id="ghost"></div></div>
@@ -23,9 +27,12 @@ export function mount(el) {
         <button class="btn ghostbtn big" type="button" data-act="paste" title="Paste a photo you copied (Ctrl+V)"><span>Paste</span><kbd>Ctrl V</kbd></button>
         <a class="btn ghostbtn big" href="#/library" title="Open something you made before">Open library</a>
         ${wf ? '<a class="btn ghostbtn big" href="#/warframe" title="Start from a Warframe template">From template</a>' : ''}
+        ${wf ? '<button class="btn ghostbtn big" type="button" data-act="kit" title="Draw your character on our printable sheet, then add photos of the pages">Drawing kit</button>' : ''}
       </div>
       <div class="dz-meta"><span>Photos: PNG, JPEG or HEIC, up to 20 MB</span><span>3D files: .glb, .gltf, .fbx, .obj, .usdz</span><span>One clear subject</span></div>
       <p class="dz-status" id="dzStatus" aria-live="polite"></p>
+    </div>
+    ${wf ? '<div id="tipsSlot"></div>' : ''}
     </div>
     <div class="tips">
       <div class="tip glass"><b>Shoot from a front corner</b><span>One photo then shows the side and the wheels too. Or use 4 photos with 3D AI Studio.</span></div>
@@ -51,6 +58,10 @@ export function mount(el) {
   hit.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPicker(); } });
   el.querySelector('[data-act=pick]').addEventListener('click', () => openPicker());
   el.querySelector('[data-act=paste]').addEventListener('click', pasteFromClipboard);
+  el.querySelector('[data-act=kit]')?.addEventListener('click', () => import('./drawing.js').then((kit) => kit.openDrawing()));
+  const slot = $('#tipsSlot', el);
+  slot?.addEventListener('click', (e) => { if (e.target.closest('[data-act=kit]')) import('./drawing.js').then((kit) => kit.openDrawing()); });
+  slot?.addEventListener('toggle', (e) => remember(localStorage, !e.target.open), true);
   $('#resume', el).addEventListener('click', (e) => {
     const r = recentItems().find((x) => x.id === e.target.closest('[data-recent]')?.dataset.recent);
     if (r) openRecent(r);
@@ -65,6 +76,10 @@ export function update() {
   const tag = `<span class="ghost-tag">${esc(sending ? sending.name : 'PNG · JPEG · HEIC')}</span>`;
   const g = $('#ghost', root);
   if (g.dataset.html !== ghost + tag) { g.dataset.html = ghost + tag; g.innerHTML = ghost + tag; }
+
+  const slot = $('#tipsSlot', root);
+  const card = slot && tipsCard({ found: state.drawingFound, esc });
+  if (slot && slot.dataset.html !== card) { slot.dataset.html = card; slot.innerHTML = tipsCard({ found: state.drawingFound, closed: isClosed(localStorage), esc }); }
 
   const waiting = state.queue.filter((q) => q.status === 'waiting').length;
   const failed = state.queue.filter((q) => q.status === 'error');

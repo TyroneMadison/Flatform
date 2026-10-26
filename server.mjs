@@ -17,8 +17,10 @@ import { runAutoRig } from './autorig.mjs';
 import { PROVIDERS, VIEWS, DEFAULT_PROVIDER, normalize, baseSetup, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
 import { estimate } from './public/lib/pricing.js';
 import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
-import { resolveColors, deserializeMaterial, blenderMaterial } from './public/lib/tenno.js';
-import { glbPieces, locatePieces } from './glb-pieces.mjs';
+import { paintSpec } from './glb-pieces.mjs';
+import { trimGlb } from './glb-trim.mjs';
+import { fillGlb } from './glb-fill.mjs';
+import { fillNote } from './public/lib/holes.js';
 import { cleanExtras } from './public/lib/render-types.js';
 import { inferRegions, checkAnthropicKey } from './inference.mjs';
 import { createQueue } from './batch.mjs';
@@ -58,7 +60,11 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
 const THREE = path.join(ROOT, 'node_modules', 'three');
 // Path tracer modules served to the page like three's addons (their src/ ships inside the app).
-const VENDOR = { 'three-mesh-bvh': path.join(ROOT, 'node_modules', 'three-mesh-bvh', 'src'), 'three-gpu-pathtracer': path.join(ROOT, 'node_modules', 'three-gpu-pathtracer', 'src') };
+// The drawing kit's marker and QR readers (classic scripts, public/views/drawing.js loads them) are served the same way.
+const VENDOR = { 'three-mesh-bvh': path.join(ROOT, 'node_modules', 'three-mesh-bvh', 'src'), 'three-gpu-pathtracer': path.join(ROOT, 'node_modules', 'three-gpu-pathtracer', 'src'),
+  'js-aruco2': path.join(ROOT, 'node_modules', 'js-aruco2', 'src'), jsqr: path.join(ROOT, 'node_modules', 'jsqr', 'dist') };
+// The printable drawing template and its box positions (Download template, and the parser's layout).
+const TEMPLATE = path.join(ROOT, 'assets', 'template');
 const MAX_INFER = 4 * 1024 * 1024; // a 256 px PNG of the photo plus its cluster statistics
 const VERSION = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 // The app page may only run its own files (and its inline import map). WebAssembly is for the Draco/Meshopt decoders.
@@ -88,7 +94,7 @@ const REGIONS = { global: 'https://openapi.tripo3d.ai/v3', china: 'https://opena
 const SCENES = Object.keys(ENVIRONMENTS); // the one room list every workspace shares (environments.js ROOMS)
 // Version fields mirrored at the top level of each library entry, so v0.2 readers and the UI see the active version.
 const VERSION_FIELDS = ['task_id', 'status', 'progress', 'tripo_status', 'glb', 'thumb', 'credits', 'error', 'exports', 'source',
-  'provider', 'engine', 'mode', 'views', 'upstream_status', 'note', 'generation', 'file', 'fileName'];
+  'provider', 'engine', 'mode', 'views', 'upstream_status', 'note', 'generation', 'file', 'fileName', 'fillNote'];
 const RESULTS_KEPT = 24 * 60 * 60 * 1000; // 3D AI Studio deletes results after 24 hours
 const EXPIRED = '3D AI Studio keeps results for 24 hours and this job is older, so its model is gone. Retry to generate it again.';
 const KEY_FORMAT = /^[\x21-\x7e]{10,300}$/; // printable, no spaces; it goes into an Authorization header
@@ -97,7 +103,7 @@ const MIME = {
   '.json': 'application/json', '.md': 'text/markdown; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
   '.svg': 'image/svg+xml', '.ttf': 'font/ttf', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.usdz': 'model/vnd.usdz+zip',
-  '.wasm': 'application/wasm',
+  '.wasm': 'application/wasm', '.pdf': 'application/pdf',
 };
 
 class HttpError extends Error {
@@ -192,6 +198,7 @@ export async function startServer({
   const defaults = {
     region: 'global', model, texture: true, pbr: true, provider: DEFAULT_PROVIDER, setups: {},
     localEngine: { weightsDir: '', python: '' }, // '' = <data folder>/local-engine/weights and "python" on PATH
+    fillHoles: true, // Setup's Clean up: fill small holes in every new model
     renderer: 'three', blenderPath: '', ffmpegPath: '', outputRoot: '', defaultScene: 'white-cyc-studio', alsoTransparent: true, backdrops: {},
     lighting: DEFAULT_LIGHTING, glass: DEFAULT_GLASS,
     studioPresets: {}, // the user's saved scene looks (look.js), by name; the shipped ones live in the page
@@ -561,6 +568,7 @@ export async function startServer({
       else {
         v.glb = await download(url, dir, vname('model', v.n), '.glb');
         if (t.output.rendered_image_url) v.thumb = await download(t.output.rendered_image_url, dir, vname('preview', v.n), '.png');
+        await cleanUp(m, v);
         Object.assign(v, { status: 'ready', progress: 100, credits: t.credits_consumed });
       }
     } else if (FAILED.includes(t.status)) Object.assign(v, { status: 'failed', error: failure(t) });
@@ -579,8 +587,36 @@ export async function startServer({
       const glb = await local().result(v.task_id);
       const name = vname('model', v.n) + '.glb';
       await writeFile(path.join(MODELS, m.id, name), glb);
-      Object.assign(v, { glb: name, status: 'ready', progress: 100, credits: 0 });
+      await cleanUp(m, Object.assign(v, { glb: name }));
+      Object.assign(v, { status: 'ready', progress: 100, credits: 0 });
     } else if (t.status === 'failed') Object.assign(v, { status: 'failed', error: `Local engine: ${t.error || 'failed'}` });
+  }
+
+  // Fill small holes (Setup's Clean up, on unless turned off) in a model that was just made: in Blender when Blender
+  // is the renderer, else in the app (glb-fill.mjs), which also takes over if Blender fails. The file is replaced; a
+  // failure only leaves it as it came. The result is one plain line (fillNote) on the version and in the log.
+  async function cleanUp(m, v) {
+    if (settings.fillHoles === false || !/\.glb$/i.test(v.glb || '')) return;
+    const file = path.join(MODELS, m.id, v.glb);
+    let r = null;
+    const bin = settings.renderer === 'blender' && findBlender();
+    if (bin) {
+      const tmp = `${file}.${randomUUID()}`;
+      try {
+        await runBlender({}, bin, ['-b', '-P', path.join(path.dirname(blenderScript), 'blender_fillholes.py'), '--', '--glb', file, '--out', `${tmp}.glb`, '--report', `${tmp}.json`]);
+        r = JSON.parse(await readFile(`${tmp}.json`, 'utf8'));
+        if (r.holes || r.cracks) await rename(`${tmp}.glb`, file);
+      } catch (e) { console.error(`Fill small holes in Blender: ${e.message}`); r = null; }
+      await Promise.all([rm(`${tmp}.glb`, { force: true }), rm(`${tmp}.json`, { force: true })]);
+    }
+    if (!r) {
+      try {
+        r = fillGlb(await readFile(file));
+        if (r.holes || r.cracks) await writeFile(file, r.glb);
+      } catch (e) { console.error(`Fill small holes: ${e.message}`); return; }
+    }
+    v.fillNote = fillNote(r);
+    console.log(`${m.name} v${v.n}: ${v.fillNote}`);
   }
 
   // ---- Local engine (local.mjs): TRELLIS on the user's GPU, started on first use, stopped on close ----
@@ -674,6 +710,7 @@ export async function startServer({
     const done = { glb: await downloadAsset(glb.asset, dir, vname('model', v.n), ['.glb']), status: 'ready', progress: 100, credits: v.estimate };
     if (image?.asset) done.thumb = await downloadAsset(image.asset, dir, vname('preview', v.n), ['.png', '.jpg', '.jpeg', '.webp']).catch(() => undefined);
     wallet.at = 0; // the balance changed
+    if (library.includes(m)) await cleanUp(m, Object.assign(v, { glb: done.glb }));
     return finishAiJob(m, v, done);
   }
   async function finishAiJob(m, v, changes) {
@@ -981,7 +1018,7 @@ export async function startServer({
         const okPath = (x) => x === '' || (typeof x === 'string' && x.length < 1024 && path.isAbsolute(x));
         if (!l || typeof l !== 'object' || !okPath(l.weightsDir ?? '') || !okPath(l.python ?? '')) throw new HttpError(400, 'localEngine needs full folder and file paths');
         next.localEngine = { weightsDir: l.weightsDir ?? settings.localEngine.weightsDir, python: l.python ?? settings.localEngine.python };
-      } else if (['texture', 'pbr', 'alsoTransparent', 'showHelp'].includes(k)) bool(k);
+      } else if (['texture', 'pbr', 'alsoTransparent', 'showHelp', 'fillHoles'].includes(k)) bool(k);
       else if (k === 'theme') next.theme = normalizeTheme(body.theme);
       else if (k === 'gridUnit') { if (!['m', 'ft'].includes(body.gridUnit)) throw new HttpError(400, 'Grid unit must be m or ft'); next.gridUnit = body.gridUnit; }
       else if (k === 'gitRepo') {
@@ -1196,19 +1233,16 @@ export async function startServer({
     const fx = cleanExtras({ effect }).effect;
     const effectArg = fx ? ['--effect', JSON.stringify(fx)] : [];
     const materialsFile = path.join(MODELS, m.id, 'blender-materials.json');
-    const specs = paint?.pieces ? Object.fromEntries(Object.entries(paint.pieces).filter(([, p]) => p && (p.material || p.slot || p.colors || p.region || p.hidden))
-      .map(([key, p]) => [key, { ...blenderMaterial(deserializeMaterial(p.material), resolveColors(paint, p), p.slot), slot: p.slot, textured: p.material?.textured !== false && !p.material?.color, ...(p.hidden && { hidden: true }) }])) : {};
-    // Each piece's Blender object and material slot (a mesh with Paint and Accents is two pieces in the app, one object in Blender).
-    let where = [];
-    if (Object.keys(specs).length) { try { where = glbPieces(readFileSync(path.join(MODELS, m.id, v.glb))); } catch { /* no file: keys only */ } }
-    const materials = locatePieces(specs, where);
+    // Each piece's Blender object and material slot (a mesh with Paint and Accents is two pieces in the app, one object
+    // in Blender), Part colors' Glow, Energy and pulse, and the face groups by node.
+    const materialsSpec = paintSpec(paint, () => readFileSync(path.join(MODELS, m.id, v.glb)));
     const extrasArg = extrasOf(m);
     const stampArg = stamp !== false && stampText(m.renders.at) ? ['--stamp', stampText(m.renders.at)] : []; // one stamp for every look and frame
     const stillOut = (look) => path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still, stampFile(m.renders.at)));
     const job = { status: 'running', looks, look: looks[0], frame: 0, frames, error: null };
     jobs.set(m.id, job);
     (async () => {
-      await writeAtomic(materialsFile, { materials, groups: paint?.groups || {} });
+      await writeAtomic(materialsFile, materialsSpec);
       for (const look of looks) {
         job.look = look;
         job.frame = 0;
@@ -1293,6 +1327,27 @@ export async function startServer({
       }
     })();
     return rigView(job);
+  }
+
+  // ---- Remove part (glb-trim.mjs): one loose piece out of the model on screen, saved as a new version (trimmed-vN.glb)
+  // made from the active one. The model does not switch here: the page switches to it as one undo step, so Ctrl+Z
+  // goes back to the version before. Nothing is deleted; the older version stays under Versions.
+  async function removePiece(m, { piece, vertex, expect }) {
+    const v = active(m);
+    if (v.status !== 'ready' || !v.glb) throw new HttpError(409, 'The model is not ready yet');
+    if (rigging(m.id)) throw new HttpError(409, 'Wait for the joints to finish, then remove the piece.');
+    if (![piece, vertex, expect].every((x) => Number.isInteger(x) && x >= 0)) throw new HttpError(400, 'Pick a piece on the model first');
+    let r;
+    try { r = trimGlb(await readFile(path.join(MODELS, m.id, v.glb)), { piece, vertex, expect }); } catch (e) { throw new HttpError(409, e.message); }
+    const n = Math.max(...m.versions.map((x) => x.n)) + 1;
+    const out = `trimmed-v${n}.glb`;
+    await writeFile(path.join(MODELS, m.id, out), r.glb);
+    const nv = { n, created_at: new Date().toISOString(), provider: 'trim', status: 'ready', progress: 100, glb: out, thumb: v.thumb, source: v.source,
+      exports: {}, credits: 0, generation: null, from: v.n, removed: r.removed, ...(v.rigged && { rigged: true, rig: v.rig }),
+      note: `Removed a piece (${r.removed.toLocaleString('en-US')} triangles) from version ${v.n}` };
+    m.versions.push(nv);
+    await save();
+    return { model: m, version: n, removed: r.removed };
   }
 
   // ---- Spin sets for Dud Rents (spin.mjs): photo imports, Generate Spin Set, Send to Dud Rents ----
@@ -1406,6 +1461,10 @@ export async function startServer({
       if (parts[0] === 'vendor' && parts[1] === 'three' && parts[2] === 'examples' && parts[3] === 'jsm') return serveFile(res, inside(threeAddons, parts.slice(4)));
       if (parts[0] === 'vendor' && parts[1] === 'three' && parts[2] === 'build') return serveFile(res, inside(THREE, parts.slice(2)));
       if (parts[0] === 'vendor' && VENDOR[parts[1]] && parts[2] === 'src') return serveFile(res, inside(VENDOR[parts[1]], parts.slice(3)));
+      if (parts[0] === 'template' && parts[1] === 'layout.json' && parts.length === 2) return serveFile(res, path.join(TEMPLATE, 'layout.json'));
+      if (parts[0] === 'template' && parts[1] === 'Flatform-Drawing-Template.pdf' && parts.length === 2) {
+        return serveFile(res, path.join(TEMPLATE, parts[1]), { 'Content-Disposition': 'attachment; filename="Flatform-Drawing-Template.pdf"' });
+      }
       const file = inside(PUBLIC, parts.length ? parts : ['index.html']);
       return serveFile(res, file, file.endsWith('.html') ? { 'Content-Security-Policy': CSP } : {});
     }
@@ -1706,6 +1765,7 @@ export async function startServer({
         return send(res, 200, { model: m, settings: s });
       }
       if (sub === 'rig' && method === 'POST') return send(res, 202, startRig(m, { markers: (await readJson(req, 16384)).markers ?? null }));
+      if (sub === 'remove-piece' && method === 'POST') return send(res, 201, await removePiece(m, await readJson(req)));
       if (sub === 'rig' && method === 'GET') return send(res, 200, rigView(rigJobs.get(id)) ?? null);
       if (sub === 'versions' && method === 'POST') return send(res, 201, await addVersion(req, m));
       if (sub === 'enhance' && method === 'POST') return send(res, 202, await startEnhance(m, (await readJson(req)).kind));

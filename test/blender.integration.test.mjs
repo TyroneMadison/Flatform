@@ -25,6 +25,14 @@ import { createKeyStore } from '../keys.mjs';
 import { humanoidMesh } from './fixtures/humanoid-mesh.mjs';
 import { loadGlb, poseDamage } from './rig-check.mjs';
 import { fromPreset } from '../public/lib/handpose.js';
+import { holeyGlb, HOLEY } from './fixtures/holey-mesh.mjs';
+import { fillHoles } from '../public/lib/holes.js';
+import { readGlb, accessor, INDEX_TYPES } from '../glb-trim.mjs';
+import { presetConfig } from '../public/lib/engines.js';
+import { robotGlb, robotMesh } from './fixtures/robot-mesh.mjs';
+import { segmentFaces, groupOrder, labelRoles, applyRoles, normPoint, surfaceArea, pulseAt } from '../public/lib/roles.js';
+import { paintSpec } from '../glb-pieces.mjs';
+import { defaultPaint } from '../public/lib/tenno.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const SCRIPT = path.join(ROOT, 'render', 'blender_turntable.py');
@@ -78,7 +86,7 @@ if (!BIN) {
   const outputs = [];
   before(async () => {
     console.log(`Blender ${await blenderVersion(BIN)}: ${BIN}\nRenders: ${OUT}`);
-    for (const d of ['fixtures', 'environments', 'pose', 'compose', 'ideas', 'autorig']) await rm(path.join(OUT, d), { recursive: true, force: true });
+    for (const d of ['fixtures', 'environments', 'pose', 'compose', 'ideas', 'autorig', 'fill', 'roles']) await rm(path.join(OUT, d), { recursive: true, force: true });
     const r = await blender(['-P', path.join(ROOT, 'test', 'blender', 'make_fixtures.py'), '--', FIX]);
     ok(r);
     assert.ok(existsSync(path.join(FIX, 'car.glb')) && existsSync(path.join(FIX, 'mixamo-rig.glb')), 'test models were not made');
@@ -291,6 +299,93 @@ if (!BIN) {
         await rig(process.env.FLATFORM_RIG_SAMPLE, 'sample', markers);
       }
       console.log(['Rig times:', ...times.map((t) => `  ${t}`)].join('\n'));
+    } finally { await app.close(); }
+  });
+
+  test('Part colors in Blender: every part wears its role color, the face groups match the app, Energy glows and pulses', LONG, async () => {
+    const dir = path.join(OUT, 'roles');
+    await mkdir(dir, { recursive: true });
+    const glb = path.join(dir, 'robot.glb'), specFile = path.join(dir, 'materials.json');
+    await writeFile(glb, robotGlb());
+    // The parts and roles exactly as the page makes them (compose-roles.js findParts).
+    const { body } = robotMesh();
+    const total = surfaceArea(body.pos, body.idx);
+    const seg = segmentFaces(body.pos, body.idx, { colors: body.faceColors, totalArea: total });
+    const box = { min: [-0.53, 0.03, -0.18], max: [0.53, 1.9, 0.19] };
+    const parts = groupOrder(seg.labels).map((p, gi) => ({ key: `Body#0@${gi}`, name: `Part ${p + 1}`, area: seg.parts[p].area / total, c: seg.parts[p].c, color: seg.parts[p].color, emissive: 0, faces: seg.parts[p].faces }));
+    parts.push({ key: 'Visor#1', name: 'Visor', area: 0.002, c: [0, 1.77, 0.135], color: [0.1, 0.1, 0.1], emissive: 1, faces: 12 });
+    const roles = labelRoles(parts, { center: 0, size: 2 });
+    let paint = applyRoles(defaultPaint(), {
+      parts: parts.map((p) => ({ key: p.key, name: p.name, c: normPoint(p.c, box), a: p.area, role: roles[p.key] })),
+      groups: { 'Body#0': { labels: Buffer.from(seg.labels).toString('base64'), names: seg.parts.map((_, i) => `Part ${i + 1}`) } }, meshes: ['Body#0'], sig: 's',
+      colors: { primary: '#2050a0', secondary: '#e0e0e0', tertiary: '#40a040', accents: '#ff8800', energy: '#00ffee' },
+    });
+    paint = { ...paint, roles: { ...paint.roles, pulse: 3, strength: { emissive: 2, energy: 7 } } };
+    await writeFile(specFile, JSON.stringify(paintSpec(paint, () => robotGlb())));
+    const env = blenderEnvironment('white-cyc-studio', envCamera(ENVIRONMENTS['white-cyc-studio'].cam, 4 / 3), { hdri: (n) => path.join(HDRI, `${n}.hdr`) });
+    const r = await render(['--glb', glb, '--out', dir, '--slug', 'robot', '--look', 'studio', '--frames', '2', '--res', '400x300', '--samples', '16', '--kind', 'humanoid',
+      '--environment', JSON.stringify(env), '--materials', specFile, '--report-parts']);
+    ok(r);
+    assert.match(r.out, /FLATFORM_GROUPS Body#0 8/, 'the body is split into the same 8 parts');
+    const lines = [...r.out.matchAll(/FLATFORM_PART (\S+) (.+) (#[0-9a-f]{6}) ([\d.]+) (\d+)/g)].map((x) => ({ node: x[1], name: x[2], hex: x[3], glow: Number(x[4]), faces: Number(x[5]) }));
+    const near = (a, b) => [1, 3, 5].every((i) => Math.abs(parseInt(a.slice(i, i + 2), 16) - parseInt(b.slice(i, i + 2), 16)) <= 2);
+    for (const p of parts.filter((x) => x.key.startsWith('Body'))) {
+      const got = lines.find((l) => l.node === 'Body' && l.name === p.name);
+      assert.ok(got, `${p.name} has its own material in Blender`);
+      assert.ok(near(got.hex, paint.colors.global[roles[p.key]]), `${p.name} (${roles[p.key]}) is ${paint.colors.global[roles[p.key]]}, Blender has ${got.hex}`);
+      assert.equal(got.faces, p.faces, `${p.name}: the same faces as in the app`);
+    }
+    const visor = lines.find((l) => l.node === 'Visor');
+    assert.equal(roles['Visor#1'], 'energy');
+    assert.equal(visor.glow, 7, 'Energy strength from Part colors');
+    const pulses = [...r.out.matchAll(/FLATFORM_PULSE (\d+) ([\d.]+)/g)].map((x) => Number(x[2]));
+    assert.deepEqual(pulses.map((v) => v.toFixed(2)), [0, 1].map((f) => pulseAt(7, 3, f / 30).toFixed(2)), 'the same pulse as the app, frame by frame');
+    const file = path.join(dir, 'robot_000.png');
+    const s = await stats(file);
+    assert.ok(s.spread > 4 && s.mean > 8, 'a real picture');
+    outputs.push(file);
+  });
+
+  test('Fill small holes in Blender: the same holes and cracks as the app, UVs and paint kept, the big opening left open', LONG, async () => {
+    const dir = path.join(OUT, 'fill');
+    await mkdir(dir, { recursive: true });
+    const src = path.join(dir, 'holey.glb'), out = path.join(dir, 'filled.glb'), report = path.join(dir, 'fill.json');
+    await writeFile(src, holeyGlb());
+    ok(await blender(['-P', path.join(ROOT, 'render', 'blender_fillholes.py'), '--', '--glb', src, '--out', out, '--report', report]));
+    assert.deepEqual(JSON.parse(await readFile(report, 'utf8')), HOLEY);
+    const { json, bin } = readGlb(await readFile(out));
+    const prim = json.meshes[0].primitives[0];
+    assert.ok(prim.attributes.TEXCOORD_0 != null && prim.attributes.NORMAL != null, 'UVs and normals are still there');
+    assert.equal(json.materials[prim.material].name, 'Paint');
+    const pos = accessor(json, bin, prim.attributes.POSITION, Float32Array, 3);
+    const index = accessor(json, bin, prim.indices, INDEX_TYPES[json.accessors[prim.indices].componentType], 1);
+    const left = fillHoles(pos, index);
+    assert.deepEqual([left.holes, left.cracks], [0, 0], 'nothing small left to fill');
+    assert.equal(fillHoles(pos, index, { maxEdges: 100, maxSize: 10 }).holes, 1, 'the cut-off bottom is still open');
+    outputs.push(out);
+    // Through the real server: Blender as the renderer fills a newly made model in Blender.
+    const data = path.join(dir, 'app');
+    await rm(data, { recursive: true, force: true });
+    await mkdir(path.join(data, 'local-engine', 'weights'), { recursive: true });
+    await writeFile(path.join(data, 'local-engine', 'weights', 'complete.json'), '{}');
+    const eng = { submit: async () => ({ task_id: 't1' }), status: async () => ({ status: 'success', progress: 100 }), result: async () => holeyGlb(), stop() {} };
+    const app = await startServer({ dataDir: data, keyStore: createKeyStore({ env: {} }), localEngine: eng, cudaCheck: async () => ({ name: 'test' }),
+      apiBase: 'http://127.0.0.1:9/v3', threeDAIBase: 'http://127.0.0.1:9', updateUrl: 'http://127.0.0.1:9/latest', updateDelayMs: 3600000 });
+    const base = `http://127.0.0.1:${app.port}`;
+    try {
+      const set = (body) => fetch(`${base}/api/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      assert.equal((await set({ blenderPath: BIN })).status, 200);
+      assert.equal((await set({ renderer: 'blender' })).status, 200);
+      const form = new FormData();
+      form.append('name', 'Ball');
+      form.append('setup', JSON.stringify(presetConfig('local', 'balanced')));
+      form.append('front', new Blob([Buffer.from('89504e470d0a1a0a', 'hex')], { type: 'image/png' }), 'front.png');
+      const m = await (await fetch(`${base}/api/models`, { method: 'POST', body: form })).json();
+      let got;
+      for (let i = 0; i < 5; i++) { got = await (await fetch(`${base}/api/models/${m.id}`)).json(); if (got.status === 'ready') break; }
+      assert.equal(got.fillNote, 'Filled 3 small holes and closed 28 tiny cracks');
+      const saved = await readFile(path.join(data, 'models', m.id, got.glb));
+      assert.match(JSON.stringify(readGlb(saved).json.asset), /Khronos glTF Blender I\/O/, 'Blender wrote the saved model');
     } finally { await app.close(); }
   });
 }

@@ -316,9 +316,9 @@ test('glb-pieces: app piece i is node + material slot in Blender (Body = Paint +
   head.write('glTF', 0, 'latin1'); head.writeUInt32LE(2, 4); head.writeUInt32LE(20 + json.length, 8); head.writeUInt32LE(json.length, 12); head.writeUInt32LE(0x4e4f534a, 16);
   const pieces = glbPieces(Buffer.concat([head, json]));
   assert.deepEqual(pieces, [
-    { node: 'Body', prim: 0, prims: 2, material: 'Paint' },
-    { node: 'Body', prim: 1, prims: 2, material: 'Accents' },
-    { node: 'Cabin', prim: 0, prims: 1, material: 'Paint' },
+    { node: 'Body', prim: 0, prims: 2, material: 'Paint', mesh: 0 },
+    { node: 'Body', prim: 1, prims: 2, material: 'Accents', mesh: 0 },
+    { node: 'Cabin', prim: 0, prims: 1, material: 'Paint', mesh: 1 },
   ]);
   const spec = locatePieces({ 'Cube_1#1': { base_color: '#896185' }, 'Cube#0@2': { base_color: '#000000' } }, pieces);
   assert.deepEqual(spec['Cube_1#1'], { base_color: '#896185', node: 'Body', prim: 1, prims: 2, source_material: 'Accents' });
@@ -327,5 +327,6 @@ test('glb-pieces: app piece i is node + material slot in Blender (Body = Paint +
   const py = read('render/blender_turntable.py');
   assert.match(py, /def piece_slots\(meshes, piece\):/);
   assert.match(py, /if piece\.get\("source_material"\) in names:/, 'the slot is found by material name');
-  assert.match(read('server.mjs'), /const materials = locatePieces\(specs, where\);/);
+  assert.match(read('glb-pieces.mjs'), /return \{ materials: locatePieces\(specs, where\), groups: placed \};/);
+  assert.match(read('server.mjs'), /const materialsSpec = paintSpec\(paint, /, 'the server writes what paintSpec makes');
 });

@@ -177,7 +177,7 @@ test('rigging runs as its own job: the model stays as it is until the rig is che
     const fail = await wait(bent.id);
     assert.equal(fail.status, 'failed');
     assert.equal(fail.fallback, 'markers');
-    assert.match(fail.error, /^Could not place the joints by itself: .+Show me where the joints are instead\.$/);
+    assert.match(fail.error, /^Flatform could not find the joints by itself \(.+\), so click the 10 spots on the model\.$/);
     assert.equal((await json(`/api/models/${bent.id}`)).body.versions.length, 1);
     const t = humanoidMesh({ arms: 'bent' }).truth;
     const front = (p, dz = 0.05) => [p[0], p[1], p[2] + dz];

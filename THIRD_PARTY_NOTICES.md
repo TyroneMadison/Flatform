@@ -14,6 +14,8 @@ Flatform is MIT licensed (see `LICENSE`). It ships these third-party components.
 | [pngjs](https://github.com/pngjs/pngjs) | 6.0.0 | MIT | used by heic-convert |
 | [three-gpu-pathtracer](https://github.com/gkjohnson/three-gpu-pathtracer) | 0.0.27 | MIT | path-traced preview in the scene composer |
 | [three-mesh-bvh](https://github.com/gkjohnson/three-mesh-bvh) | 0.9.16 | MIT | used by three-gpu-pathtracer |
+| [js-aruco2](https://github.com/damianofalcioni/js-aruco2) | 2.0.0 | MIT (ArUco dictionaries: BSD-3-Clause, OpenCV) | finds the corner squares on drawing template photos |
+| [jsQR](https://github.com/cozmo/jsQR) | 1.4.0 | Apache-2.0 | reads the QR code on drawing template photos |
 
 ### libheif-js (LGPL-3.0)
 

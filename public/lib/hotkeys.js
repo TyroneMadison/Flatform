@@ -70,7 +70,7 @@ export function installHotkeys(ctx, doc = document) {
     const s = byId(id);
     if (!s) return;
     if (id === 'help') return shown() ? hide() : show(false);
-    if (s.click) { const b = view(s.click); if (!b || b.disabled) return ctx.say(s.none); return b.click(); }
+    if (s.click) { const b = view(s.click); if (!b || b.disabled) return ctx.say(b?.dataset?.none || s.none); return b.click(); }
     if (s.cycle) {
       const cards = [...doc.querySelectorAll('#view [data-light]')];
       if (!cards.length) return ctx.say('Load a model first');

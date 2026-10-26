@@ -131,7 +131,7 @@ Blender, seeded with sample models, photos and every room, and a Test screen wit
 `test-app/data` to start it fresh. `test-app/make-samples.py` rebuilds its samples with a
 real Blender; `npx electron test-app/make-env-thumbs.mjs` re-renders the scene thumbnails in the app's own renderer.
 
-Releases: push a tag like `v1.2.0` (numbering: [VERSIONING.md](VERSIONING.md), notes: [CHANGELOG.md](CHANGELOG.md)). GitHub Actions builds Windows and Mac and attaches them to a draft release.
+Releases: push a tag like `v1.3.0` (numbering: [VERSIONING.md](VERSIONING.md), notes: [CHANGELOG.md](CHANGELOG.md)). GitHub Actions builds Windows and Mac and attaches them to a draft release.
 
 </details>
 

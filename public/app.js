@@ -15,6 +15,7 @@ import { timeAgo } from './lib/session.js';
 import { displayVersion } from './lib/version.js';
 import { journey, dockFor, stepOf, isSheet, SHEETS, DEFAULT_TOOL, ringDash } from './lib/stage.js';
 import { updateNotice, lowNotice } from './lib/notices.js';
+import { toastPlan } from './lib/toasts.js';
 
 export const $ = (s, root = document) => root.querySelector(s);
 export const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -35,6 +36,7 @@ export const state = {
   lastId: null, // model last opened in a flow screen
   spend: null, // GET /api/spend: totals, daily series, per-model costs, balances and low-balance flags per provider
   workspace: 'car', // 'car' or 'warframe': stamped on models created or imported from a home screen
+  drawingFound: null, // { sheet, views } once dropped photos were read as drawing template pages (Drop's tips card)
   recents: [], // the last few scenes worked on, newest first: [{ id, at, frame }] (session.mjs)
   mode: localStorage.getItem('flatform.mode') === 'warframe' ? 'warframe' : 'car', // the Car / Warframe switch in the top bar
   tool: { ...DEFAULT_TOOL }, // the dock tool picked in each step
@@ -54,7 +56,12 @@ export const send = (path, method, data) => api(path, { method, headers: { 'Cont
 // kind: 'error', 'info' or 'ok' (a green border and a check that draws itself). Toasts stack under the top bar.
 export function toast(msg, kind = 'error', actions = []) {
   const box = $('#toasts');
+  const live = [...box.children].filter((c) => !c.classList.contains('out'));
+  const plan = toastPlan(live.map((c) => c.dataset.msg), msg);
+  if (plan.same != null) { live[plan.same].refresh(); return; } // the same words: keep that one up longer, no second copy
+  live.slice(0, plan.drop).forEach((c) => c.remove());
   const t = document.createElement('div');
+  t.dataset.msg = msg;
   t.className = `toast t-${kind}`;
   t.setAttribute('role', kind === 'error' ? 'alert' : 'status');
   if (kind === 'ok') t.insertAdjacentHTML('beforeend', '<svg class="tcheck" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg>');
@@ -67,8 +74,9 @@ export function toast(msg, kind = 'error', actions = []) {
     t.append(b);
   }
   box.append(t);
-  while (box.children.length > 3) box.firstElementChild.remove();
-  setTimeout(kill, kind === 'ok' ? 8000 : actions.length ? 15000 : kind === 'info' ? 4000 : 6000);
+  let timer;
+  t.refresh = () => { clearTimeout(timer); timer = setTimeout(kill, kind === 'ok' ? 8000 : actions.length ? 15000 : kind === 'info' ? 4000 : 6000); };
+  t.refresh();
 }
 export const announce = (msg) => { $('#live').textContent = msg; };
 
@@ -126,6 +134,7 @@ export function statusText(m) {
 export const statusClass = (m) => ({ ready: 'ready', spin: 'ready', failed: 'fail' })[m.status] || 'gen';
 // "Tripo v3.1" or "3D AI Studio · Hitem3D 3.0", for a version (or the model's active one).
 export function engineLabel(v) {
+  if (v.provider === 'trim') return v.note || 'A piece removed';
   if (providerOf(v) === 'local') return 'Local (free) · TRELLIS';
   if (providerOf(v) === 'tripo') return `Tripo ${String(v.options?.model || state.settings?.model || 'v3.1').split('-')[0]}`;
   return `3D AI Studio · ${ENGINES[v.engine]?.label || ''}`;
@@ -183,11 +192,20 @@ export function addFiles(files, { quick = false } = {}) {
   if (models.length) importModels(models);
   const photos = takePhotos(list.filter((f) => !isModelFile(f)));
   if (!photos.length) return;
+  // Warframe mode: photos of the drawing template open the drawing kit card instead of the setup screen.
+  if (!quick && state.mode === 'warframe' && !state.pending.modelId) {
+    import('./views/drawing.js').then(async (kit) => ((await kit.hasDrawingPage(photos)) ? kit.openDrawing(photos) : placePhotos(photos)))
+      .catch(() => placePhotos(photos));
+    return;
+  }
   if (quick) {
     const setup = normalize({ ...savedSetup(), mode: 'single' });
     for (const p of photos) enqueue({ name: p.name, setup, files: { front: p } });
     return;
   }
+  placePhotos(photos);
+}
+function placePhotos(photos) {
   const pending = state.pending;
   if (pending.modelId && route.name !== 'setup') Object.assign(pending, { photos: [], views: {}, modelId: null }); // a new model
   for (const p of photos) {
@@ -250,7 +268,9 @@ async function pump() {
         form.append('setup', JSON.stringify(item.setup));
         form.append('workspace', state.workspace);
         for (const [view, p] of Object.entries(item.files)) form.append(view, new File([p.file], p.file.name || `${view}.jpg`, { type: p.type }));
-        const m = upsert(await api(item.modelId ? `/api/models/${item.modelId}/versions` : '/api/models', { method: 'POST', body: form }));
+        let m = upsert(await api(item.modelId ? `/api/models/${item.modelId}/versions` : '/api/models', { method: 'POST', body: form }));
+        // From the drawing kit: the legend colors and the color map stay with the model for Part colors.
+        if (item.drawing && !item.modelId) m = upsert(await send(`/api/models/${m.id}`, 'PATCH', { scene: { ...m.scene, drawing: item.drawing } }).catch(() => m));
         state.queue.splice(state.queue.indexOf(item), 1);
         announce(`${m.name} is generating`);
         if (item.open && (['drop', 'setup'].includes(route.name) || (route.name === 'generate' && !route.id))) go(`#/generate/${m.id}`);

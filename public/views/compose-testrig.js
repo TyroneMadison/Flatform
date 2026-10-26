@@ -21,7 +21,7 @@ import { ENVIRONMENTS, envParts, partBounds, skyRotation } from '../lib/environm
 import { buildEnvironment, buildRain } from '../lib/env3d.js';
 import { mergeLook, lightsFromPreset } from '../lib/look.js';
 import { RIG_ENVS, RIG_LIGHTS, TIME, rigLookOf, lookChange, sunAt, timeLabel } from '../lib/rig-look.js';
-import { KEYCAPS, capLit, keyRoute, showHowTo, rememberHowTo, contextPrompt } from '../lib/testrig-ui.js';
+import { KEYCAPS, capLit, keyRoute, showHowTo, rememberHowTo, contextPrompt, testRigGate } from '../lib/testrig-ui.js';
 import { QUALITY, qualityOf, saveQuality, rigEffects, materialKind, SSS, lightingHdri, adaptScale, fpsOf, photoLabel } from '../lib/rig-quality.js';
 
 let ctx; // same ctx as compose-motion
@@ -29,9 +29,10 @@ let run = null; // the live session, or null
 
 export function initTestRig(c) { ctx = c; stopTestRig(); } // { scene, studio, change, draw }
 
+const isPerson = () => { const s = ctx?.studio(); return Boolean(s?.model) && (ctx.model?.()?.kind ? ctx.model().kind === 'humanoid' : modelInfo(s, ctx.scene().motion?.type || 'auto').type === 'humanoid'); };
 function available() {
   const s = ctx?.studio();
-  if (!s?.model || modelInfo(s, ctx.scene().motion?.type || 'auto').type !== 'humanoid') return false;
+  if (!isPerson()) return false;
   const names = [];
   s.model.traverse((o) => { if (o.isBone) names.push(o.name); });
   return canPoseByHand(mapBones(names));
@@ -42,7 +43,13 @@ const PLACE_TIP = 'The place your character stands in. It is the same world as y
 const LIGHT_TIP = 'A ready-made light: Studio, Sunset, Night or Neon. It sets the time of day, brightness, edge light, fog and glow.';
 
 export function renderTestRigGroup() {
-  if (!available()) return '';
+  const gate = testRigGate({ humanoid: isPerson(), rigged: available() });
+  if (!gate.show) return '';
+  if (!gate.enabled) {
+    return `<div class="grp" id="grp-testrig"><h3>Test rig</h3>
+    <button class="btn sec" type="button" data-tr="start" data-none="${esc(gate.hint)}" disabled title="${esc(gate.hint)} (${keyOf('testrig')})">Test Rig (${keyOf('testrig')})</button>
+    <p class="fine keep">${esc(gate.hint)}.</p></div>`;
+  }
   const l = rigLookOf(ctx.scene());
   return `<div class="grp" id="grp-testrig"><h3>Test rig</h3><p class="fine">Run, jump and climb as this character in a small play area, to see how its joints move.</p>
     <button class="btn pri" type="button" data-tr="start" title="Play as this character in a small play area (${keyOf('testrig')}). Esc comes back.">Test rig</button>

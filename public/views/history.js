@@ -1,7 +1,7 @@
 // Version history (key V): every render of this model, newest first, each with the settings that made it. Pick a
 // version to see it against the one before with a before-and-after slider, then "Use these settings" to go back to
 // how that render was set up. Nothing is ever deleted; going back is undone by going back to a newer version.
-import { $, esc, state, api, send, toast, findModel, focusModel, fileUrl, upsert, announce } from '../app.js';
+import { $, esc, state, api, send, toast, findModel, focusModel, fileUrl, upsert, announce, engineLabel } from '../app.js';
 import { changedNames, sliderKey } from '../lib/versions.js';
 
 let root, m, list = [], after = null, before = null, t = 0.5;
@@ -11,6 +11,13 @@ const when = (iso) => {
   return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 const byN = (n) => list.find((v) => v.n === n);
+// The model's own versions (made, joints added, a piece removed), newest first, each with a button to show it.
+function modelVersions() {
+  const vs = (m.versions || []).filter((v) => v.status === 'ready');
+  if (vs.length < 2) return '';
+  return `<section class="card glass hv-models"><h2 class="hv-h">Model versions</h2><ul class="hv-mlist">${[...vs].reverse().map((v) => `<li><span>Version ${v.n} · ${esc(v.note || engineLabel(v))}${v.n === m.activeVersion ? ' · <b>in use</b>' : ''}</span>
+    <button class="btn sm" type="button" data-hv-model="${v.n}" title="Show this version of the model in Scene" ${v.n === m.activeVersion ? 'disabled' : ''}>Use it</button></li>`).join('')}</ul></section>`;
+}
 
 export async function mount(el, { id }) {
   root = el; m = (id && findModel(id)) || focusModel(); t = 0.5;
@@ -40,7 +47,7 @@ function draw() {
   if (!m) { root.innerHTML = `${head}<a class="btn pri" href="#/library" title="Pick a model in the Library">Open the Library</a>`; return; }
   if (!list.length) {
     root.innerHTML = `${head}<section class="card glass hv-empty"><h2 class="hv-h">No renders yet</h2><p class="sub keep">Render this model. Each render shows up here so you can compare and go back.</p>
-      <a class="btn pri" href="#/compose/${esc(m.id)}/render" title="Open the Render tool in Scene">Render it in Scene</a></section>`;
+      <a class="btn pri" href="#/compose/${esc(m.id)}/render" title="Open the Render tool in Scene">Render it in Scene</a></section>${modelVersions()}`;
     return;
   }
   const changes = b ? changedNames(b.settings, a.settings) : '';
@@ -57,7 +64,7 @@ function draw() {
       <p class="fine keep" title="When this render started, New York time. The same time is on the picture and in its file name.">${esc(a.kind || 'Render')} made ${esc(a.stamp || new Date(a.at).toLocaleString())}.</p></div>
     ${list.length > 2 && b ? `<details class="adjust"><summary>Compare with another version</summary><div class="field"><label for="hvBefore">Before</label>
       <select class="inp" id="hvBefore" title="Pick the older version to compare with">${list.filter((v) => v.n !== after).map((v) => `<option value="${v.n}" ${v.n === before ? 'selected' : ''}>Version ${v.n} · ${esc(when(v.at))}</option>`).join('')}</select></div></details>` : ''}
-  </div></section>`;
+  </div></section>${modelVersions()}`;
   wipe();
 }
 function wipe() {
@@ -71,6 +78,12 @@ function wipe() {
 }
 
 async function onClick(e) {
+  const mv = e.target.closest('[data-hv-model]');
+  if (mv) {
+    try { m = upsert(await send(`/api/models/${m.id}`, 'PATCH', { activeVersion: Number(mv.dataset.hvModel) })); } catch (err) { return toast(err.message); }
+    toast(`Version ${mv.dataset.hvModel} of the model is in use. Open Scene to see it.`, 'ok');
+    return draw();
+  }
   const c = e.target.closest('[data-hv]');
   if (c) {
     after = Number(c.dataset.hv);
