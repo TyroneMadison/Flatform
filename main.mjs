@@ -1,5 +1,5 @@
 // Electron shell: runs the app server inside the app and shows it in a window.
-import { app, BrowserWindow, safeStorage, shell, ipcMain, dialog, Notification } from 'electron';
+import { app, BrowserWindow, safeStorage, shell, ipcMain, dialog, Notification, powerSaveBlocker } from 'electron';
 import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -145,6 +145,7 @@ app.whenReady().then(async () => {
   });
   const { port } = await startApp({
     dataDir: path.join(app.getPath('userData'), 'library'),
+    keepAwake: (() => { let id = null; return (on) => { if (on && id == null) id = powerSaveBlocker.start('prevent-app-suspension'); if (!on && id != null) { powerSaveBlocker.stop(id); id = null; } }; })(),
     defaultOutputRoot: suggestedOutputRoot(), // E:\Claude Stuff\car-360-pipeline\handoff on Tyrone's PC
     keyStore,
     // Looks for a newer release on GitHub; Download links open in the browser through the window-open handler below.

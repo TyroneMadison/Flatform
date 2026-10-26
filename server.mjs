@@ -28,6 +28,10 @@ import { createKeyStore } from './keys.mjs';
 import { createUpdater, parseVersion, updateOptions } from './updates.mjs';
 import { ENHANCE, enhanceBlock } from './enhance.mjs';
 import { createShares } from './share.mjs';
+import { planOvernight, morningSummary, awakeGuard, MAX_TRIES } from './overnight.mjs';
+import { runPlugin, pluginStore } from './plugins.mjs';
+import { DEFAULTS as BACKUP_DEFAULTS, checkBackup, runBackup } from './backup.mjs';
+import { disk, clearCache, renderTimes, enhanceSpend } from './usage.mjs';
 import { SERVICES, CONVERT_CREDITS, entry, append, parse, summary, defaultThresholds } from './ledger.mjs';
 import { createSpinService } from './spin.mjs';
 import { identifyCar } from './public/lib/identify.js';
@@ -148,6 +152,7 @@ export async function startServer({
   onWorkspaceSwitch = null, // called after the active workspace changes; startApp() restarts on the new folder
   onLowBalance, // (service, { balance, threshold }) when GET /api/spend finds a balance under its alert (main.mjs notifies)
   identifyApi, // (tests) the vision call car auto-identify makes when a vision key is set; never a real one here
+  keepAwake, // the app passes Electron's powerSaveBlocker on/off while the overnight queue runs
   defaultOutputRoot, // the app passes suggestedOutputRoot(): Send to Dud Rents and renders go there until Tyrone picks another folder
   basePath, // (tests, Sadie's branch) the local base path Generate Spin Set prepares with; realism.mjs stubs it
 }) {
@@ -1096,6 +1101,15 @@ export async function startServer({
 
   // Batch export of colour variants (batch.mjs): the queue survives a crash; the page runs the jobs.
   const batch = createQueue({ file: path.join(dataDir, 'batch.json') });
+  const overnight = createQueue({ file: path.join(dataDir, 'overnight.json'), planner: planOvernight, maxTries: MAX_TRIES });
+  await overnight.load();
+  const awake = awakeGuard(keepAwake);
+  awake(overnight.view());
+  const plugins = pluginStore(path.join(dataDir, 'plugins'));
+  const BACKUP = path.join(dataDir, 'backup.json');
+  let backup = { ...BACKUP_DEFAULTS, ...(existsSync(BACKUP) ? JSON.parse(await readFile(BACKUP, 'utf8')) : {}) };
+  const saveBackup = () => writeFile(BACKUP, JSON.stringify(backup, null, 2));
+  const git = (argv) => new Promise((ok, bad) => execFile('git', argv, { cwd: dataDir, timeout: 120000, windowsHide: true }, (e, out, err) => (e ? bad(new Error(err || e.message)) : ok(out))));
   await batch.load();
   // Local video export (video.mjs): a PNG sequence from the render folder to an MP4/WebM in a folder the user picks.
   async function exportVideo(body) {
@@ -1190,6 +1204,52 @@ export async function startServer({
       if (id === 'jobs' && sub && method === 'PATCH') {
         const b = await readJson(req);
         try { return send(res, 200, await batch.set(sub, b.status, b.error)); } catch (e) { throw new HttpError(e.status || 400, e.message); }
+      }
+    }
+    // Overnight queue: same queue engine as batch, with retries, timings and keep-awake while it runs.
+    if (area === 'overnight') {
+      const wrap = async (f) => { try { const v = await f(); awake(v); return v; } catch (e) { throw new HttpError(e.status || 400, e.message); } };
+      if (!id && method === 'GET') return send(res, 200, { ...overnight.view(), summary: morningSummary(overnight.view()) });
+      if (!id && method === 'POST') return send(res, 201, await wrap(async () => overnight.start(await readJson(req, 256 * 1024))));
+      if (!id && method === 'DELETE') return send(res, 200, await wrap(() => overnight.clear()));
+      if (id === 'retry' && method === 'POST') return send(res, 200, await wrap(() => overnight.retryFailed()));
+      if (id === 'cancel' && method === 'POST') return send(res, 200, await wrap(() => overnight.cancelAll()));
+      if (id === 'next' && method === 'GET') return send(res, 200, overnight.next());
+      if (id === 'jobs' && sub && method === 'PATCH') { const b = await readJson(req); return send(res, 200, await wrap(() => overnight.set(sub, b.status, b.error))); }
+    }
+    if (area === 'usage') {
+      if (!id && method === 'GET') {
+        const entries = parse(await readFile(SPEND, 'utf8').catch(() => ''));
+        return send(res, 200, { spend: await spendView(), enhance: enhanceSpend(entries), renders: renderTimes(batch.view(), overnight.view()), disk: await disk(dataDir, { output: settings.outputRoot }) });
+      }
+      if (id === 'cache' && sub && method === 'DELETE') { try { await clearCache(dataDir, sub); } catch (e) { throw new HttpError(400, e.message); } return send(res, 200, { ok: true }); }
+    }
+    // Plugin sandbox: test-run any script (worker + vm, no fs/network), install only after a passing run.
+    if (area === 'plugins') {
+      try {
+        if (!id && method === 'GET') return send(res, 200, await plugins.list());
+        if (id === 'run' && method === 'POST') { const b = await readJson(req, 1024 * 1024); return send(res, 200, await runPlugin(b.code, b.scene ?? {}, { timeoutMs: Math.min(30000, b.timeoutMs || 5000) })); }
+        if (id === 'install' && method === 'POST') {
+          const b = await readJson(req, 1024 * 1024);
+          const run = await runPlugin(b.code, b.scene ?? {});
+          await plugins.install(b.name, b.code, run);
+          return send(res, 201, { name: b.name, run });
+        }
+        if (id && method === 'DELETE') { await plugins.remove(id); return send(res, 200, { ok: true }); }
+      } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(400, e.message); }
+    }
+    // GitHub backup: off unless Tyrone turns it on. Backup branch only, never main, never force.
+    if (area === 'backup') {
+      if (!id && method === 'GET') return send(res, 200, backup);
+      if (!id && method === 'PUT') {
+        const b = await readJson(req);
+        const next = { ...backup, ...(typeof b.enabled === 'boolean' && { enabled: b.enabled }), ...(b.remote && { remote: String(b.remote) }), ...(b.branch && { branch: String(b.branch) }) };
+        try { checkBackup(next); } catch (e) { throw new HttpError(400, e.message); }
+        backup = next; await saveBackup(); return send(res, 200, backup);
+      }
+      if (id === 'run' && method === 'POST') {
+        if (!backup.enabled) throw new HttpError(409, 'Backup is off. Turn it on in Settings first.');
+        backup = await runBackup(backup, git); await saveBackup(); return send(res, 200, backup);
       }
     }
     if (area === 'workspaces') {
