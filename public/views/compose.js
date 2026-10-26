@@ -56,6 +56,7 @@ export async function mount(el, { id }) {
   el.innerHTML = `
   <div class="comp-top">${stepper('compose', m)}
     <div class="ctop-act">
+      <a class="btn ghostbtn" href="#/share/${esc(m.id)}" title="Shortcut: S">${icon('external')}<span>Share</span><kbd>S</kbd></a>
       <button class="btn sec" type="button" data-render="still">${icon('camera')}<span>Render still</span></button>
       <button class="btn pri" type="button" data-render="turntable">${icon('film')}<span>Render turntable</span></button>
     </div>

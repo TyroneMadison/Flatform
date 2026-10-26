@@ -38,6 +38,12 @@ export const CHECKLIST = [
     { id: 'history-compare', text: 'Drag across the picture, drag the slider below it, or use the arrow keys on the picture: the line moves between Before and After. It says what changed (for example Place).', open: 'car' },
     { id: 'history-restore', text: 'Pick Version 1 and click Use the settings from version 1. Open Compose: the place and camera are back the way they were for that render.', open: 'car' },
   ] },
+  { group: 'Share', items: [
+    { id: 'share-off', text: 'Press S (or the Share button at the top of Compose): it says Sharing isn’t set up yet, with one button, Turn on sharing. No link is made.', open: 'car' },
+    { id: 'share-form', text: 'Click Turn on sharing: two boxes, Share page address and Share password. A made-up address like http://example.com is refused with a plain message.', open: 'car' },
+    { id: 'share-on', text: 'Run node test-app/fake-share-worker.mjs (a share page on this computer only). Turn on sharing with address http://127.0.0.1:8787 and password flatform-test-share-token, then Make a share link: a link appears with Copy, Link works for and Turn off link, and it opens in the browser.', open: 'car' },
+    { id: 'share-still', text: 'A model with only a still render (no turntable) can still be shared: the link shows that picture.', open: 'car' },
+  ] },
   { group: 'Test app', items: [
     { id: 'app-separate', text: 'The title bar says Flatform Test, and the data folder below is "Flatform Test", not your Flatform library.' },
     { id: 'app-mock', text: 'Generate from a sample photo: it finishes in seconds and the Tripo balance stays 9999 (mock, no credits spent).' },

@@ -39,7 +39,7 @@ import { CHECK_IDS } from './public/lib/checklist.js';
 import { RETARGET, deserializePose, poseBones } from './public/lib/motion.js';
 const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
 import { ENHANCE, enhanceBlock } from './enhance.mjs';
-import { createShares } from './share.mjs';
+import { createShares, cleanShareUrl } from './share.mjs';
 import { createRenderHistory } from './render-history.mjs';
 import { planOvernight, morningSummary, awakeGuard, MAX_TRIES } from './overnight.mjs';
 import { runPlugin, pluginStore } from './plugins.mjs';
@@ -181,7 +181,16 @@ export async function startServer({
   const DECALS = path.join(dataDir, 'decals'); // decal images, named by their SHA-1 so the same file is stored once
   const LIB = path.join(dataDir, 'library.json');
   const previewLock = createPreviewLock({ file: path.join(dataDir, 'preview.json') });
-  const shares = createShares({ file: path.join(dataDir, 'shares.json'), baseUrl: () => settings?.share?.baseUrl || null });
+  // Sharing is set up once the share Worker's address and password are saved (Settings, Sharing). Both live in the
+  // encrypted key store ('cloudflare': { workerUrl, adminToken }), never in settings.json.
+  const shareRemote = () => {
+    try { const c = JSON.parse(keyStore.get('cloudflare') || 'null'); return c?.workerUrl && c?.adminToken ? { url: c.workerUrl, token: c.adminToken } : null; } catch { return null; }
+  };
+  const shares = createShares({ file: path.join(dataDir, 'shares.json'), baseUrl: () => settings?.share?.baseUrl || null, remote: shareRemote,
+    files: async (s) => { // the model's own render files only (the poster copy and video kept in its folder)
+      const read = (name) => (name ? readFile(path.join(MODELS, path.basename(String(s.modelId)), path.basename(String(name)))).catch(() => null) : null);
+      return { poster: await read(s.poster), video: await read(s.video) };
+    } });
   const SETTINGS = path.join(dataDir, 'settings.json');
   await mkdir(MODELS, { recursive: true });
   const history = createRenderHistory({ modelsDir: MODELS });
@@ -1682,12 +1691,23 @@ export async function startServer({
       }
     }
 
-    // Share links: mock links until the share worker is deployed (share-worker/README.md). Nothing uploads from here.
+    // Share links: mock links until the share Worker is deployed and set up (SHARE-DEPLOY.md); then links upload to it.
     if (area === 'shares') {
+      if (id === 'setup' && method === 'GET') return send(res, 200, { ready: shares.ready(), url: shareRemote()?.url || null });
+      if (id === 'setup' && method === 'POST') {
+        const body = await readJson(req);
+        let url;
+        try { url = cleanShareUrl(body.url); } catch (e) { throw new HttpError(400, e.message); }
+        const token = String(body.token ?? '').trim();
+        if (token.length < 16) throw new HttpError(400, 'The share password is the long SHARE_TOKEN from setting up the share page (16 characters or more)');
+        keyStore.set('cloudflare', JSON.stringify({ workerUrl: url, adminToken: token }));
+        return send(res, 200, { ready: true, url });
+      }
+      if (id === 'setup' && method === 'DELETE') { keyStore.remove('cloudflare'); return send(res, 200, { ready: false, url: null }); }
       if (!id && method === 'GET') return send(res, 200, await shares.list());
-      if (!id && method === 'POST') { try { return send(res, 201, await shares.create(await readJson(req))); } catch (e) { throw new HttpError(400, e.message); } }
-      if (id && method === 'PATCH') { const s = await shares.setExpiry(id, (await readJson(req)).expiresInDays ?? null); if (!s) throw new HttpError(404, 'No such link'); return send(res, 200, s); }
-      if (id && method === 'DELETE') return send(res, 200, { ok: await shares.remove(id) });
+      if (!id && method === 'POST') { try { return send(res, 201, await shares.create(await readJson(req))); } catch (e) { throw new HttpError(/^Could not make the link/.test(e.message) ? 502 : 400, e.message); } }
+      if (id && method === 'PATCH') { const s = await shares.setExpiry(id, (await readJson(req)).expiresInDays ?? null).catch((e) => { throw new HttpError(502, e.message); }); if (!s) throw new HttpError(404, 'No such link'); return send(res, 200, s); }
+      if (id && method === 'DELETE') return send(res, 200, { ok: await shares.remove(id).catch((e) => { throw new HttpError(502, e.message); }) });
     }
     if (area === 'identify' && !id && method === 'POST') return send(res, 200, await identify(await readJson(req, 64 * 1024)));
     if (area === 'spin') {
