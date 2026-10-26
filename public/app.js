@@ -191,11 +191,20 @@ export function addFiles(files, { quick = false } = {}) {
   if (models.length) importModels(models);
   const photos = takePhotos(list.filter((f) => !isModelFile(f)));
   if (!photos.length) return;
+  // Warframe mode: photos of the drawing template open the drawing kit card instead of the setup screen.
+  if (!quick && state.mode === 'warframe' && !state.pending.modelId) {
+    import('./views/drawing.js').then(async (kit) => ((await kit.hasDrawingPage(photos)) ? kit.openDrawing(photos) : placePhotos(photos)))
+      .catch(() => placePhotos(photos));
+    return;
+  }
   if (quick) {
     const setup = normalize({ ...savedSetup(), mode: 'single' });
     for (const p of photos) enqueue({ name: p.name, setup, files: { front: p } });
     return;
   }
+  placePhotos(photos);
+}
+function placePhotos(photos) {
   const pending = state.pending;
   if (pending.modelId && route.name !== 'setup') Object.assign(pending, { photos: [], views: {}, modelId: null }); // a new model
   for (const p of photos) {
@@ -258,7 +267,9 @@ async function pump() {
         form.append('setup', JSON.stringify(item.setup));
         form.append('workspace', state.workspace);
         for (const [view, p] of Object.entries(item.files)) form.append(view, new File([p.file], p.file.name || `${view}.jpg`, { type: p.type }));
-        const m = upsert(await api(item.modelId ? `/api/models/${item.modelId}/versions` : '/api/models', { method: 'POST', body: form }));
+        let m = upsert(await api(item.modelId ? `/api/models/${item.modelId}/versions` : '/api/models', { method: 'POST', body: form }));
+        // From the drawing kit: the legend colors and the color map stay with the model for Part colors.
+        if (item.drawing && !item.modelId) m = upsert(await send(`/api/models/${m.id}`, 'PATCH', { scene: { ...m.scene, drawing: item.drawing } }).catch(() => m));
         state.queue.splice(state.queue.indexOf(item), 1);
         announce(`${m.name} is generating`);
         if (item.open && (['drop', 'setup'].includes(route.name) || (route.name === 'generate' && !route.id))) go(`#/generate/${m.id}`);

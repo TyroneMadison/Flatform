@@ -391,8 +391,8 @@ async function generate() {
   const p = pending();
   const s = setup;
   const jobs = s.mode === 'views'
-    ? [{ name: p.views.front.name, setup: s, files: Object.fromEntries(VIEWS.filter((v) => p.views[v]).map((v) => [v, p.views[v]])) }]
-    : singlePhotos().map((ph) => ({ name: ph.name, setup: s, files: { front: ph } }));
+    ? [{ name: p.views.front.name, setup: s, files: Object.fromEntries(VIEWS.filter((v) => p.views[v]).map((v) => [v, p.views[v]])), ...(p.drawing && { drawing: p.drawing }) }]
+    : singlePhotos().map((ph) => ({ name: ph.name, setup: s, files: { front: ph }, ...(p.drawing && { drawing: p.drawing }) }));
   if (!jobs.length) return;
   if (model) {
     jobs.length = 1;
@@ -404,7 +404,7 @@ async function generate() {
   if (a?.balance != null && total > Number(a.balance) && !(await confirmDialog({ title: 'Not enough credits?',
     text: `This costs about ${total} credits. You have ${fmtBalance(a.balance)} with ${PROVIDERS[s.provider].name}. Send it anyway?`, ok: 'Send anyway' }))) return;
   rememberSetup(s).catch((err) => toast(err.message));
-  Object.assign(p, { photos: [], views: {}, modelId: null, setup: null });
+  Object.assign(p, { photos: [], views: {}, modelId: null, setup: null, drawing: null });
   jobs.forEach((job, i) => enqueue(job, i === 0));
   go(model ? `#/generate/${model.id}` : '#/generate');
 }

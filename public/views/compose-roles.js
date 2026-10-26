@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { $, esc, toast } from '../app.js';
 import { icon } from '../lib/icons.js';
 import { ColorPicker } from '../lib/color-picker.js';
+import { rolesFromColorMap } from '../lib/drawing-kit.js';
 import { pieceKey, listPieces } from '../lib/paint.js';
 import { DEFAULT_COLORS, setColor, recentColor } from '../lib/tenno.js';
 import {
@@ -134,12 +135,12 @@ async function findParts(keep = null) {
       const names = seg.parts.map(() => `Part ${++n}`);
       groups[m.key] = { labels: b64(seg.labels), names };
       meshes.push(m.key);
-      groupOrder(seg.labels).forEach((p, gi) => { const s = seg.parts[p]; parts.push({ key: `${m.key}@${gi}`, name: names[p], area: s.area / total, c: s.c, color: s.color || m.color, seed: m.textured ? m.color : s.color || m.color, emissive: m.emissive, emissiveHex: m.emissiveHex }); });
+      groupOrder(seg.labels).forEach((p, gi) => { const s = seg.parts[p]; parts.push({ key: `${m.key}@${gi}`, name: names[p], area: s.area / total, c: s.c, min: s.min, max: s.max, color: s.color || m.color, seed: m.textured ? m.color : s.color || m.color, emissive: m.emissive, emissiveHex: m.emissiveHex }); });
     } else {
       for (const p of (seg ? [{ key: m.key, name: m.o.name, group: null }] : pieces.filter((x) => x.mesh === m.o))) {
         const grp = p.group != null && m.o.geometry.groups[p.group];
         const s = grp ? statsOf(m.pos, m.o.geometry.index.array, grp.start, grp.count) : statsOf(m.pos, m.index);
-        parts.push({ key: p.key, name: paint.pieces?.[p.key]?.name || p.name, area: s.area / total, c: s.c, color: m.color, seed: m.color, emissive: m.emissive, emissiveHex: m.emissiveHex });
+        parts.push({ key: p.key, name: paint.pieces?.[p.key]?.name || p.name, area: s.area / total, c: s.c, min: s.min, max: s.max, color: m.color, seed: m.color, emissive: m.emissive, emissiveHex: m.emissiveHex });
       }
     }
   }
@@ -149,7 +150,10 @@ async function findParts(keep = null) {
   const size = Math.hypot(box.max[0] - box.min[0], box.max[1] - box.min[1], box.max[2] - box.min[2]) || 1;
   const fresh = parts.map((p) => ({ key: p.key, c: normPoint(p.c, box), a: p.area }));
   const kept = keep ? rematch(keep, fresh) : {};
-  const locked = Object.fromEntries(Object.entries(kept).map(([k, x]) => [k, x.role]));
+  // The drawing kit's color map names the role of the parts it colors (the parts you locked still win).
+  const drawing = ctx.scene().drawing;
+  const drawn = drawing?.map ? rolesFromColorMap(parts, box, drawing.map) : {};
+  const locked = { ...drawn, ...Object.fromEntries(Object.entries(kept).map(([k, x]) => [k, x.role])) };
   const roles = labelRoles(parts, { center: middleX(joints, box), size, joints: joints.length ? joints : null, locked });
   const out = parts.map((p, i) => ({ key: p.key, name: p.name, c: fresh[i].c, a: p.area, role: roles[p.key] || 'primary', locked: Boolean(kept[p.key]?.locked) }));
   // The first guess starts every role at the colors its parts have now, so the model looks the same afterwards.
@@ -161,6 +165,7 @@ async function findParts(keep = null) {
       if (w) colors[r] = `#${[0, 1, 2].map((k) => Math.round(Math.min(1, mine.reduce((t, p) => t + p.seed[k] * p.area, 0) / w) * 255).toString(16).padStart(2, '0')).join('')}`;
     }
     for (const r of ['emissive', 'energy']) { const p = parts.find((x) => roles[x.key] === r && x.emissiveHex); if (p) colors[r] = p.emissiveHex; }
+    Object.assign(colors, drawing?.colors); // the colors filled in on the template's cover
   }
   return { parts: out, groups, meshes, sig: sigOf(list), colors };
 }
@@ -215,6 +220,7 @@ export function renderRolesGroup() {
   if (!hasRoles()) {
     return `<div class="grp" id="grp-roles"><h3>${icon('scene', 14)} Part colors</h3>
       <p class="fine keep">Split the model into parts and give each part one of six colors.</p>
+      ${ctx.scene().drawing ? `<p class="fine keep">Your drawing's ${ctx.scene().drawing.map ? 'color map and colors are' : 'colors are'} ready. Find the parts to use them.</p>` : ''}
       <button class="btn pri" type="button" data-roles="guess" title="Find the parts of the model and guess a color for each one" ${studio?.model && !busy ? '' : 'disabled'}>${busy ? 'Finding the parts…' : 'Find the parts'}</button></div>`;
   }
   const counts = roleCounts(paint), r = rolesOf(paint);

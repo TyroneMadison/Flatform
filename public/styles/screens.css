@@ -559,3 +559,39 @@ button.mini { width: 100%; padding: 0; font: inherit; color: inherit; text-align
 .palette li small { margin-left: auto; color: var(--muted); font-size: 12px; }
 .fine.wrap { overflow-wrap: anywhere; }
 .su-panel .groups + .k { margin-top: 22px; }
+
+/* ---- Drawing kit card (views/drawing.js) ---- */
+dialog.drawdlg { width: min(720px, 94vw); max-height: 94vh; overflow: auto; padding: 18px 24px; }
+.drawdlg .btn { min-height: 44px; }
+.drawdlg .btn.icon { width: 44px; height: 44px; }
+.drawdlg .link { min-height: 44px; padding: 0 6px; }
+.dk-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.dk-head h2 { margin: 4px 0 0; }
+.dk-steps { list-style: none; counter-reset: dk; display: grid; gap: 10px; margin: 6px 0 20px; padding: 0; }
+.dk-steps li { counter-increment: dk; display: grid; grid-template-columns: 32px 1fr; column-gap: 12px; align-items: center; }
+.dk-steps li::before { content: counter(dk); grid-row: span 2; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); font: 700 13px var(--sans); }
+.dk-steps b { font-size: 14px; } .dk-steps span { color: var(--muted, #a9a39b); font-size: 13px; }
+.dk-reading { display: flex; align-items: center; gap: 12px; padding: 28px 4px; font-size: 14px; }
+.dk-spin { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line-4); border-top-color: var(--accent); animation: dkspin .8s linear infinite; }
+@keyframes dkspin { to { transform: rotate(360deg); } }
+.dk-banner { display: flex; gap: 12px; align-items: center; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--line-4); margin-bottom: 12px; }
+.dk-banner div { display: grid; gap: 2px; } .dk-banner b { font-size: 15px; } .dk-banner span { font-size: 12.5px; opacity: .85; }
+.dk-banner.good { background: var(--ok-bg); border-color: #3c5a2a; } .dk-banner.good svg { color: var(--ok); }
+.dk-banner.warn { background: var(--warn-bg); border-color: #5c3a22; } .dk-banner.warn svg { color: var(--warn); }
+.dk-banner.bad { background: var(--bad-bg); border-color: #5c2630; } .dk-banner.bad svg { color: var(--bad); }
+.dk-views { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.dk-view { margin: 0; border: 1px solid var(--line-3); border-radius: 8px; padding: 6px; background: var(--surface-1); opacity: .6; }
+.dk-view.on { opacity: 1; border-color: #3c5a2a; }
+.dk-view img, .dk-empty { display: grid; place-items: center; width: 100%; height: clamp(96px, 19vh, 230px); object-fit: contain; background: #fff; border-radius: 4px; color: #999; }
+.dk-view:not(.on) .dk-empty { background: transparent; }
+.dk-view figcaption { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; margin-top: 6px; }
+.dk-view figcaption em { font-style: normal; color: var(--muted, #a9a39b); } .dk-view.on figcaption em { color: var(--ok); }
+.dk-rows { display: grid; margin-bottom: 10px; }
+.dk-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 30px; border-bottom: 1px solid var(--line-2, rgba(255, 255, 255, .06)); font-size: 13px; }
+.dk-row .good { color: var(--ok); } .dk-row .mono { font-family: var(--mono); letter-spacing: .08em; }
+.dk-sw { display: inline-flex; gap: 6px; } .dk-sw i { width: 22px; height: 22px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, .18); }
+.dk-sw i.none { border-style: dashed; }
+.dk-warn { margin: 6px 0 10px; padding: 10px 12px 10px 28px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-size: 13px; display: grid; gap: 4px; }
+.dk-recipe { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; opacity: .9; margin: 8px 0 0; }
+.dk-foot { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.dk-foot .btn.pri { flex: 1 1 220px; }

@@ -60,7 +60,11 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
 const THREE = path.join(ROOT, 'node_modules', 'three');
 // Path tracer modules served to the page like three's addons (their src/ ships inside the app).
-const VENDOR = { 'three-mesh-bvh': path.join(ROOT, 'node_modules', 'three-mesh-bvh', 'src'), 'three-gpu-pathtracer': path.join(ROOT, 'node_modules', 'three-gpu-pathtracer', 'src') };
+// The drawing kit's marker and QR readers (classic scripts, public/views/drawing.js loads them) are served the same way.
+const VENDOR = { 'three-mesh-bvh': path.join(ROOT, 'node_modules', 'three-mesh-bvh', 'src'), 'three-gpu-pathtracer': path.join(ROOT, 'node_modules', 'three-gpu-pathtracer', 'src'),
+  'js-aruco2': path.join(ROOT, 'node_modules', 'js-aruco2', 'src'), jsqr: path.join(ROOT, 'node_modules', 'jsqr', 'dist') };
+// The printable drawing template and its box positions (Download template, and the parser's layout).
+const TEMPLATE = path.join(ROOT, 'assets', 'template');
 const MAX_INFER = 4 * 1024 * 1024; // a 256 px PNG of the photo plus its cluster statistics
 const VERSION = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 // The app page may only run its own files (and its inline import map). WebAssembly is for the Draco/Meshopt decoders.
@@ -99,7 +103,7 @@ const MIME = {
   '.json': 'application/json', '.md': 'text/markdown; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
   '.svg': 'image/svg+xml', '.ttf': 'font/ttf', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.usdz': 'model/vnd.usdz+zip',
-  '.wasm': 'application/wasm',
+  '.wasm': 'application/wasm', '.pdf': 'application/pdf',
 };
 
 class HttpError extends Error {
@@ -1457,6 +1461,10 @@ export async function startServer({
       if (parts[0] === 'vendor' && parts[1] === 'three' && parts[2] === 'examples' && parts[3] === 'jsm') return serveFile(res, inside(threeAddons, parts.slice(4)));
       if (parts[0] === 'vendor' && parts[1] === 'three' && parts[2] === 'build') return serveFile(res, inside(THREE, parts.slice(2)));
       if (parts[0] === 'vendor' && VENDOR[parts[1]] && parts[2] === 'src') return serveFile(res, inside(VENDOR[parts[1]], parts.slice(3)));
+      if (parts[0] === 'template' && parts[1] === 'layout.json' && parts.length === 2) return serveFile(res, path.join(TEMPLATE, 'layout.json'));
+      if (parts[0] === 'template' && parts[1] === 'Flatform-Drawing-Template.pdf' && parts.length === 2) {
+        return serveFile(res, path.join(TEMPLATE, parts[1]), { 'Content-Disposition': 'attachment; filename="Flatform-Drawing-Template.pdf"' });
+      }
       const file = inside(PUBLIC, parts.length ? parts : ['index.html']);
       return serveFile(res, file, file.endsWith('.html') ? { 'Content-Security-Policy': CSP } : {});
     }
