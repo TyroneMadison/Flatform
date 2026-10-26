@@ -1,0 +1,8 @@
+﻿name = "flatform-share"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "flatform-share"
+# SHARE_TOKEN is a secret: set it with `wrangler secret put SHARE_TOKEN`, never in this file.

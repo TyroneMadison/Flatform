@@ -22,7 +22,9 @@ export function planJobs({ modelId, variants = [], outputs = [], scene = null, a
   return jobs;
 }
 
-export function createQueue({ file, now = () => Date.now() } = {}) {
+// planner: how a start request becomes jobs (overnight.mjs passes its own). maxTries: failed jobs go back in the queue
+// by themselves until they have run this many times (1 = no automatic retry).
+export function createQueue({ file, now = () => Date.now(), planner = planJobs, maxTries = 1 } = {}) {
   let state = { batchId: null, createdAt: null, jobs: [] };
   const persist = async () => {
     if (!file) return;
@@ -39,8 +41,10 @@ export function createQueue({ file, now = () => Date.now() } = {}) {
     if (!NEXT[j.status].includes(to)) throw Object.assign(new Error(`Can't go from ${j.status} to ${to}`), { status: 409 });
     j.status = to;
     j.error = to === 'failed' ? String(error || 'Failed') : null;
-    if (to === 'running') j.tries += 1;
+    if (to === 'running') { j.tries += 1; j.startedAt = now(); }
+    if (to === 'done' && j.startedAt) j.ms = now() - j.startedAt;
     j.updatedAt = now();
+    if (to === 'failed' && j.tries < maxTries) { j.status = 'queued'; j.retrying = true; }
   };
   return {
     async load() {
@@ -53,7 +57,7 @@ export function createQueue({ file, now = () => Date.now() } = {}) {
     view: () => ({ ...state, counts: Object.fromEntries(STATUSES.map((s) => [s, state.jobs.filter((j) => j.status === s).length])) }),
     async start(plan) {
       if (state.jobs.some((j) => j.status === 'running' || j.status === 'queued')) throw Object.assign(new Error('A batch is already running'), { status: 409 });
-      state = { batchId: `b${now()}`, createdAt: now(), jobs: planJobs(plan) };
+      state = { batchId: `b${now()}`, createdAt: now(), jobs: planner(plan) };
       await persist();
       return this.view();
     },

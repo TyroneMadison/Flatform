@@ -14,6 +14,7 @@ Coordinates: Flatform's studio is Y-up with the camera on +Z. Blender is Z-up; t
 """
 import argparse
 import json
+import re
 import math
 import os
 import sys
@@ -78,6 +79,9 @@ def parse_args():
     p.add_argument("--still", type=float)
     p.add_argument("--still-out")
     p.add_argument("--samples", type=int, default=128)
+    # Generate Spin Set: the "Max realism" profile JSON (realism.mjs MAX_REALISM) and an interior spin.
+    p.add_argument("--profile")
+    p.add_argument("--interior", action="store_true")
     # The scene look (public/lib/look.js blenderLook): engine, tone mapping, exposure, background, hdri, lights.
     p.add_argument("--scenelook")
     # Painted pieces (public/lib/tenno.js blenderMaterial per piece key) and face groups, written by the server.
@@ -640,6 +644,57 @@ def setup_render(width, height, look, samples):
         print(f"GPU not used: {e}")
 
 
+def apply_profile(scene, meshes, profile):
+    """Max realism (realism.mjs): final-quality Cycles with every effect on. Each setting is tried on its own, so a
+    Blender version without one still renders."""
+    def put(obj, attr, value):
+        try:
+            setattr(obj, attr, value)
+        except Exception as e:  # noqa: BLE001
+            print(f"profile: {attr} not set ({e})")
+    cy = scene.cycles
+    put(cy, "samples", int(profile.get("samples", 512)))
+    put(cy, "use_denoising", bool(profile.get("denoise", True)))
+    put(cy, "use_adaptive_sampling", True)
+    put(cy, "use_fast_gi", False)
+    b = profile.get("bounces") or {}
+    put(cy, "max_bounces", int(b.get("total", 12)))
+    put(cy, "glossy_bounces", int(b.get("glossy", 8)))  # ray-traced reflections
+    put(cy, "transmission_bounces", int(b.get("transmission", 12)))  # refraction through glass
+    put(cy, "transparent_max_bounces", 16)
+    put(cy, "caustics_reflective", True)
+    put(cy, "caustics_refractive", bool(profile.get("refraction", True)))
+    if profile.get("ambientOcclusion"):
+        put(scene.world.light_settings, "distance", 1.0)
+        put(cy, "ao_bounces_render", 3)
+    tonemap = profile.get("tonemap", "AgX")
+    for transform in (tonemap, "AgX", "Khronos PBR Neutral", "Standard"):
+        try:
+            scene.view_settings.view_transform = transform
+            break
+        except TypeError:
+            continue
+    if profile.get("subsurface"):  # interior leather and fabric scatter light a little
+        for o in meshes:
+            for slot in o.material_slots:
+                m = slot.material
+                if not m or not m.use_nodes or not re.search(r"seat|leather|fabric|cloth|interior|trim", (m.name or "").lower()):
+                    continue
+                bsdf = next((n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+                if bsdf and "Subsurface Weight" in bsdf.inputs:
+                    bsdf.inputs["Subsurface Weight"].default_value = 0.15
+    cabin = (profile.get("glass") or {}).get("litCabin")
+    if cabin:  # a soft light inside the cabin so the interior reads through the glass
+        light("POINT", "cabin", (0, 0, 1.05), 40, target=(0, 0, 0.6), color=(1.0, 0.96, 0.9))
+
+
+def interior_camera(s):
+    """An interior spin: the camera sits at head height in the cabin and turns with the frames."""
+    cam = bpy.data.cameras.new("interior")
+    cam.lens = 18
+    return aim_camera(cam, (0.35, 0.0, 1.1), (0.35, -3.0, 1.0))
+
+
 def render_to(path):
     bpy.context.scene.render.filepath = path
     bpy.ops.render.render(write_still=True)
@@ -675,7 +730,12 @@ def main():
             apply_materials(meshes, json.load(f))
     setup_render(width, height, "transparent" if photo else args.look, args.samples)
     apply_look(json.loads(args.scenelook) if args.scenelook else None, meshes)
-    if s["view"] == "free" and s["orbit"]:
+    profile = json.loads(args.profile) if args.profile else None
+    if profile:
+        apply_profile(bpy.context.scene, meshes, profile)
+    if args.interior:
+        interior_camera(s)
+    elif s["view"] == "free" and s["orbit"]:
         free_camera(s)
     elif plate:
         plate_camera(plate["camera"], width / height, s, sphere)

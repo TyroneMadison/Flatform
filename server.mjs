@@ -35,6 +35,15 @@ import { normalizeTemplate } from './public/lib/templates.js';
 import { localEngine as createLocalEngine, downloadWeights, weightsReady, checkCuda, UPSCALER_FILES } from './local.mjs';
 import { loadPoses } from './public/lib/poses.js';
 const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
+import { ENHANCE, enhanceBlock } from './enhance.mjs';
+import { createShares } from './share.mjs';
+import { planOvernight, morningSummary, awakeGuard, MAX_TRIES } from './overnight.mjs';
+import { runPlugin, pluginStore } from './plugins.mjs';
+import { DEFAULTS as BACKUP_DEFAULTS, checkBackup, runBackup } from './backup.mjs';
+import { createPreviewLock } from './preview.mjs';
+import { disk, clearCache, renderTimes, enhanceSpend } from './usage.mjs';
+import { createSpinService } from './spin.mjs';
+import { identifyCar } from './public/lib/identify.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -155,11 +164,17 @@ export async function startServer({
   textureFetch = globalThis.fetch, // the texture library's network: ambientCG and Poly Haven (tests mock it)
   cudaCheck = checkCuda,
   onLowBalance, // (service, { balance, threshold }) when GET /api/spend finds a balance under its alert (main.mjs notifies)
+  identifyApi, // (tests) the vision call car auto-identify makes when a vision key is set; never a real one here
+  keepAwake, // the app passes Electron's powerSaveBlocker on/off while the overnight queue runs
+  defaultOutputRoot, // the app passes suggestedOutputRoot(): Send to Dud Rents and renders go there until Tyrone picks another folder
+  basePath, // (tests, Sadie's branch) the local base path Generate Spin Set prepares with; realism.mjs stubs it
 }) {
   const MODELS = path.join(dataDir, 'models');
   const BACKDROPS = path.join(dataDir, 'backdrops');
   const DECALS = path.join(dataDir, 'decals'); // decal images, named by their SHA-1 so the same file is stored once
   const LIB = path.join(dataDir, 'library.json');
+  const previewLock = createPreviewLock({ file: path.join(dataDir, 'preview.json') });
+  const shares = createShares({ file: path.join(dataDir, 'shares.json'), baseUrl: () => settings?.share?.baseUrl || null });
   const SETTINGS = path.join(dataDir, 'settings.json');
   await mkdir(MODELS, { recursive: true });
 
@@ -185,6 +200,10 @@ export async function startServer({
     tennogenCheck: 'warn', // before an export of a Warframe model with a texture folder: warn, block or off
   };
   const settings = { ...defaults, ...(existsSync(SETTINGS) ? JSON.parse(await readFile(SETTINGS, 'utf8')) : {}) };
+  // No folder picked yet: use the default handoff folder (made if missing). Not saved, so it stays "the default".
+  if (!settings.outputRoot && defaultOutputRoot) {
+    try { await mkdir(defaultOutputRoot, { recursive: true }); settings.outputRoot = path.resolve(defaultOutputRoot); settings.outputRootIsDefault = true; } catch { /* drive missing: the app asks for a folder */ }
+  }
   if (settings.defaultScene === 'gold') settings.defaultScene = 'ring';
   // v0.5: Showroom became the default scene. 'ring' was the old built-in default, so it moves over once.
   if (!settings.scenesV5) Object.assign(settings, { scenesV5: true, ...(settings.defaultScene === 'ring' && { defaultScene: 'showroom' }) });
@@ -806,7 +825,15 @@ export async function startServer({
   }
 
   async function patchModel(m, body) {
-    const allowed = ['name', 'activeVersion', 'scene', 'approved', 'workspace', 'tennogen'];
+    const allowed = ['name', 'activeVersion', 'scene', 'approved', 'workspace', 'tennogen', 'car'];
+    if ('car' in body) {
+      // Car auto-identify's answer, confirmed or edited: { make, model, yearRange, bodyStyle, color }.
+      const c = body.car;
+      if (!c || typeof c !== 'object' || Array.isArray(c)) throw new HttpError(400, 'Bad car details');
+      const str = (v) => (v == null ? null : String(v).slice(0, 60));
+      const yr = Array.isArray(c.yearRange) && c.yearRange.length === 2 && c.yearRange.every((y) => Number.isInteger(y) && y > 1900 && y < 2100) ? c.yearRange : null;
+      m.car = { make: str(c.make), model: str(c.model), yearRange: yr, bodyStyle: str(c.bodyStyle), color: str(c.color) };
+    }
     if (Object.keys(body).some((k) => !allowed.includes(k))) throw new HttpError(400, `Only ${allowed.join(', ')} can be changed`);
     if ('name' in body) {
       if (typeof body.name !== 'string' || !body.name.trim()) throw new HttpError(400, 'Give the model a name');
@@ -850,6 +877,31 @@ export async function startServer({
     v.exports[fmt] = { status: 'converting', task_id };
     await save();
     return v.exports[fmt];
+  }
+
+  async function startEnhance(m, kind) {
+    const e = ENHANCE[kind];
+    if (!e) throw new HttpError(400, 'Pick texture or refine');
+    const v = active(m);
+    const why = enhanceBlock(v);
+    if (why) throw new HttpError(409, why);
+    const { task_id } = await paid('tripo', { task: 'enhance', model: `enhance ${kind}`, credits: e.credits, modelId: m.id }, () => tripo('/task', { json: e.body(v.task_id) }));
+    v.enhance = { status: 'running', kind, task_id };
+    await save();
+    return v.enhance;
+  }
+
+  async function refreshEnhance(m) {
+    const v = active(m);
+    const e = v.enhance;
+    if (e?.status !== 'running') return;
+    const t = await task(e.task_id);
+    if (t.status === 'success') {
+      const url = fileUrl(t.output);
+      if (!url) Object.assign(e, { status: 'failed', error: 'Tripo returned no file URL' });
+      else Object.assign(e, { status: 'ready', file: await download(url, path.join(MODELS, m.id), `${vname('model', v.n)}-enhanced-${e.kind}`, '.glb') });
+    } else if (FAILED.includes(t.status)) Object.assign(e, { status: 'failed', error: failure(t) });
+    await save();
   }
 
   async function refreshExport(m, fmt) {
@@ -931,7 +983,7 @@ export async function startServer({
       } else if (k === 'defaultScene') {
         if (!SCENES.includes(body.defaultScene)) throw new HttpError(400, 'Unknown scene');
         next.defaultScene = body.defaultScene;
-      } else if (k === 'outputRoot') next.outputRoot = body.outputRoot === '' ? '' : await checkOutputRoot(body.outputRoot);
+      } else if (k === 'outputRoot') { next.outputRoot = body.outputRoot === '' ? '' : await checkOutputRoot(body.outputRoot); next.outputRootIsDefault = false; }
       else if (k === 'lighting' || k === 'glass') {
         const v = k === 'lighting' ? cleanLighting(body.lighting, settings.lighting) : cleanGlass(body.glass, settings.glass);
         if (!v) throw new HttpError(400, `Bad ${k}`);
@@ -1017,7 +1069,7 @@ export async function startServer({
   // Makes <outputRoot>/<slug>/ and copies the model files. Frames, sheets and json arrive through PUT …/file.
   async function startRender(m, { looks = [], formats = [] }) {
     const v = active(m);
-    if (v.status !== 'ready') throw new HttpError(409, 'Model is not ready yet');
+    if (!['ready', 'spin'].includes(v.status)) throw new HttpError(409, 'Model is not ready yet');
     if (!Array.isArray(looks) || !looks.every(isLook)) throw new HttpError(400, 'Unknown look');
     if (!Array.isArray(formats) || formats.some((f) => !FORMATS.includes(f))) throw new HttpError(400, 'Unknown model format');
     if (formats.length && v.provider !== 'tripo') throw new HttpError(409, TRIPO_ONLY);
@@ -1027,7 +1079,7 @@ export async function startServer({
     // A new output folder starts a new record; rendering into the same folder again keeps what's already there.
     const kept = m.renders?.outDir === outDir ? m.renders : { poster: m.renders?.poster };
     m.renders = { ...kept, outDir, formats, at: new Date().toISOString() };
-    await copyToHandoff(m, v.glb);
+    if (v.glb) await copyToHandoff(m, v.glb); // a photo-only spin set car has no model
     for (const fmt of formats) {
       if (v.exports[fmt]?.status === 'ready') await copyToHandoff(m, v.exports[fmt].file);
       else await startExport(m, fmt); // copied into the handoff when Tripo finishes converting
@@ -1142,6 +1194,33 @@ export async function startServer({
     return jobView(job);
   }
 
+  // ---- Spin sets for Dud Rents (spin.mjs): photo imports, Generate Spin Set, Send to Dud Rents ----
+
+  const spin = createSpinService({ modelsDir: MODELS, settings, version: VERSION, blenderScript, findBlender, runBlender, basePath });
+  // A car made from a folder of photos only: no 3D model, status 'spin'. Its frames land in the handoff folder.
+  async function importSpinCar({ name, car }) {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const m = { id, name: cleanName(name), created_at: now, activeVersion: 1, versions: [], kind: 'spin' };
+    m.slug = uniqueSlug(m.name, slugsExcept(m));
+    await mkdir(path.join(MODELS, m.id), { recursive: true });
+    m.versions.push({ n: 1, created_at: now, provider: 'spin', status: 'spin', progress: 100, exports: {}, credits: 0, generation: null });
+    library.unshift(mirror(m));
+    if (car) await patchModel(m, { car });
+    else await save();
+    return m;
+  }
+  // The car's handoff folder, made if needed (the same one renders use).
+  async function spinDir(m) {
+    if (!m.renders?.outDir) await startRender(m, { looks: [] });
+    return m.renders.outDir;
+  }
+  async function identify(body) {
+    const names = Array.isArray(body.names) ? body.names.filter((n) => typeof n === 'string').slice(0, 200) : [];
+    const hints = Array.isArray(body.hints) ? body.hints.filter((n) => typeof n === 'string').slice(0, 20) : [];
+    return identifyCar({ names, hints, apiKey: keyStore.get('vision'), callApi: identifyApi });
+  }
+
   // Overlapping polls for the same task share one refresh, so a result is never downloaded twice.
   const inflight = new Map();
   const once = (key, fn) => {
@@ -1172,6 +1251,15 @@ export async function startServer({
 
   // Batch export of colour variants (batch.mjs): the queue survives a crash; the page runs the jobs.
   const batch = createQueue({ file: path.join(dataDir, 'batch.json') });
+  const overnight = createQueue({ file: path.join(dataDir, 'overnight.json'), planner: planOvernight, maxTries: MAX_TRIES });
+  await overnight.load();
+  const awake = awakeGuard(keepAwake);
+  awake(overnight.view());
+  const plugins = pluginStore(path.join(dataDir, 'plugins'));
+  const BACKUP = path.join(dataDir, 'backup.json');
+  let backup = { ...BACKUP_DEFAULTS, ...(existsSync(BACKUP) ? JSON.parse(await readFile(BACKUP, 'utf8')) : {}) };
+  const saveBackup = () => writeFile(BACKUP, JSON.stringify(backup, null, 2));
+  const git = (argv) => new Promise((ok, bad) => execFile('git', argv, { cwd: dataDir, timeout: 120000, windowsHide: true }, (e, out, err) => (e ? bad(new Error(err || e.message)) : ok(out))));
   await batch.load();
   // Local video export (video.mjs): a PNG sequence from the render folder to an MP4/WebM in a folder the user picks.
   async function exportVideo(body) {
@@ -1319,6 +1407,58 @@ export async function startServer({
         try { return send(res, 200, await batch.set(sub, b.status, b.error)); } catch (e) { throw new HttpError(e.status || 400, e.message); }
       }
     }
+    // Overnight queue: same queue engine as batch, with retries, timings and keep-awake while it runs.
+    if (area === 'overnight') {
+      const wrap = async (f) => { try { const v = await f(); awake(v); return v; } catch (e) { throw new HttpError(e.status || 400, e.message); } };
+      if (!id && method === 'GET') return send(res, 200, { ...overnight.view(), summary: morningSummary(overnight.view()) });
+      if (!id && method === 'POST') return send(res, 201, await wrap(async () => overnight.start(await readJson(req, 256 * 1024))));
+      if (!id && method === 'DELETE') return send(res, 200, await wrap(() => overnight.clear()));
+      if (id === 'retry' && method === 'POST') return send(res, 200, await wrap(() => overnight.retryFailed()));
+      if (id === 'cancel' && method === 'POST') return send(res, 200, await wrap(() => overnight.cancelAll()));
+      if (id === 'next' && method === 'GET') return send(res, 200, overnight.next());
+      if (id === 'jobs' && sub && method === 'PATCH') { const b = await readJson(req); return send(res, 200, await wrap(() => overnight.set(sub, b.status, b.error))); }
+    }
+    if (area === 'usage') {
+      if (!id && method === 'GET') {
+        const entries = parse(await readFile(SPEND, 'utf8').catch(() => ''));
+        return send(res, 200, { spend: await spendView(), enhance: enhanceSpend(entries), renders: renderTimes(batch.view(), overnight.view()), disk: await disk(dataDir, { output: settings.outputRoot }) });
+      }
+      if (id === 'cache' && sub && method === 'DELETE') { try { await clearCache(dataDir, sub); } catch (e) { throw new HttpError(400, e.message); } return send(res, 200, { ok: true }); }
+    }
+    // Plugin sandbox: test-run any script (worker + vm, no fs/network), install only after a passing run.
+    if (area === 'plugins') {
+      try {
+        if (!id && method === 'GET') return send(res, 200, await plugins.list());
+        if (id === 'run' && method === 'POST') { const b = await readJson(req, 1024 * 1024); return send(res, 200, await runPlugin(b.code, b.scene ?? {}, { timeoutMs: Math.min(30000, b.timeoutMs || 5000) })); }
+        if (id === 'install' && method === 'POST') {
+          const b = await readJson(req, 1024 * 1024);
+          const run = await runPlugin(b.code, b.scene ?? {});
+          await plugins.install(b.name, b.code, run);
+          return send(res, 201, { name: b.name, run });
+        }
+        if (id && method === 'DELETE') { await plugins.remove(id); return send(res, 200, { ok: true }); }
+      } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(400, e.message); }
+    }
+    // GitHub backup: off unless Tyrone turns it on. Backup branch only, never main, never force.
+    // Client preview: the optional PIN that ends it (hashed in preview.json).
+    if (area === 'preview') {
+      if (!id && method === 'GET') return send(res, 200, await previewLock.view());
+      if (!id && method === 'PUT') { const b = await readJson(req); try { return send(res, 200, await previewLock.setPin(b.pin ?? null, b.current)); } catch (e) { throw new HttpError(400, e.message); } }
+      if (id === 'unlock' && method === 'POST') { const r = await previewLock.unlock((await readJson(req)).pin); return send(res, r.ok ? 200 : 403, r.ok ? r : { error: r.error }); }
+    }
+    if (area === 'backup') {
+      if (!id && method === 'GET') return send(res, 200, backup);
+      if (!id && method === 'PUT') {
+        const b = await readJson(req);
+        const next = { ...backup, ...(typeof b.enabled === 'boolean' && { enabled: b.enabled }), ...(b.remote && { remote: String(b.remote) }), ...(b.branch && { branch: String(b.branch) }) };
+        try { checkBackup(next); } catch (e) { throw new HttpError(400, e.message); }
+        backup = next; await saveBackup(); return send(res, 200, backup);
+      }
+      if (id === 'run' && method === 'POST') {
+        if (!backup.enabled) throw new HttpError(409, 'Backup is off. Turn it on in Settings first.');
+        backup = await runBackup(backup, git); await saveBackup(); return send(res, 200, backup);
+      }
+    }
     if (area === 'workspaces') {
       if (!workspaces) throw new HttpError(404, 'Workspaces are off');
       if (!id && method === 'GET') return send(res, 200, workspaces.view());
@@ -1421,10 +1561,44 @@ export async function startServer({
       }
       if (sub === 'retry' && method === 'POST') return send(res, 200, await retry(m));
       if (sub === 'versions' && method === 'POST') return send(res, 201, await addVersion(req, m));
+      if (sub === 'enhance' && method === 'POST') return send(res, 202, await startEnhance(m, (await readJson(req)).kind));
+      if (sub === 'enhance' && method === 'GET') { await once(`${id}:enhance`, () => refreshEnhance(m)); return send(res, 200, active(m).enhance ?? null); }
       if (sub === 'exports' && FORMATS.includes(extra) && method === 'POST') return send(res, 202, await startExport(m, extra));
       if (sub === 'exports' && FORMATS.includes(extra) && method === 'GET') {
         await once(`${id}:${m.activeVersion}:${extra}`, () => refreshExport(m, extra));
         return send(res, 200, active(m).exports[extra] ?? null);
+      }
+    }
+
+    // Share links: mock links until the share worker is deployed (share-worker/README.md). Nothing uploads from here.
+    if (area === 'shares') {
+      if (!id && method === 'GET') return send(res, 200, await shares.list());
+      if (!id && method === 'POST') { try { return send(res, 201, await shares.create(await readJson(req))); } catch (e) { throw new HttpError(400, e.message); } }
+      if (id && method === 'PATCH') { const s = await shares.setExpiry(id, (await readJson(req)).expiresInDays ?? null); if (!s) throw new HttpError(404, 'No such link'); return send(res, 200, s); }
+      if (id && method === 'DELETE') return send(res, 200, { ok: await shares.remove(id) });
+    }
+    if (area === 'identify' && !id && method === 'POST') return send(res, 200, await identify(await readJson(req, 64 * 1024)));
+    if (area === 'spin') {
+      if (id === 'import' && method === 'POST') return send(res, 201, await importSpinCar(await readJson(req, 16 * 1024)));
+      const m = findModel(id);
+      if (!sub && method === 'GET') return send(res, 200, spin.job(id));
+      if (!sub && method === 'DELETE') return send(res, 200, spin.cancel(id));
+      if (sub === 'start' && method === 'POST') {
+        const body = await readJson(req);
+        const outDir = await spinDir(m);
+        return send(res, 202, spin.start(m, outDir, { option: body.option ?? 72, interior: body.interior === true }));
+      }
+      if (sub === 'meta' && method === 'POST') {
+        const body = await readJson(req);
+        const out = await spin.writeMeta(m, await spinDir(m), { look: isLook(body.look) || body.look === 'interior' ? body.look : 'showroom', option: body.option ?? 72, source: typeof body.source === 'string' ? body.source.slice(0, 100) : undefined, renderer: body.renderer === 'blender' ? 'Blender Cycles (Max realism)' : undefined });
+        await save();
+        return send(res, 200, { ...out, spin: m.spin });
+      }
+      if (sub === 'send' && method === 'POST') {
+        const body = await readJson(req, 16 * 1024);
+        const marker = await spin.send(m, await spinDir(m), body.meta && typeof body.meta === 'object' ? body.meta : {}).catch((e) => { throw new HttpError(409, e.message); });
+        await save();
+        return send(res, 200, marker);
       }
     }
 

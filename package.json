@@ -14,7 +14,7 @@
   "scripts": {
     "app": "electron .",
     "web": "node --env-file=.env server.mjs",
-    "test": "node --test test.mjs test/pipeline.test.mjs test/pricing.test.mjs test/providers.test.mjs test/threedai.test.mjs test/updates.test.mjs test/ledger.test.mjs test/camera.test.mjs test/tenno.test.mjs test/look.test.mjs test/infer.test.mjs test/motion.test.mjs test/turntable.test.mjs test/batch.test.mjs test/phase4.test.mjs test/tennogen.test.mjs test/import.test.mjs test/poses.test.mjs test/model-tools.test.mjs test/camera-path.test.mjs test/lighting.test.mjs test/local.test.mjs test/textures.test.mjs test/decals.test.mjs test/templates.test.mjs",
+    "test": "node --test test.mjs test/pipeline.test.mjs test/pricing.test.mjs test/providers.test.mjs test/threedai.test.mjs test/updates.test.mjs test/ledger.test.mjs test/camera.test.mjs test/tenno.test.mjs test/look.test.mjs test/infer.test.mjs test/motion.test.mjs test/turntable.test.mjs test/batch.test.mjs test/phase4.test.mjs test/tennogen.test.mjs test/import.test.mjs test/poses.test.mjs test/model-tools.test.mjs test/camera-path.test.mjs test/lighting.test.mjs test/local.test.mjs test/textures.test.mjs test/decals.test.mjs test/templates.test.mjs test/spin.test.mjs test/theme-contrast.test.mjs test/enhance.test.mjs test/groupb.test.mjs test/groupc.test.mjs test/groupd.test.mjs test/groupe.test.mjs",
     "dist": "electron-builder --publish never"
   },
   "dependencies": {
@@ -39,6 +39,12 @@
       "providers.mjs",
       "keys.mjs",
       "ledger.mjs",
+      "enhance.mjs",
+      "share.mjs",
+      "overnight.mjs",
+      "plugins.mjs",
+      "backup.mjs",
+      "usage.mjs",
       "updates.mjs",
       "png.mjs",
       "inference.mjs",
@@ -47,11 +53,15 @@
       "workspaces.mjs",
       "local.mjs",
       "textures.mjs",
+      "spin.mjs",
+      "realism.mjs",
+      "handoff.mjs",
       "preload.cjs",
       "public/**/*",
       "package.json",
       "LICENSE",
-      "THIRD_PARTY_NOTICES.md"
+      "THIRD_PARTY_NOTICES.md",
+      "preview.mjs"
     ],
     "extraResources": [
       {

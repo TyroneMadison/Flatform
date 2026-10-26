@@ -5,6 +5,7 @@ import { applyTheme } from './lib/theme.js';
 import { PROVIDERS, ENGINES, VIEWS, normalize, presetConfig, matchPreset, PRESETS } from './lib/engines.js';
 import { estimate } from './lib/pricing.js';
 import { isModelFile, importModel } from './lib/importer.js';
+import { installHotkeys } from './lib/hotkeys.js';
 
 export const $ = (s, root = document) => root.querySelector(s);
 export const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -90,12 +91,13 @@ export function stageOf(v) {
 }
 export function statusText(m) {
   if (m.status === 'ready') return 'Ready';
+  if (m.status === 'spin') return m.spin ? 'Spin set from photos' : 'Photos for a spin set';
   if (m.status === 'failed') return m.error || 'Generation failed';
   if (m.note) return m.note;
   const stage = stageOf(m);
   return stage === 1 ? `Queued at ${PROVIDERS[providerOf(m)].name}` : `${stagesOf(m)[stage]} · ${m.progress || 0}%`;
 }
-export const statusClass = (m) => ({ ready: 'ready', failed: 'fail' })[m.status] || 'gen';
+export const statusClass = (m) => ({ ready: 'ready', spin: 'ready', failed: 'fail' })[m.status] || 'gen';
 // "Tripo v3.1" or "3D AI Studio · Hitem3D 3.0", for a version (or the model's active one).
 export function engineLabel(v) {
   if (providerOf(v) === 'local') return 'Local (free) · TRELLIS';
@@ -422,6 +424,10 @@ function renderFrame() {
     ['Library', 'library', '#/library', ['library', 'model']],
     ['Scenes', 'scene', target ? `#/compose/${target.id}` : '#/library', ['compose']],
     ['Renders', 'film', target ? `#/render/${target.id}` : '#/library', ['render']],
+    ['Spin set', 'retry', target ? `#/spin/${target.id}` : '#/spin', ['spin']],
+    ['Finish', 'check', target ? `#/finish/${target.id}` : '#/library', ['finish']],
+    ['Share', 'external', target ? `#/share/${target.id}` : '#/share', ['share']],
+    ['Usage', 'eye', '#/usage', ['usage']],
     ['Settings', 'settings', '#/settings', ['settings']],
   ];
   const html = links.map(([label, ic, href, names]) => {
@@ -442,7 +448,7 @@ function renderFrame() {
 }
 
 // ---- routing ----
-const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings', 'warframe'];
+const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings', 'warframe', 'spin', 'preview', 'finish', 'share', 'usage'];
 export let route = { name: 'drop', id: null };
 let current = null;
 let navToken = 0;
@@ -452,6 +458,7 @@ async function navigate() {
   const [, name = 'drop', id = null] = location.hash.match(/^#\/(\w+)(?:\/([\w-]+))?/) || [];
   if (name === 'review') return go(id ? `#/compose/${id}` : '#/library'); // Review was folded into Compose in v0.5
   if (!SCREENS.includes(name)) return go('#/drop');
+  if (state.presenting && name !== 'preview') return history.replaceState(null, '', `#/preview/${route.id}`); // client preview stays put until it is ended
   const token = ++navToken;
   const mod = await import(`./views/${name}.js`);
   if (token !== navToken) return;
@@ -514,7 +521,7 @@ $('#filePicker').addEventListener('change', (e) => { addFiles(e.target.files, { 
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
 window.addEventListener('paste', (e) => {
-  if (!['drop', 'setup', 'generate'].includes(route.name) || e.target.closest?.('input, textarea')) return;
+  if (state.presenting || !['drop', 'setup', 'generate'].includes(route.name) || e.target.closest?.('input, textarea')) return;
   const files = [...(e.clipboardData?.files || [])];
   if (files.length) { e.preventDefault(); addFiles(files, { quick: route.name === 'generate' }); }
 });
@@ -561,7 +568,7 @@ document.addEventListener('click', async (e) => {
   if (!e.target.closest('#wsPill') && $('#wsMenu')) $('#wsMenu').hidden = true;
 });
 window.addEventListener('keydown', (e) => {
-  if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || !/^[1-9]$/.test(e.key) || !state.workspaces) return;
+  if (state.presenting || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || !/^[1-9]$/.test(e.key) || !state.workspaces) return;
   const w = state.workspaces.list[Number(e.key) - 1];
   if (w) { e.preventDefault(); switchWorkspace(w.id); }
 });
@@ -575,6 +582,15 @@ window.addEventListener('keydown', (e) => {
   state.blender = blender;
   applyTheme(settings?.theme);
   await loadWorkspaces();
+  installHotkeys({
+    screen: () => route.name,
+    run: (action) => {
+      if (state.presenting) return;
+      const m = (route.id && findModel(route.id)) || focusModel();
+      if (!m) return toast('Pick a model first.');
+      go(`#/${action === 'preview' ? 'preview' : 'finish'}/${m.id}`);
+    },
+  });
   await navigate();
   refreshAccount();
   setInterval(() => refreshAccount(), 60000);
