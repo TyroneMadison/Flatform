@@ -18,5 +18,17 @@ The first 1.x release. Flatform drops the 0.x numbers: from here releases go 1.1
   Ctrl+K. Reset scene puts the look back to how it started, and can be undone.
 - **Keyboard shortcuts.** One list for every key. Press ? for a cheat sheet, and Ctrl+K lists every shortcut.
   Keys never fire while you type, and Settings won't let two actions share one key.
+- **The Stage.** The 3D view fills the window. Four steps run along the bottom (Photo, 3D model, Scene and render,
+  Finish) and a dock on the left holds the tools for the step you are on. Render ideas suggest a shot in one click.
+- **Real rooms.** Every scene is a real 3D room that turns with the camera, at real size: studios, a garage, a coast,
+  a rainy night city and more, with free (CC0) models and skies.
+- **Add things (A).** Drag people, cars and props into the scene from a shelf in the World card. They show up in
+  Blender renders too.
+- **Version history (V).** Every render of a model, with a before-and-after slider.
+- **Share (S).** Make a link to a model's picture or video, pick how long it works, or turn it off. Needs your own
+  share page (see SHARE-DEPLOY.md); until then links are practice links on this computer.
+- **Free auto-rig.** A person without a skeleton gets one in Blender, saved as a new version, ready to pose.
+- **Blender.** Flatform finds Blender by itself (Settings shows where), and poses and rooms render in Blender too.
+- **Shortcut change.** Render a still picture is now R (S is Share). T is still the turntable.
 - **Version numbers.** The title bar and Settings → About show "1.1". The Windows installer is
   Flatform-Setup-1.1.0.exe.
