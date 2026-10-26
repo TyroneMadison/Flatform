@@ -5,6 +5,7 @@ import { $, esc, state, api, send, toast, refresh, native, fmt, fmtBalance, save
 import { PROVIDERS } from '../lib/engines.js';
 import { icon } from '../lib/icons.js';
 import { displayVersion } from '../lib/version.js';
+import { blenderStatus } from '../lib/render-status.js';
 import { PRESETS } from '../lib/studio.js';
 import { EXTRA, EXTRA_HTML, wireExtra } from './settings-extra.js';
 
@@ -107,6 +108,7 @@ async function onClick(e) {
       if (file) save({ blenderPath: file });
     } else showField('blenderField');
   }
+  if (act === 'blender-find') save({ blenderPath: '' }); // forget the picked one and look in the usual places
   if (act === 'theme') { const theme = { preset: t.dataset.value, custom: {} }; applyTheme(theme); save({ theme }); }
   if (act === 'theme-reset') { applyTheme(undefined); save({ theme: { preset: 'dark', custom: {} } }); }
   if (act === 'git-repo') {
@@ -248,12 +250,14 @@ function renderingHtml() {
   return `<div class="card glass"><h2 class="label">Rendering</h2>
     <div class="field"><span class="flabel" id="rendererLabel">Renderer</span>
       <div class="chips seg" role="radiogroup" aria-labelledby="rendererLabel">
-        <button class="chip" type="button" role="radio" aria-checked="${s.renderer !== 'blender' || !b?.found}" data-act="renderer" data-value="three">In-app</button>
-        <button class="chip" type="button" role="radio" aria-checked="${s.renderer === 'blender' && Boolean(b?.found)}" data-act="renderer" data-value="blender" ${b?.found ? '' : 'disabled'}>Blender (Cycles)</button>
+        <button class="chip" type="button" role="radio" aria-checked="${s.renderer !== 'blender' || !b?.found}" data-act="renderer" data-value="three" title="Renders inside Flatform. Quick, and needs nothing else.">In-app</button>
+        <button class="chip" type="button" role="radio" aria-checked="${s.renderer === 'blender' && Boolean(b?.found)}" data-act="renderer" data-value="blender" ${b?.found ? '' : 'disabled'} title="${b?.found ? 'Renders in Blender. Slower, more realistic light.' : 'Needs Blender. Click Browse below to show Flatform where it is.'}">Blender (Cycles)</button>
       </div></div>
-    <div class="field"><span class="flabel">Blender</span>
-      <div class="inp ${b?.found ? 'mono' : 'warn'}" title="${esc(b?.path || '')}">${b?.found ? esc(b.path) : 'Not found · install Blender 4.x to render'}</div>
-      <button class="btn sec" type="button" data-act="blender">${icon('folder')}<span>Locate Blender</span></button></div>
+    <div class="field"><span class="flabel">Blender location</span>
+      <div class="inp ${b?.found ? '' : 'warn'}" id="blenderStatus" role="status" title="${esc(b?.found ? b.path : 'Flatform looked in the usual places and did not find Blender. Click Browse and pick blender.exe.')}">${esc(blenderStatus(b))}</div>
+      <button class="btn sec" type="button" data-act="blender" title="Pick the Blender program (blender.exe) yourself">${icon('folder')}<span>Browse</span></button>
+      <button class="btn ghostbtn" type="button" data-act="blender-find" title="Look again in the usual places: your Blender folder, Program Files, Steam and PATH">Find again</button></div>
+    ${b?.found ? `<p class="fine mono" title="Where Flatform runs Blender from">${esc(b.path)}</p>` : ''}
     ${pathForm('blenderField', 'blenderPath', 'Blender path', s.blenderPath, s.platform === 'win32' ? 'C:\\Program Files\\Blender Foundation\\Blender 4.2\\blender.exe' : '/Applications/Blender.app')}
     <div class="field"><label class="flabel" for="defaultScene">Default scene</label>
       <select class="inp" id="defaultScene" name="defaultScene">${SCENES.map(([k, l]) => `<option value="${k}" ${s.defaultScene === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>

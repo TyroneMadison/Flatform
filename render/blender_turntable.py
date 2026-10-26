@@ -22,7 +22,7 @@ import sys
 
 import bpy
 from bpy_extras.object_utils import world_to_camera_view
-from mathutils import Euler, Matrix, Vector
+from mathutils import Euler, Matrix, Quaternion, Vector
 
 CAR_LENGTH = 4.6
 RING = (1.0, 0.195, 0.133)  # #ff7a66, the app's coral accent, in linear RGB
@@ -86,6 +86,8 @@ def parse_args():
     p.add_argument("--scenelook")
     # Painted pieces (public/lib/tenno.js blenderMaterial per piece key) and face groups, written by the server.
     p.add_argument("--materials")
+    p.add_argument("--pose")  # blender.mjs blenderPose: {"bones": {name: [x, y, z] three.js Euler degrees}, "hips": ...}
+    p.add_argument("--report-bones", action="store_true")  # tests: print each posed bone's head
     return p.parse_args(argv)
 
 
@@ -330,6 +332,79 @@ def import_car(path, s):
     lo, hi = bounds()  # the bounding sphere and box corners in scene space, for "Frame all"
     corners = [Vector((x, y, z)) for x in (lo.x, hi.x) for y in (lo.y, hi.y) for z in (lo.z, hi.z)]
     return pivot, meshes, hi - lo, ((lo + hi) / 2, (hi - lo).length / 2, corners)
+
+
+def gltf_quat(q):
+    """A glTF rotation [x, y, z, w] (Y up) as a Blender quaternion (Z up): the importer's (x, y, z) -> (x, -z, y)."""
+    return Quaternion((q[3], q[0], -q[2], q[1]))
+
+
+def three_euler(deg):
+    """three.js Euler degrees, order XYZ (Rx * Ry * Rz), in glTF axes, as a glTF [x, y, z, w] rotation."""
+    q = Quaternion((1, 0, 0), math.radians(deg[0])) @ Quaternion((0, 1, 0), math.radians(deg[1])) @ Quaternion((0, 0, 1), math.radians(deg[2]))
+    return [q.x, q.y, q.z, q.w]
+
+
+def glb_nodes(path):
+    with open(path, "rb") as f:
+        data = f.read()
+    length = int.from_bytes(data[12:16], "little")
+    return json.loads(data[20:20 + length].decode("utf-8")).get("nodes", [])
+
+
+def apply_pose(glb, pose, pivot):
+    """The Compose pose, the way rig.js applies it in the app: each bone turns by its Euler on top of its rest
+    rotation (in the glTF node's own axes), the hips move by `hips` metres in the turntable's space. Works whatever
+    axes the importer gave the Blender bones: the pose is worked out in glTF space and handed over as a change of
+    each bone's armature-space rotation."""
+    nodes = glb_nodes(glb)
+    parent = {c: i for i, n in enumerate(nodes) for c in n.get("children", [])}
+    index = {n.get("name"): i for i, n in enumerate(nodes)}
+    arms = [o for o in bpy.data.objects if o.type == "ARMATURE"]
+    posed = 0
+    for arm in arms:
+        bones = [b for b in arm.data.bones if b.name in index]  # parents before children
+        # Rest (as loaded) and posed rotations of each bone node, relative to the armature's own node.
+        rest_w, pose_w = {}, {}
+        for b in bones:
+            i = index[b.name]
+            local = gltf_quat(nodes[i].get("rotation", [0, 0, 0, 1]))
+            turn = gltf_quat(three_euler(pose["bones"][b.name])) if b.name in pose.get("bones", {}) else Quaternion()
+            up = b.parent.name if b.parent and b.parent.name in rest_w else None
+            rest_w[b.name] = (rest_w[up] if up else Quaternion()) @ local
+            pose_w[b.name] = (pose_w[up] if up else Quaternion()) @ local @ turn
+        bpy.context.view_layer.update()
+        now = {b.name: arm.pose.bones[b.name].matrix.to_quaternion() for b in bones}  # as imported
+        target = {n: (pose_w[n] @ rest_w[n].inverted()) @ now[n] for n in now}
+        hips = pose.get("hips")
+        for b in bones:
+            pb = arm.pose.bones[b.name]
+            pb.rotation_mode = "QUATERNION"
+            # matrix = parent_posed @ (parent_rest^-1 @ rest) @ basis, so basis = (parent_posed @ parent_rest^-1 @ rest)^-1 @ target
+            chain = b.matrix_local.to_quaternion()
+            if b.parent:
+                chain = target.get(b.parent.name, now.get(b.parent.name, Quaternion())) @ b.parent.matrix_local.to_quaternion().inverted() @ chain
+            pb.rotation_quaternion = chain.inverted() @ target[b.name]
+            if hips and b.name == hips["bone"]:
+                x, y, z = hips["offset"]
+                world = pivot.matrix_world.to_3x3() @ Vector((x, -z, y))
+                frame = (arm.pose.bones[b.parent.name].matrix @ b.parent.matrix_local.inverted() @ b.matrix_local) if b.parent else b.matrix_local
+                pb.location = pb.location + frame.to_3x3().inverted() @ (arm.matrix_world.to_3x3().inverted() @ world)
+            posed += 1
+            bpy.context.view_layer.update()
+    print(f"FLATFORM_POSED {posed}", flush=True)
+    return arms
+
+
+def report_bones(arms, model):
+    """Each bone's head in the model's glTF space (Y up), for the tests that check the pose against three.js."""
+    bpy.context.view_layer.update()
+    to_model = model.matrix_world.inverted()
+    print(f"FLATFORM_MODEL {model.scale.x:.6f} {model.rotation_euler.z:.6f}", flush=True)
+    for arm in arms:
+        for pb in arm.pose.bones:
+            v = to_model @ arm.matrix_world @ pb.head
+            print(f"FLATFORM_BONE {pb.name} {v.x:.5f} {v.z:.5f} {-v.y:.5f}", flush=True)
 
 
 def hex_linear(h):
@@ -896,6 +971,10 @@ def main():
         build_ring_studio(float(s["reflection"]))
     apply_rig(lighting)
     pivot, meshes, size, sphere = import_car(args.glb, s)
+    if args.pose:
+        arms = apply_pose(args.glb, json.loads(args.pose), pivot)
+        if args.report_bones:
+            report_bones(arms, pivot.children[0])
     apply_glass(meshes, glass)
     if args.materials and os.path.exists(args.materials):
         with open(args.materials, encoding="utf-8") as f:

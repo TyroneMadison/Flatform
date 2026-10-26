@@ -416,7 +416,7 @@ test('Blender is found on PATH, in a portable folder in the home folder, and in 
   assert.ok(list.includes(path.join(home, 'PF', 'Blender Foundation', 'Blender 4.5', 'blender.exe')));
   const portable = list.filter((p) => p.startsWith(path.join(home, 'Blender', 'blender-')));
   assert.deepEqual(portable.map((p) => path.basename(path.dirname(p))), ['blender-5.2.2-windows-x64', 'blender-4.2.1-windows-x64']); // newest first
-  assert.ok(blenderCandidates('linux', { PATH: '/opt/b' }).includes(path.join('/opt/b', 'blender')));
+  assert.ok(blenderCandidates('linux', { PATH: '/opt/b' }).includes('/opt/b/blender'));
 });
 
 test('keys: saved, replaced and removed per provider, never sent back to the page', async () => {

@@ -12,6 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, ENVIRONMENTS, envCamera } from './public/lib/pipeline.js';
 import { blenderEnvironment } from './public/lib/environments.js';
+import { findBlender as findBlenderOn, blenderVersion, blenderPose } from './blender.mjs';
 import { PROVIDERS, VIEWS, DEFAULT_PROVIDER, normalize, baseSetup, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
 import { estimate } from './public/lib/pricing.js';
 import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
@@ -105,33 +106,7 @@ export function suggestedOutputRoot(platform = process.platform) {
   return platform === 'win32' ? 'E:\\Claude Stuff\\car-360-pipeline\\handoff' : path.join(os.homedir(), 'Flatform', 'handoff');
 }
 
-// Where Blender usually lives. Blender is optional and never bundled. On Windows that is the installer's
-// Program Files folder on any drive, Steam, a portable zip unpacked in the home folder, or anything on PATH.
-export function blenderCandidates(platform = process.platform, env = process.env) {
-  if (platform === 'darwin') return ['/Applications/Blender.app/Contents/MacOS/Blender', path.join(os.homedir(), 'Applications/Blender.app/Contents/MacOS/Blender')];
-  const onPath = String(env.PATH || env.Path || '').split(path.delimiter).filter(Boolean)
-    .map((d) => path.join(d, platform === 'win32' ? 'blender.exe' : 'blender'));
-  if (platform !== 'win32') return [...onPath, '/usr/bin/blender', '/snap/bin/blender'];
-  // Newest version first inside each folder that holds versioned Blender folders.
-  const versions = (base) => {
-    let dirs = [];
-    try { dirs = readdirSync(base).filter((d) => /^blender/i.test(d)); } catch { /* not there */ }
-    return dirs.sort((a, b) => b.localeCompare(a, undefined, { numeric: true })).map((d) => path.join(base, d, 'blender.exe'));
-  };
-  const home = env.USERPROFILE || os.homedir();
-  const drives = [];
-  for (let c = 67; c <= 90; c++) { const d = `${String.fromCharCode(c)}:\\`; if (existsSync(d)) drives.push(d); } // C: to Z:
-  const programFiles = [...new Set([env.ProgramFiles, env['ProgramFiles(x86)'], ...drives.flatMap((d) => [`${d}Program Files`, `${d}Program Files (x86)`])].filter(Boolean))];
-  const steam = [...new Set([env['ProgramFiles(x86)'] && path.join(env['ProgramFiles(x86)'], 'Steam'), ...drives.flatMap((d) => [`${d}SteamLibrary`, `${d}Steam`])].filter(Boolean))];
-  return [
-    ...programFiles.flatMap((p) => versions(path.join(p, 'Blender Foundation'))),
-    ...steam.map((s) => path.join(s, 'steamapps', 'common', 'Blender', 'blender.exe')),
-    ...(env.LOCALAPPDATA ? versions(path.join(env.LOCALAPPDATA, 'Programs')) : []),
-    ...versions(home), ...versions(path.join(home, 'Blender')), // portable zips
-    ...onPath,
-    ...(env.LOCALAPPDATA ? [path.join(env.LOCALAPPDATA, 'Microsoft', 'WindowsApps', 'blender.exe')] : []), // Microsoft Store alias
-  ];
-}
+export { blenderCandidates } from './blender.mjs';
 
 // git with an argv list (no shell), in the project folder from Settings.
 const git = (cwd, args) => new Promise((ok, fail) => execFile('git', args, { cwd, timeout: 30000, maxBuffer: 4 << 20 }, (e, out, err) => (e ? fail(new HttpError(500, (err || e.message).trim().split('\n')[0])) : ok(out))));
@@ -1114,9 +1089,7 @@ export async function startServer({
   // ---- Optional Blender renderer ----
 
   const jobs = new Map(); // model id → running or finished Blender job
-  function findBlender() {
-    return [settings.blenderPath, ...blenderCandidates()].find((p) => p && existsSync(p)) || null;
-  }
+  const findBlender = () => findBlenderOn(settings.blenderPath);
   const jobView = (job) => job && { status: job.status, look: job.look, frame: job.frame, frames: job.frames, looks: job.looks, error: job.error };
 
   function runBlender(job, bin, args) {
@@ -1160,7 +1133,8 @@ export async function startServer({
     // and matched light. The Showroom look always uses the showroom.
     const builtinHdri = (name) => (Object.hasOwn(HDRIS, name) ? path.join(hdriDir, `${name}.hdr`) : null);
     const envArg = (look) => {
-      const preset = look === 'showroom' ? 'showroom' : look === 'transparent' ? null : m.scene?.preset || settings.defaultScene;
+      const picked = look === 'showroom' ? 'showroom' : look === 'transparent' ? null : m.scene?.preset || settings.defaultScene;
+      const preset = picked === 'cyclorama' ? 'white-cyc-studio' : picked; // Compose's default white cyc, built as the 3D one
       if (!ENVIRONMENTS[preset]) return [];
       const glb = (file) => path.join(PUBLIC, 'env', path.basename(file));
       return ['--environment', JSON.stringify(blenderEnvironment(preset, envCamera(ENVIRONMENTS[preset].cam, 4 / 3), { hdri: builtinHdri, glb }))];
@@ -1170,6 +1144,9 @@ export async function startServer({
     const hdri = lookJson.hdri.file;
     const hdriPath = hdri ? (hdri.startsWith('builtin:') ? builtinHdri(hdri.slice(8)) : path.join(BACKDROPS, hdri)) : null;
     const lookArg = ['--scenelook', JSON.stringify(blenderLook(lookJson, { hdriPath }))];
+    // The Compose pose (preset or Pose by hand) on a rigged character, with the model's own bone names.
+    const pose = m.scene?.motion?.pose ? blenderPose(readFileSync(path.join(MODELS, m.id, v.glb)), m.scene.motion) : null;
+    const poseArg = pose ? ['--pose', JSON.stringify(pose)] : [];
     const paint = m.scene?.paint;
     const materialsFile = path.join(MODELS, m.id, 'blender-materials.json');
     const materials = paint?.pieces ? Object.fromEntries(Object.entries(paint.pieces).filter(([, p]) => p.material || p.slot || p.colors || p.region)
@@ -1188,7 +1165,7 @@ export async function startServer({
           '--look', look, '--frames', String(frames), '--step', String(STEP), '--res', `${width}x${height}`,
           ...(existsSync(sceneFile) ? ['--scene', sceneFile] : []),
           '--rig', JSON.stringify({ lighting: settings.lighting, glass: settings.glass }),
-          ...lookArg, '--materials', materialsFile,
+          ...lookArg, '--materials', materialsFile, ...poseArg,
           ...envArg(look),
           ...(still !== undefined ? ['--still', String(still), '--still-out', path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still))] : []),
         ]);
@@ -1514,7 +1491,7 @@ export async function startServer({
     }
     if (area === 'blender' && !id && method === 'GET') {
       const found = findBlender();
-      return send(res, 200, { found: Boolean(found), path: found, configured: settings.blenderPath });
+      return send(res, 200, { found: Boolean(found), path: found, version: await blenderVersion(found), configured: settings.blenderPath });
     }
     // TennoGen: check a texture folder, or check and fix it (renames, resizes).
     if (area === 'poses' && !id && method === 'GET') {

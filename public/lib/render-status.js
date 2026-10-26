@@ -64,9 +64,11 @@ export function trimQueue(queue, keep = 5) {
 // The two connection lights in the top bar.
 export function blenderLight(blender) {
   if (!blender) return { ok: null, text: 'Blender: checking', tip: 'Looking for Blender on this computer' };
-  return blender.found ? { ok: true, text: 'Blender ready', tip: `Blender found: ${blender.path}. Renders can use it for extra realism.` }
-    : { ok: false, text: 'No Blender', tip: 'Blender is optional. Install Blender 4.x or point to it in Settings to render with it.' };
+  return blender.found ? { ok: true, text: 'Blender ready', tip: `${blenderStatus(blender)}. Renders can use it for extra realism.` }
+    : { ok: false, text: 'No Blender', tip: 'Blender is optional. Install Blender 4.x or newer, or click Browse in Settings to show Flatform where it is.' };
 }
+/** The one-line Blender status in Settings. */
+export const blenderStatus = (b) => (!b ? 'Looking for Blender...' : b.found ? `Blender found: ${b.version || 'ready'}` : 'Blender not found - click Browse');
 export function accountLight(name, a) {
   if (!a) return { ok: null, text: `${name}: checking`, tip: `Connecting to ${name}` };
   if (a.error) return { ok: false, text: `${name} offline`, tip: `${name} can't be reached right now. Click to open settings.` };
