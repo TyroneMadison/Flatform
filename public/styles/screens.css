@@ -482,10 +482,30 @@
 .tr-wrap { position: fixed; inset: 38px 0 0 0; z-index: 900; background: var(--surface-1); }
 .tr-cv { display: block; width: 100%; height: 100%; cursor: crosshair; }
 .tr-state { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); padding: 6px 16px; border-radius: 999px; background: rgba(5, 4, 4, .7); border: 1px solid var(--line-4); font: 600 15px var(--display); color: var(--accent-hi); pointer-events: none; }
-.tr-keys { position: absolute; left: 16px; bottom: 16px; margin: 0; padding: 10px 12px; list-style: none; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; background: rgba(5, 4, 4, .7); border: 1px solid var(--line-4); border-radius: 10px; font-size: 12px; color: var(--soft); pointer-events: none; }
-.tr-keys li { display: contents; }
-.tr-keys kbd { font: 600 11.5px var(--mono); color: var(--text); padding: 1px 6px; border: 1px solid var(--line-4); border-radius: 5px; justify-self: start; }
-.tr-exit { position: absolute; top: 16px; right: 16px; }
+.tr-caps { position: absolute; left: 16px; bottom: 16px; display: flex; flex-wrap: wrap; gap: 6px 14px; max-width: min(560px, calc(100vw - 360px)); padding: 8px 10px; background: rgba(5, 4, 4, .62); border: 1px solid var(--line-4); border-radius: 10px; font-size: 12px; color: var(--soft); }
+.tr-capgrp { display: inline-flex; align-items: center; gap: 3px; }
+.tr-capgrp > span { margin-left: 4px; }
+.tr-caps kbd { min-width: 26px; height: 26px; display: inline-grid; place-items: center; padding: 0 6px; font: 600 11.5px var(--mono); color: var(--text); border: 1px solid var(--line-4); border-bottom-width: 3px; border-radius: 6px; background: rgba(255, 255, 255, .04); transition: background .08s, color .08s, border-color .08s; }
+.tr-caps kbd.on { background: var(--accent); border-color: var(--accent-hi); color: #160c0a; }
+.tr-top { position: absolute; top: 16px; right: 16px; display: flex; gap: 8px; }
+.tr-top .btn[aria-expanded='true'] { border-color: var(--accent); color: var(--accent-hi); }
+.tr-prompt { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px; background: rgba(5, 4, 4, .72); border: 1px solid var(--accent); font: 600 13.5px var(--display); color: var(--accent-hi); pointer-events: none; }
+.tr-look { position: absolute; top: 72px; right: 16px; width: 320px; max-height: calc(100% - 160px); overflow: auto; padding: 12px 14px; background: rgba(12, 10, 9, .94); border: 1px solid var(--line-4); border-radius: 12px; }
+.tr-look h3 { margin: 0 0 8px; }
+.tr-look .sl { grid-template-columns: 86px minmax(0, 1fr) 54px; min-height: 44px; margin: 2px 0; }
+.tr-look .range, .tr-look .tint { min-height: 44px; }
+.tr-look .row-sel { display: grid; grid-template-columns: 86px minmax(0, 1fr); align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.tr-look .btn { width: 100%; margin-top: 6px; }
+.tr-lights { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 10px 0 6px; }
+.tr-lights .chip { justify-content: center; padding: 0 4px; }
+.tr-lights .chip[aria-checked='true'] { border-color: var(--accent); background: rgba(255, 122, 102, .16); color: var(--accent-hi); }
+.tr-howto { position: absolute; left: 16px; top: 16px; width: 300px; padding: 12px 14px; background: rgba(12, 10, 9, .9); border: 1px solid var(--line-4); border-radius: 12px; font-size: 12px; color: var(--soft); }
+.tr-howto h3 { margin: 0 0 8px; }
+.tr-howto ul { margin: 0 0 10px; padding: 0; list-style: none; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; }
+.tr-howto li { display: contents; }
+.tr-howto kbd { font: 600 11px var(--mono); color: var(--text); padding: 1px 6px; border: 1px solid var(--line-4); border-radius: 5px; justify-self: start; }
+.tr-lookrow { display: grid; gap: 6px; margin-top: 10px; }
+.tr-lookrow .row-sel { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 .tr-hint { position: absolute; right: 16px; bottom: 16px; max-width: 300px; padding: 8px 12px; border-radius: 10px; background: rgba(5, 4, 4, .7); border: 1px solid var(--line-4); font-size: 12.5px; color: var(--soft); }
 
 /* ---- Compose · Render (v0.6: the render area under the scene, the top-bar lights, the done toast) ---- */

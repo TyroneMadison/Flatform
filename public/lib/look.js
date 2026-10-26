@@ -43,6 +43,8 @@ export const LIGHT_PRESETS = {
   softbox: { label: 'Soft box', key: light(true, 1.0, '#ffffff', -10, 65), fill: light(true, 0.8, '#ffffff', 30, 30), rim: light(false, 0.4, '#ffffff', 180, 40) },
   rim: { label: 'Strong back light', key: light(true, 0.5, '#ffe9d6', -60, 25), fill: light(false, 0.2, '#dfe8ff', 60, 10), rim: light(true, 2.2, '#ffffff', 150, 30) },
   dusk: { label: 'Outdoor dusk', key: light(true, 1.6, '#ffb070', -80, 8), fill: light(true, 0.35, '#8fa8ff', 70, 30), rim: light(true, 0.8, '#ffd0a0', 170, 12) },
+  night: { label: 'Night', key: light(true, 0.45, '#a8b8ff', 40, 35), fill: light(true, 0.25, '#4a5cff', -60, 15), rim: light(true, 1.4, '#7fa0ff', 160, 25) },
+  neon: { label: 'Neon', key: light(true, 0.7, '#ff4fd8', -50, 20), fill: light(true, 0.5, '#2fe0ff', 60, 15), rim: light(true, 2, '#2fe0ff', 160, 25) },
 };
 export const DEFAULT_LIGHTS = { preset: 'match', ...Object.fromEntries(['key', 'fill', 'rim'].map((k) => [k, LIGHT_PRESETS.studio[k]])), shadows: true, softness: 0.5 };
 export const lightsFromPreset = (id) => {
@@ -58,6 +60,8 @@ export const DEFAULT_LOOK = {
   ao: { on: false, strength: 1 },
   tone: 'neutral', exposure: 1,
   bloom: { on: false, strength: 0.6, threshold: 0.9 },
+  fog: { on: false, color: '#8a9099', density: 0.03 }, // haze over the place (studio.js; Blender renders skip it)
+  rain: false, // falling rain round the model, the Night City rain (studio.js)
   aa: 'msaa', // the renderer's own MSAA; 'fxaa' or 'smaa' add a pass
   ssr: { on: false, strength: 0.5 },
   pathTraced: false,
@@ -67,8 +71,9 @@ export const DEFAULT_LOOK = {
 // Merges a saved (partial, possibly old) look over the defaults.
 export function mergeLook(saved = {}) {
   const out = { ...DEFAULT_LOOK, ...saved };
-  for (const k of ['background', 'hdri', 'lights', 'ao', 'bloom', 'ssr']) out[k] = { ...DEFAULT_LOOK[k], ...saved?.[k] };
+  for (const k of ['background', 'hdri', 'lights', 'ao', 'bloom', 'ssr', 'fog']) out[k] = { ...DEFAULT_LOOK[k], ...saved?.[k] };
   for (const k of ['key', 'fill', 'rim']) out.lights[k] = { ...DEFAULT_LIGHTS[k], ...saved?.lights?.[k] };
+  out.rain = out.rain === true;
   if (!Object.hasOwn(TONE_MAPPINGS, out.tone)) out.tone = 'neutral';
   if (!Object.hasOwn(QUALITIES, out.quality)) out.quality = 'medium';
   if (!checkHdri(out.hdri.file).ok) out.hdri.file = null;

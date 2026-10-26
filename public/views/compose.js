@@ -15,7 +15,7 @@ import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf, toggleView, FREE
 import { initMotion, renderMotionGroup, onMotionClick, onMotionInput, onMotionChange, stopMotion, onMotionCanvasClick } from './compose-motion.js';
 import { unriggedVersion } from '../lib/autorig.js';
 import { initHandPose, renderHandPoseGroup, onHandPoseClick, onHandPoseInput, onHandPoseChange, syncHandPose, stopHandPose, isPosing } from './compose-handpose.js';
-import { initTestRig, renderTestRigGroup, onTestRigClick, stopTestRig } from './compose-testrig.js';
+import { initTestRig, renderTestRigGroup, onTestRigClick, onTestRigChange, stopTestRig } from './compose-testrig.js';
 import { initTools, renderToolsGroup, onToolsClick, onToolsChange, onCanvasClick, onToolsKey } from './compose-tools.js';
 import { initPath, renderPathGroup, onPathClick, onPathChange } from './compose-path.js';
 import { initLighting, renderLightingGroup, onLightingClick } from './compose-lighting.js';
@@ -64,7 +64,7 @@ export async function mount(el, { id }) {
   initPaint({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector, swapVersion, reload: async (next, { glb = true } = {}) => { m = upsert(next); if (studio) studio.kind = m.kind; renderModel(); if (glb) await loadModel(); refresh(); } });
   initHandPose({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
-  initTestRig({ scene: () => scene, studio: () => studio, draw });
+  initTestRig({ scene: () => scene, studio: () => studio, change, draw });
   initTools({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initPath({ scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initShelf({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, redraw: () => renderAside(true) });
@@ -679,6 +679,7 @@ function bind() {
     if (onPathChange(e.target)) return;
     if (await onMotionChange(e.target)) return;
     if (onHandPoseChange(e.target)) return;
+    if (onTestRigChange(e.target)) return;
     if (await onPaintChange(e.target)) return;
     const k = e.target.dataset.key;
     if (k && e.target.type === 'checkbox') change({ [k]: e.target.checked, ...(k === 'sameSize' && e.target.checked && { scale: 1 }), ...(k === 'center' && { snap: e.target.checked }) });

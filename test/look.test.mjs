@@ -49,7 +49,7 @@ test('Car Default equals today\'s behaviour; presets round trip through mergeLoo
 });
 
 test('lighting presets: key/fill/rim each with on, intensity, colour, azimuth, elevation; Match photo keeps the scene rig', () => {
-  assert.deepEqual(Object.values(LIGHT_PRESETS).map((p) => p.label), ['Match photo', 'Three lights', 'Soft box', 'Strong back light', 'Outdoor dusk']);
+  assert.deepEqual(Object.values(LIGHT_PRESETS).map((p) => p.label), ['Match photo', 'Three lights', 'Soft box', 'Strong back light', 'Outdoor dusk', 'Night', 'Neon']);
   for (const id of ['studio', 'softbox', 'rim', 'dusk']) {
     const l = lightsFromPreset(id);
     for (const k of ['key', 'fill', 'rim']) assert.deepEqual(Object.keys(l[k]), ['on', 'intensity', 'color', 'azimuth', 'elevation'], `${id}.${k}`);

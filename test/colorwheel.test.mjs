@@ -13,6 +13,7 @@ import { toggleView, FREE_TIP, VIEWS } from '../public/lib/studio.js';
 import { SHORTCUTS, byId, clashes, shortcutFor } from '../public/lib/shortcuts.js';
 import { ColorPicker, rgbToHsv, hsvToRgb, hsvFromHex, wheelPick, wheelZone } from '../public/lib/color-picker.js';
 import { pickColor, defaultPaint, setColor, rgbHex, hexRgb } from '../public/lib/tenno.js';
+import { keyRoute } from '../public/lib/testrig-ui.js';
 import { applyPaint, previewColors, listPieces, pieceKey } from '../public/lib/paint.js';
 import { createHistory } from '../public/lib/history.js';
 import { startServer } from '../server.mjs';
@@ -69,7 +70,9 @@ test('F is Reset view: in the one shortcut list, presses the toolbar button, cla
   const tr = read('public/views/compose-testrig.js');
   assert.match(tr, /window\.addEventListener\('keydown', onKey, true\)/, 'Test moves takes the keys first');
   assert.match(tr, /e\.preventDefault\(\); e\.stopPropagation\(\);/);
-  assert.match(tr, /const isGameKey = \(e\) => !\/\^F\\d\+\$\/\.test\(e\.key\)/, 'only F1-F12 get through, not the F key');
+  assert.match(tr, /keyRoute\(e\.key/, 'the keys go through testrig-ui.js keyRoute');
+  assert.equal(keyRoute('f'), 'game', 'only F1-F12 get through, not the F key');
+  assert.equal(keyRoute('F5'), 'pass');
 });
 
 // ---- the colour wheel ----

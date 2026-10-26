@@ -26,7 +26,7 @@ import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 import { normalizeDecals, decalMaterialParams, decalUrl } from './decals.js';
 import { mergeLook, effectsFor, hdriUrl, lookNeedsRebuild, hdriGround } from './look.js';
-import { buildEnvironment } from './env3d.js';
+import { buildEnvironment, buildRain } from './env3d.js';
 import { envScale, skyRotation } from './environments.js';
 import { Post, PathTraced, TONE } from './post.js';
 import { applyPaint, regroup, pickPiece, listPieces, previewColors, partNames } from './paint.js';
@@ -717,6 +717,11 @@ export class Studio {
       } catch { this.message = 'Could not load that HDRI'; }
     } else this.scene.backgroundBlurriness = 0; // rotation and intensity: clearStage resets them, the environment sets its sky's
     if (!h.file || !h.background) this.hideDome();
+    // Haze and rain (the Test Rig's Look panel sets them): over whatever place is showing.
+    this.scene.fog = look.fog.on ? new THREE.FogExp2(look.fog.color, look.fog.density) : null;
+    const rain = look.rain && !this.rain; // a place with its own rain (Night City) keeps just that
+    if (rain && !this.lookRain) this.scene.add(this.lookRain = buildRain(ENVIRONMENTS['night-city-rain'].rain));
+    else if (!rain && this.lookRain) { this.scene.remove(this.lookRain); disposeTree(this.lookRain); this.lookRain = null; }
     this.applyRig(look.lights);
     this.applyEffects();
   }
@@ -1420,10 +1425,11 @@ export class Studio {
   }
 
   // True while the scene moves on its own (rain), so views keep drawing frames.
-  get animating() { return Boolean(this.rain); }
+  get animating() { return Boolean(this.rain || this.lookRain); }
 
   render() {
     this.rain?.userData.update(performance.now() / 1000);
+    this.lookRain?.userData.update(performance.now() / 1000);
     if (this.model) this.shadow.update(this.renderer, this.scene, this.state.shadow);
     this.shadow.plane.visible = Boolean(this.model);
     if (this.tracing && this.pt?.tracer && !this.ptDirty && !this.ptBusy) { if (this.pt.renderSample() || this.pt.done) return; }
@@ -1438,6 +1444,7 @@ export class Studio {
     for (const h of Object.values(this.hdris)) { h.tex.dispose(); h.env.dispose(); }
     for (const m of this.pieceMats.values()) m.dispose();
     this.clearStage();
+    if (this.lookRain) disposeTree(this.lookRain);
     if (this.model) disposeTree(this.model);
     for (const p of this.extraFiles?.values() || []) p.then(disposeTree, () => {});
     for (const t of Object.values(this.envs)) t.dispose();
