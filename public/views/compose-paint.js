@@ -38,7 +38,7 @@ function textureGroup(mat) {
   const missing = textures.items.length - ready.length;
   const cur = mat.texture;
   return `<h3 style="margin-top:6px">Texture</h3>
-    <div class="mg-row">
+    <div class="mg-row stack">
       ${missing ? `<button class="btn sm pri" type="button" data-act="tex-sync" ${s.running ? 'disabled' : ''}>${s.running ? `Getting textures ${s.done}/${s.total}…` : `Get free textures (${missing})`}</button>` : ''}
       <button class="btn sm ghostbtn" type="button" data-act="tex-import">${icon('upload', 14)}<span>Import my own</span></button>
       ${cur ? '<button class="btn sm ghostbtn" type="button" data-act="tex-clear">No texture</button>' : ''}</div>
@@ -73,7 +73,7 @@ function templateGroup() {
     <p class="fine">Pick one to set the lighting, camera and background in one go.</p>
     <div class="tpls">${templatesFor(templateKind()).map((t) => card(t, false)).join('')}</div>
     ${(myTemplates || []).length ? `<h3 style="margin-top:6px">Yours</h3><div class="tpls">${myTemplates.map((t) => card(t, true)).join('')}</div>` : ''}
-    <div class="row"><input id="tplName" type="text" maxlength="60" placeholder="Template name"><button class="btn" type="button" data-act="tpl-save">Save current scene as template</button></div></div>`;
+    <div class="mg-row stack"><input class="inp" id="tplName" type="text" maxlength="60" placeholder="Template name" aria-label="Template name"><button class="btn sm sec" type="button" data-act="tpl-save">Save current scene as template</button></div></div>`;
 }
 const findTemplate = (id) => templatesFor(templateKind()).find((t) => t.id === id) || (myTemplates || []).find((t) => t.id === id);
 
@@ -133,8 +133,8 @@ let colorLevel = 'piece'; // 'global' | 'section' | 'piece'
 let colorKey = 'primary';
 let clipboard = null; // a copied material
 let picker = null;
-let exportPart = 'Body';
-let altHelmet = false;
+// Export settings live in the scene (scene.exportSet), so they are saved per model and undoable like any edit.
+const exportOf = () => ({ part: 'Body', altHelmet: false, ...ctx.scene().exportSet });
 let busyText = '';
 let lastWarnings = [];
 let lastCompare = null; // TennoGen compare checklist for the last exported set
@@ -170,7 +170,7 @@ export function renderPaintGroups() {
   const inferNote = paint.inference ? `Last run: ${paint.inference.source === 'vision' ? 'vision model' : 'built-in rules'}${paint.inference.note ? ` · ${esc(paint.inference.note)}` : ''}` : hasPhoto ? 'Reads the source photo, labels its regions and assigns PBR presets to the pieces.' : 'No source photo: inference needs the photo the model was made from.';
   const slotOptions = [['', 'Untinted'], ...SLOTS.map((s) => [s.id, `${s.label}${s.tint ? ` (${s.tint})` : ''}`])];
   const parts = `
-    <div class="grp" id="grp-parts"><h3>${icon('cube', 14)} Parts <span class="fine" style="margin:0 0 0 auto">${list.length} piece${list.length === 1 ? '' : 's'} · click a piece in the view</span></h3>
+    <div class="grp" id="grp-parts"><h3>${icon('cube', 14)} Parts</h3><p class="fine">${list.length} piece${list.length === 1 ? '' : 's'} · click a piece in the view</p>
       ${list.length ? `<div class="parts">${list.map((p) => {
         const r = rec(p.key);
         const region = r.region ? `<span class="badge ${r.region.flagged ? 'warn' : ''}" title="${r.region.user ? 'Set by you' : `Inferred · ${Math.round(r.region.confidence * 100)} %`}">${esc(REGIONS[r.region.label]?.label || r.region.label)}${r.region.flagged ? ' · review' : ''}</span>` : '';
@@ -185,7 +185,7 @@ export function renderPaintGroups() {
         ${sections.map((s) => `<div class="secrow"><input class="inp" data-section-name="${esc(s.id)}" value="${esc(s.name)}" aria-label="Section name"><button class="btn icon xs" type="button" data-section-del="${esc(s.id)}" aria-label="Remove ${esc(s.name)}">${icon('close', 12)}</button></div>`).join('')}
         <button class="btn sm ghostbtn" type="button" data-act="section-add">${icon('plus', 12)}<span>Add section</span></button>
       </details>
-      <div class="mg-row">
+      <div class="mg-row stack">
         <button class="btn sm sec" type="button" data-act="infer" ${hasPhoto && studio?.model && !busyText ? '' : 'disabled'}>${icon('search', 14)}<span>${paint.inference ? 'Re-run inference' : 'Infer car materials from photo'}</span></button>
         <button class="btn sm ghostbtn" type="button" data-act="revert" ${paint.inference || Object.values(paint.pieces || {}).some((p) => p.region) ? '' : 'disabled'}>${icon('retry', 14)}<span>Revert to photo texture</span></button>
       </div>
@@ -196,33 +196,38 @@ export function renderPaintGroups() {
   const target = colorLevel === 'global' ? 'global' : colorLevel === 'section' ? piece?.section || null : selected;
   const resolved = resolveColors(paint, piece || {});
   const sources = colorSources(paint, piece || {});
+  const levels = [
+    ['global', 'Global', ''],
+    ['section', 'Section', !selected ? 'Pick a piece first: Section colours every piece in its section' : !piece?.section ? 'This piece is in no section: give it one in Parts to colour by section' : ''],
+    ['piece', 'Piece', selected ? '' : 'Pick a piece in Parts or click it in the view'],
+  ];
+  const hint = levels.filter(([, , why]) => why).map(([, label, why]) => `<b>${label}:</b> ${esc(why)}.`).join(' ');
   const levelValue = (k) => (colorLevel === 'global' ? { ...DEFAULT_COLORS, ...paint.colors?.global }[k] : colorLevel === 'section' ? paint.colors?.sections?.[piece?.section]?.[k] : piece?.colors?.[k]);
   const color = `
     <div class="grp" id="grp-color"><h3>${icon('scene', 14)} Color</h3>
-      <div class="chips seg sm" role="radiogroup" aria-label="Colour level">
-        <button class="chip" type="button" role="radio" data-level="global" aria-checked="${colorLevel === 'global'}">Global</button>
-        <button class="chip" type="button" role="radio" data-level="section" aria-checked="${colorLevel === 'section'}" ${piece?.section ? '' : 'disabled'} title="${piece?.section ? '' : 'Pick a piece in a section'}">Section</button>
-        <button class="chip" type="button" role="radio" data-level="piece" aria-checked="${colorLevel === 'piece'}" ${selected ? '' : 'disabled'} title="${selected ? '' : 'Pick a piece'}">Piece</button>
+      <div class="chips seg sm levels" role="radiogroup" aria-label="Colour level">${levels.map(([k, label, why]) => `
+        <button class="chip" type="button" role="radio" data-level="${k}" aria-checked="${colorLevel === k}" ${why ? `aria-disabled="true" aria-describedby="levelHint"` : ''} title="${why || `Colour ${k === 'global' ? 'every piece' : k === 'section' ? 'every piece in this section' : 'this piece only'}`}">${label}</button>`).join('')}
       </div>
-      <div class="swatches">${SLOTS.map((s) => {
+      ${hint ? `<p class="fine" id="levelHint">${hint}</p>` : ''}
+      <div class="swatches" role="radiogroup" aria-label="Colour slot">${SLOTS.map((s) => {
         const own = levelValue(s.id) != null;
         const v = colorLevel === 'global' ? levelValue(s.id) : resolved[s.id];
-        return `<button class="swatch ${colorKey === s.id ? 'on' : ''}" type="button" data-color-key="${s.id}" title="${s.label}${s.tint ? ` · ${s.tint}` : ''} · ${own ? 'set here' : `inherited from ${sources[s.id]}`}"><i style="background:${v}"></i><span>${s.label}</span><small>${own || colorLevel === 'global' ? v : `← ${sources[s.id]}`}</small></button>`;
+        return `<button class="swatch ${colorKey === s.id ? 'on' : ''}" type="button" role="radio" aria-checked="${colorKey === s.id}" data-color-key="${s.id}" title="${s.label}${s.tint ? ` · ${s.tint}` : ''} · ${own ? 'set here' : `inherited from ${sources[s.id]}`}"><i style="background:${v}"></i><span>${s.label}</span><small>${own || colorLevel === 'global' ? v : `← ${sources[s.id]}`}</small></button>`;
       }).join('')}</div>
-      ${target ? `<div class="mg-row"><span class="fine">${colorLevel === 'global' ? 'All pieces' : colorLevel === 'section' ? `Section · ${esc(sections.find((s) => s.id === piece.section)?.name || '')}` : `Piece · ${esc(piece?.name || selected)}`} · ${SLOTS.find((s) => s.id === colorKey).label}</span>
+      ${target ? `<div class="mg-row stack"><span class="fine">${colorLevel === 'global' ? 'All pieces' : colorLevel === 'section' ? `Section · ${esc(sections.find((s) => s.id === piece.section)?.name || '')}` : `Piece · ${esc(piece?.name || selected)}`} · ${SLOTS.find((s) => s.id === colorKey).label}</span>
         ${colorLevel !== 'global' ? `<button class="btn sm ghostbtn" type="button" data-act="color-reset" ${levelValue(colorKey) != null ? '' : 'disabled'}>Reset to inherited</button>` : ''}</div>
       <div id="picker"></div>` : '<p class="fine">Pick a piece to colour it, or switch to Global.</p>'}
     </div>`;
 
   const mat = piece ? deserializeMaterial(piece.material) : null;
   const material = `
-    <div class="grp" id="grp-material"><h3>${icon('light', 14)} Material ${piece ? `<span class="fine" style="margin-left:auto">${esc(piece.name || selected)}</span>` : ''}</h3>
+    <div class="grp" id="grp-material"><h3>${icon('light', 14)} Material</h3>${piece ? `<p class="fine wrap">${esc(piece.name || selected)}</p>` : ''}
       ${!piece ? '<p class="fine">Pick a piece in the Parts list or click it in the view.</p>' : `
-      <div class="mg-row">${sel('mat-preset', 'preset', [['', piece.material ? 'Custom' : 'Original (as imported)'], ...Object.entries(MATERIAL_PRESETS).map(([k, p]) => [k, p.label])], mat.preset || '')}
+      <div class="mg-row mat-acts">${sel('mat-preset', 'preset', [['', piece.material ? 'Custom' : 'Original (as imported)'], ...Object.entries(MATERIAL_PRESETS).map(([k, p]) => [k, p.label])], mat.preset || '')}
         <button class="btn sm ghostbtn" type="button" data-act="mat-copy" ${piece.material ? '' : 'disabled'}>Copy</button>
         <button class="btn sm ghostbtn" type="button" data-act="mat-paste" ${clipboard ? '' : 'disabled'}>Paste</button>
         <button class="btn sm ghostbtn" type="button" data-act="mat-clear" ${piece.material ? '' : 'disabled'}>Clear</button></div>
-      ${piece.region ? `<div class="mg-row">${sel('piece-region', selected, Object.entries(REGIONS).map(([k, r]) => [k, r.label]), piece.region.label, 'Region')}<span class="fine">${piece.region.user ? 'set by you' : `${Math.round(piece.region.confidence * 100)} % sure${piece.region.flagged ? ' · please review' : ''}`}</span></div>` : ''}
+      ${piece.region ? `<div class="mg-row stack">${sel('piece-region', selected, Object.entries(REGIONS).map(([k, r]) => [k, r.label]), piece.region.label, 'Region')}<span class="fine">${piece.region.user ? 'set by you' : `${Math.round(piece.region.confidence * 100)} % sure${piece.region.flagged ? ' · please review' : ''}`}</span></div>` : ''}
       <div class="sl"><label>Base colour</label><input class="tint" type="color" data-mat="color" value="${esc(mat.color || resolved[piece.slot] || '#808080')}"><button class="btn icon xs" type="button" data-act="mat-color-clear" title="Use the slot colour / texture" ${mat.color ? '' : 'disabled'}>${icon('close', 12)}</button></div>
       ${tg('mat', 'textured', 'Keep texture', 'The imported texture under this material', mat.textured !== false)}
       ${sl('mat', 'metalness', 'Metalness', 0, 1, 0.01, mat.metalness)}${sl('mat', 'roughness', 'Roughness', 0, 1, 0.01, mat.roughness)}
@@ -249,7 +254,7 @@ export function renderPaintGroups() {
       ${look.background.kind === 'gradient' ? `${col('look', 'background.color', 'Top', look.background.color)}${col('look', 'background.color2', 'Bottom', look.background.color2)}` : ''}
       ${look.background.kind === 'image' ? `<div class="mg-row"><button class="btn sm ghostbtn" type="button" data-act="bg-image">${icon('upload', 14)}<span>${look.background.image ? 'Replace image' : 'Import image (PNG, JPG, WebP)'}</span></button><span class="fine">${esc(look.background.image || '')}</span></div>` : ''}
       <h3>HDRI environment</h3>
-      <div class="mg-row">${sel('look', 'hdri.file', [['', 'None (scene lighting)'], ...Object.entries(HDRIS).map(([k, h]) => [`builtin:${k}`, `${h.label} · ${h.note}`]), ...(look.hdri.file && !look.hdri.file.startsWith('builtin:') ? [[look.hdri.file, look.hdri.file]] : [])], look.hdri.file || '')}
+      <div class="mg-row stack">${sel('look', 'hdri.file', [['', 'None (scene lighting)'], ...Object.entries(HDRIS).map(([k, h]) => [`builtin:${k}`, `${h.label} · ${h.note}`]), ...(look.hdri.file && !look.hdri.file.startsWith('builtin:') ? [[look.hdri.file, look.hdri.file]] : [])], look.hdri.file || '')}
         <button class="btn sm ghostbtn" type="button" data-act="hdri-import">${icon('upload', 14)}<span>Import .hdr / .exr</span></button></div>
       ${look.hdri.file ? `${sl('look', 'hdri.rotation', 'Rotation', 0, 360, 1, look.hdri.rotation, TEXT.rotation(look.hdri.rotation))}${sl('look', 'hdri.intensity', 'Intensity', 0, 4, 0.05, look.hdri.intensity)}${tg('look', 'hdri.background', 'Show as background', '', look.hdri.background)}${look.hdri.background ? sl('look', 'hdri.blur', 'Blur', 0, 1, 0.01, look.hdri.blur) : ''}` : ''}
       <h3>Lighting</h3>
@@ -270,12 +275,12 @@ export function renderPaintGroups() {
   const outDir = state.settings?.outputRoot ? `${state.settings.outputRoot}${state.settings.platform === 'win32' ? '\\' : '/'}${m.slug}` : '';
   const exportGrp = `
     <div class="grp" id="grp-export"><h3>${icon('download', 14)} Export</h3>
-      <div class="mg-row">${sel('act', 'export-part', PARTS.map((p) => [p, p]), exportPart, 'Part')}${tg('act', 'alt-helmet', 'Alt helmet', '2048 × 1024 maps', altHelmet)}</div>
-      <div class="mg-row">
+      <div class="mg-row stack">${sel('act', 'export-part', PARTS.map((p) => [p, p]), exportOf().part, 'Part')}${tg('act', 'alt-helmet', 'Alt helmet', '2048 × 1024 maps', exportOf().altHelmet)}</div>
+      <div class="mg-row stack">
         <button class="btn sm sec" type="button" data-act="export-tenno" ${studio?.model && outDir && !busyText ? '' : 'disabled'}>${icon('image', 14)}<span>TennoGen texture set</span></button>
         <button class="btn sm sec" type="button" data-act="export-glb" title="Save the model with its materials named, as a GLB file in the handoff folder (${keyOf('export')})" ${studio?.model && outDir && !busyText ? '' : 'disabled'}>${icon('cube', 14)}<span>GLB with named materials</span></button>
       </div>
-      <p class="fine">${outDir ? `${esc(exportPart)}_d/_e/_n/_r/_s/_t.png (2048², tint and emissive 1024²) go to <code>${esc(outDir)}${state.settings.platform === 'win32' ? '\\' : '/'}tennogen</code>; the GLB to <code>models</code>.` : 'Choose a handoff folder in the render area below first.'}</p>
+      <p class="fine">${outDir ? `${esc(exportOf().part)}_d/_e/_n/_r/_s/_t.png (2048², tint and emissive 1024²) go to <code>${esc(outDir)}${state.settings.platform === 'win32' ? '\\' : '/'}tennogen</code>; the GLB to <code>models</code>.` : 'Choose a handoff folder in the render area below first.'}</p>
       ${lastCompare ? `<div class="checklist" role="group" aria-label="TennoGen compare"><p class="fine"><b>${lastCompare.pass ? 'Ready to submit' : 'Fix before submitting'}</b> · checked against the TennoGen template set</p><ul>${lastCompare.checks.map((c) => `<li class="${c.pass ? 'ok' : 'bad'}">${c.pass ? 'Pass' : 'Fail'}: ${esc(c.label)}${!c.pass && c.got != null ? ` (got ${esc(String(c.got))})` : ''}</li>`).join('')}</ul></div>` : ''}
       ${lastWarnings.length ? `<ul class="warnlist">${lastWarnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     </div>`;
@@ -301,7 +306,7 @@ function applyColor(hex) {
   if (level !== 'global' && colorLevel === 'piece' && !paint.pieces[selected]) paint = upsertPiece(paint, selected, { name: pieces().find((p) => p.key === selected)?.name });
   paint = setColor(paint, level, colorKey, hex);
   clearTimeout(colorTimer);
-  colorTimer = setTimeout(() => { ctx.change({ paint: recentColor(paintOf(), hex) }, { inspector: false }); picker?.setRecent(paintOf().recent); }, 600);
+  colorTimer = setTimeout(() => { ctx.change({ paint: recentColor(paintOf(), hex) }, { inspector: false, record: false }); /* the recent list is not an edit */ picker?.setRecent(paintOf().recent); }, 600);
   ctx.change({ paint }, { inspector: false });
   // Live swatch update without a full redraw.
   const sw = $(`[data-color-key="${colorKey}"] i`, ctx.root);
@@ -384,7 +389,7 @@ export async function onPaintClick(t) {
     setTimeout(() => loadTextures(true), 1000);
     return true;
   }
-  if (t.dataset.level) { colorLevel = t.dataset.level; ctx.renderInspector(); return true; }
+  if (t.dataset.level) { if (t.getAttribute('aria-disabled') === 'true') return true; colorLevel = t.dataset.level; ctx.renderInspector(); return true; }
   if (t.dataset.colorKey) { colorKey = t.dataset.colorKey; ctx.renderInspector(); return true; }
   if (t.dataset.bg) { ctx.change({ look: setPath(lookOf(), 'background.kind', t.dataset.bg) }); return true; }
   if (act === 'color-reset') {
@@ -514,8 +519,8 @@ export async function onPaintChange(t) {
     return true;
   }
   if (act === 'light-preset') { ctx.change({ look: { ...lookOf(), lights: lightsFromPreset(t.value) } }); return true; }
-  if (act === 'export-part') { exportPart = t.value; ctx.renderInspector(); return true; }
-  if (act === 'alt-helmet') { altHelmet = t.checked; return true; }
+  if (act === 'export-part') { ctx.change({ exportSet: { ...exportOf(), part: t.value } }); return true; }
+  if (act === 'alt-helmet') { ctx.change({ exportSet: { ...exportOf(), altHelmet: t.checked } }); return true; }
   if (t.id === 'decalFile' && t.files[0]) {
     const file = t.files[0];
     t.value = '';
@@ -595,7 +600,7 @@ async function compareFiles(files) {
     info.push({ name: f.name, width: bmp.width, height: bmp.height, channels: alpha ? 4 : 3, luma: /_d\.png$/i.test(f.name) ? lumaStats(data) : null });
     bmp.close();
   }
-  return compareSet(info, { part: exportPart, altHelmet });
+  return compareSet(info, exportOf());
 }
 
 async function runExport(glb) {
@@ -616,7 +621,7 @@ async function runExport(glb) {
       lastWarnings = [];
       toast(`GLB saved to ${started.outDir}`, 'info');
     } else {
-      const { files, warnings } = await exportTennoGen(studio.model, paintOf(), { part: exportPart, altHelmet });
+      const { files, warnings } = await exportTennoGen(studio.model, paintOf(), exportOf());
       for (const f of files) await put(`tennogen/${f.name}`, f.blob);
       lastWarnings = warnings;
       lastCompare = await compareFiles(files).catch(() => null);

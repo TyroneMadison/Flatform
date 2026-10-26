@@ -225,13 +225,13 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16
 .checklist ul, .histlist { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 4px; font-size: 12px; }
 .checklist .ok { color: var(--ok); } .checklist .bad { color: var(--bad); }
 .histlist li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.tswatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 .exportvideo { margin-top: 12px; padding: 14px; display: grid; gap: 8px; }
 .batchlist { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; font-size: 12px; }
 .batchlist li { display: flex; gap: 8px; align-items: center; }
 
 /* Sadie half: Tools group, big plain buttons (redesign mock-up) */
-.btn.big { font-size: 17px; font-weight: 700; padding: 14px 20px; min-height: 54px; border-radius: 14px; }
+.btn.big { font-size: 17px; font-weight: 700; padding: 14px 20px; min-height: 54px; height: auto; border-radius: 14px; white-space: normal; line-height: 1.2; text-align: center; }
 .chips.big .chip { font-size: 15px; padding: 10px 14px; min-height: 44px; }
 .hud.measure { position: absolute; transform: translate(-50%, -140%); background: var(--accent, #ff7a66); color: #fff; font-weight: 700; padding: 4px 10px; border-radius: 10px; pointer-events: none; }
 .warnbox { border: 2px solid #f2b56b; border-radius: 12px; padding: 8px 12px; margin: 6px 0; }

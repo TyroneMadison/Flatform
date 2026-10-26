@@ -8,15 +8,20 @@ export const BACKGROUND_KINDS = { scene: 'Scene', solid: 'Solid colour', gradien
 export const IMAGE_TYPES = ['.png', '.jpg', '.jpeg', '.webp']; // custom background images
 export const HDRI_TYPES = ['.hdr', '.exr'];
 // Built-in studio HDRIs: Poly Haven, CC0 (THIRD_PARTY_NOTICES.md). 1k versions, served from public/img/hdri/.
+// ground: [camera height, radius] in metres: shown as a place, the HDRI is projected onto a dome with a flat floor
+// that far below the lens it was shot with, so its ground meets the car at real scale (studio.js showDome).
 export const HDRIS = {
-  studio_small_03: { label: 'Studio small 03', note: 'Soft three-light studio' },
-  studio_small_08: { label: 'Studio small 08', note: 'Bright softbox studio' },
-  brown_photostudio_02: { label: 'Brown photo studio', note: 'Warm photo studio' },
-  kloofendal_48d_partly_cloudy_puresky: { label: 'Kloofendal sky', note: 'Partly cloudy outdoor sky' },
-  garage: { label: 'Garage', note: 'Concrete garage, daylight from the door' },
-  goegap_road: { label: 'Desert dusk', note: 'Desert road at sunset' },
-  white_studio_02: { label: 'White cyclorama', note: 'Clean white studio, soft light' },
+  studio_small_03: { label: 'Studio small 03', note: 'Soft three-light studio', ground: [1.6, 8] },
+  studio_small_08: { label: 'Studio small 08', note: 'Bright softbox studio', ground: [1.6, 8] },
+  brown_photostudio_02: { label: 'Brown photo studio', note: 'Warm photo studio', ground: [1.6, 9] },
+  kloofendal_48d_partly_cloudy_puresky: { label: 'Kloofendal sky', note: 'Partly cloudy outdoor sky', ground: [1.7, 120] },
+  garage: { label: 'Garage', note: 'Concrete garage, daylight from the door', ground: [1.6, 12] },
+  goegap_road: { label: 'Desert dusk', note: 'Desert road at sunset', ground: [1.7, 80] },
+  white_studio_02: { label: 'White cyclorama', note: 'Clean white studio, soft light', ground: [1.6, 10] },
 };
+// Your own HDRIs: a tripod at eye height, a mid-size place. ponytail: one guess for every upload; add a per-file
+// setting if people import very small rooms or wide landscapes.
+export const hdriGround = (file) => (file?.startsWith('builtin:') && HDRIS[file.slice(8)]?.ground) || [1.7, 40];
 export const hdriUrl = (file) => (file.startsWith('builtin:') ? `/img/hdri/${file.slice(8)}.hdr` : `/backdrops/${encodeURIComponent(file)}`);
 export const isHdri = (name) => HDRI_TYPES.includes(String(name).slice(String(name).lastIndexOf('.')).toLowerCase());
 export const isBackgroundImage = (name) => IMAGE_TYPES.includes(String(name).slice(String(name).lastIndexOf('.')).toLowerCase());
@@ -91,13 +96,14 @@ export const STUDIO_PRESETS = {
     lights: lightsFromPreset('rim'), ao: { on: true, strength: 1.2 }, tone: 'aces', exposure: 1.1, ssr: { on: true, strength: 0.6 }, aa: 'smaa', quality: 'high',
   }),
 };
-// Lighting studio: one-click environments. Each sets only the HDRI (file, turn, strength, shown as the
-// background or not) and the tone, so the rest of the look and the scene stay as they are.
+// Lighting studio: one-click environments. Each sets the HDRI (file, turn, strength, shown as the place around
+// the car or not) and the tone. A studio with a 3D set (preset, environments.js) also switches the scene to it;
+// the others keep the scene and, when shown, put the HDRI on a ground-projected dome at real scale.
 export const LIGHTING_PRESETS = {
   garage: { label: 'Garage', hdri: { file: 'builtin:garage', rotation: 90, intensity: 1, background: true, blur: 0.15 }, tone: 'agx' },
   desertDusk: { label: 'Desert dusk', hdri: { file: 'builtin:goegap_road', rotation: 200, intensity: 1.1, background: true, blur: 0 }, tone: 'aces' },
-  whiteCyc: { label: 'White cyclorama', hdri: { file: 'builtin:white_studio_02', rotation: 0, intensity: 1, background: true, blur: 0.6 }, tone: 'neutral' },
-  studioSoft: { label: 'Soft studio', hdri: { file: 'builtin:studio_small_03', rotation: 30, intensity: 1.2, background: false, blur: 0 }, tone: 'agx' },
+  whiteCyc: { label: 'White cyclorama', hdri: { file: 'builtin:white_studio_02', rotation: 0, intensity: 1, background: false, blur: 0 }, tone: 'neutral', preset: 'white-cyc-studio' },
+  studioSoft: { label: 'Soft studio', hdri: { file: 'builtin:studio_small_03', rotation: 30, intensity: 1.2, background: false, blur: 0 }, tone: 'agx', preset: 'soft-studio' },
   studioBright: { label: 'Bright studio', hdri: { file: 'builtin:studio_small_08', rotation: 0, intensity: 1, background: false, blur: 0 }, tone: 'neutral' },
   photoWarm: { label: 'Warm photo studio', hdri: { file: 'builtin:brown_photostudio_02', rotation: 0, intensity: 1, background: false, blur: 0 }, tone: 'neutral' },
   outdoorSky: { label: 'Open sky', hdri: { file: 'builtin:kloofendal_48d_partly_cloudy_puresky', rotation: 0, intensity: 1, background: true, blur: 0 }, tone: 'aces' },
@@ -137,7 +143,7 @@ export function blenderLook(look, { hdriPath = null } = {}) {
     engine: l.pathTraced || l.finalEngine === 'cycles' ? 'CYCLES' : 'BLENDER_EEVEE_NEXT',
     tone: { neutral: 'Khronos PBR Neutral', aces: 'Filmic', agx: 'AgX' }[l.tone], exposure: l.exposure,
     background: l.background,
-    hdri: l.hdri.file ? { path: hdriPath, rotation: l.hdri.rotation, intensity: l.hdri.intensity, background: l.hdri.background, blur: l.hdri.blur } : null,
+    hdri: l.hdri.file ? { path: hdriPath, rotation: l.hdri.rotation, intensity: l.hdri.intensity, background: l.hdri.background, blur: l.hdri.blur, ground: hdriGround(l.hdri.file) } : null,
     lights: l.lights.preset === 'match' ? null : l.lights,
     ao: l.ao, bloom: l.bloom,
   };

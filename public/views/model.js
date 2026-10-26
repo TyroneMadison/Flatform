@@ -96,7 +96,7 @@ function page() {
     <section class="mp-sec glass"><h2 class="label">Drop</h2>${dropSection(v)}</section>
     <section class="mp-sec glass"><h2 class="label">Prompt and settings</h2>${settingsSection(v)}</section>
     <section class="mp-sec glass"><div class="rowhead"><h2 class="label">Compose</h2>${ready ? `<a class="btn pri sm" href="#/compose/${m.id}">${icon('scene', 14)}<span>Open in Compose</span></a>` : ''}</div>
-      ${ready ? `<p class="sub">${esc(PRESETS[scene.preset]?.label || scene.preset)}${scene.preset === 'showroom' && scene.modeled ? ' (modeled room)' : ''} · turn ${Math.round(scene.turn)}°</p>
+      ${ready ? `<p class="sub">${esc(PRESETS[scene.preset]?.label || scene.preset)} · turn ${Math.round(scene.turn)}°</p>
       <div class="mp-view"><canvas id="mcv" aria-label="${esc(m.name)} in its scene"></canvas></div>` : '<p class="muted">The model is not ready yet.</p>'}</section>
     <section class="mp-sec glass"><h2 class="label">Rendered outputs</h2>${rendersSection()}</section>`;
 }

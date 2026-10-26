@@ -287,7 +287,7 @@ function appearanceHtml() {
   const ratio = contrast(c.text, c.bg);
   return `<div class="card glass"><h2 class="label">Theme</h2>
     <p class="fine">Changes the app's look only. Models, scenes, materials and renders never change.</p>
-    <div class="chips" role="radiogroup" aria-label="Theme">${Object.entries(THEMES).map(([k, p]) => `<button class="chip" type="button" role="radio" aria-checked="${th.preset === k}" data-act="theme" data-value="${k}"><span class="swatch" style="background:${p.primary}"></span>${esc(p.label)}</button>`).join('')}</div>
+    <div class="chips" role="radiogroup" aria-label="Theme">${Object.entries(THEMES).map(([k, p]) => `<button class="chip" type="button" role="radio" aria-checked="${th.preset === k}" data-act="theme" data-value="${k}"><span class="tswatch" style="background:${p.primary}"></span>${esc(p.label)}</button>`).join('')}</div>
     ${['primary', 'secondary', 'accent'].map((k) => `<div class="field"><span class="flabel">${k[0].toUpperCase() + k.slice(1)}</span><input class="inp" type="color" data-theme-color="${k}" value="${c[k]}" aria-label="${k} color"></div>`).join('')}
     <p class="fine">Text contrast ${ratio.toFixed(1)}:1${ratio >= AAA ? ' (meets WCAG AAA)' : ''}</p>
     <button class="btn ghostbtn" type="button" data-act="theme-reset">Reset to Flatform Dark</button>
