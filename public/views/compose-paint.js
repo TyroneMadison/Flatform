@@ -2,7 +2,7 @@
 // (Global > Section > Piece with the picker), Material (PBR + SSS per piece, presets, copy/paste), Scene (background,
 // HDRI, light presets, AO, tone mapping, reflections, quality, studio presets) and Export (GLB + TennoGen set).
 // compose.js owns the scene object and the studio; this module gets them through ctx and calls ctx.change().
-import { $, $$, esc, state, api, send, toast, fileUrl, native } from '../app.js';
+import { $, $$, esc, state, api, send, toast, fileUrl, native, activeWorkspace } from '../app.js';
 import { icon } from '../lib/icons.js';
 import {
   SLOTS, SECTIONS, PARTS, MATERIAL_PRESETS, MATERIAL_KEYS, defaultPaint, upsertPiece, resolveColors, colorSources, setColor, recentColor,
@@ -12,7 +12,48 @@ import { REGIONS } from '../lib/infer.js';
 import { DEFAULT_LOOK, mergeLook, STUDIO_PRESETS, LIGHT_PRESETS, lightsFromPreset, HDRIS, TONE_MAPPINGS, QUALITIES, BACKGROUND_KINDS, isHdri, isBackgroundImage } from '../lib/look.js';
 import { compareSet, lumaStats } from '../lib/compare.js';
 import { ColorPicker } from '../lib/color-picker.js';
-import { inferFromPhoto, revertInference, exportTennoGen, exportGlb } from '../lib/paint.js';
+import { inferFromPhoto, revertInference, exportTennoGen, exportGlb, setTextureWorkspace } from '../lib/paint.js';
+
+// Texture library (CC0 from ambientCG / Poly Haven, plus your own per workspace), loaded once per workspace.
+let textures = null; // { items, sync }
+let texturesFor = null;
+const texWs = () => activeWorkspace()?.id || 'car';
+async function loadTextures(force = false) {
+  const w = texWs();
+  setTextureWorkspace(w);
+  if (textures && texturesFor === w && !force) return;
+  texturesFor = w;
+  try { textures = await api(`/api/textures?workspace=${encodeURIComponent(w)}`); } catch { textures = { items: [], sync: {} }; }
+  ctx?.renderInspector();
+  if (textures.sync?.running) setTimeout(() => loadTextures(true), 1000);
+}
+const thumb = (t) => `/api/textures/${encodeURIComponent(t.id)}/color?workspace=${encodeURIComponent(texWs())}`;
+function textureGroup(mat) {
+  if (!textures || texturesFor !== texWs()) { loadTextures(); return '<h3 style="margin-top:6px">Texture</h3><p class="fine">Loading textures…</p>'; }
+  const s = textures.sync || {};
+  const ready = textures.items.filter((t) => t.cached);
+  const missing = textures.items.length - ready.length;
+  const cur = mat.texture;
+  return `<h3 style="margin-top:6px">Texture</h3>
+    <div class="mg-row">
+      ${missing ? `<button class="btn sm pri" type="button" data-act="tex-sync" ${s.running ? 'disabled' : ''}>${s.running ? `Getting textures ${s.done}/${s.total}…` : `Get free textures (${missing})`}</button>` : ''}
+      <button class="btn sm ghostbtn" type="button" data-act="tex-import">${icon('upload', 14)}<span>Import my own</span></button>
+      ${cur ? '<button class="btn sm ghostbtn" type="button" data-act="tex-clear">No texture</button>' : ''}</div>
+    ${Object.keys(s.errors || {}).length ? `<p class="fine">Some textures did not download. Check your connection and try again.</p>` : ''}
+    <div class="texgrid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">${ready.map((t) => `<button type="button" class="texbtn" draggable="true" data-texture="${esc(t.id)}" title="${esc(t.name)} · ${esc(t.source)} · ${esc(t.license)}" aria-pressed="${cur?.id === t.id}" style="padding:0;border-radius:8px;overflow:hidden;border:2px solid ${cur?.id === t.id ? 'var(--accent, #d4a63a)' : 'transparent'};background:none;cursor:pointer"><img src="${thumb(t)}" alt="${esc(t.name)}" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;display:block"><small style="display:block;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t.name)}</small></button>`).join('')}</div>
+    <p class="fine">Click a texture for this piece, or drag it onto any piece in the view.${ready.some((t) => t.kind !== 'custom') ? ' Free textures are CC0 from ambientCG and Poly Haven.' : ''}</p>
+    ${cur ? `${sl('tex', 'scale', 'Texture size', 0.5, 32, 0.5, cur.scale, `${fixed(cur.scale, 1)}×`)}${sl('tex', 'rotation', 'Texture turn', -180, 180, 1, cur.rotation, `${cur.rotation}°`)}` : ''}
+    <input type="file" id="texFile" accept="image/png,image/jpeg" hidden>`;
+}
+function applyTexture(key, id) {
+  const prev = selected;
+  selected = key;
+  const cur = deserializeMaterial(rec(key).material).texture;
+  updateMaterial({ texture: { id, scale: cur?.scale ?? 4, rotation: cur?.rotation ?? 0 } });
+  selected = prev ?? key;
+}
+// Drag a texture tile onto the 3D view: the piece under the drop point gets it.
+export function onTextureDrop(id, key) { if (key) { applyTexture(key, id); selectPiece(key); } }
 
 let ctx; // { root, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector }
 let selected = null; // piece key
@@ -117,6 +158,7 @@ export function renderPaintGroups() {
       ${sl('mat', 'sheen', 'Sheen (cloth)', 0, 1, 0.01, mat.sheen)}${sl('mat', 'transmission', 'Transmission', 0, 1, 0.01, mat.transmission)}${sl('mat', 'ior', 'IOR', 1, 2.333, 0.001, mat.ior)}${sl('mat', 'thickness', 'Thickness', 0, 0.5, 0.005, mat.thickness, `${fixed(mat.thickness, 3)} m`)}
       ${col('mat', 'emissive', 'Emissive', mat.emissive)}${sl('mat', 'emissiveIntensity', 'Glow', 0, 10, 0.1, mat.emissiveIntensity)}
       ${sl('mat', 'normalScale', 'Normal strength', 0, 2, 0.01, mat.normalScale)}
+      ${textureGroup(mat)}
       <h3 style="margin-top:6px">Subsurface scattering</h3>
       ${sl('mat', 'sss', 'Amount', 0, 1, 0.01, mat.sss)}${sl('mat', 'sssRadius', 'Radius', 0.1, 4, 0.05, mat.sssRadius)}${col('mat', 'sssColor', 'Colour', mat.sssColor)}`}
     </div>`;
@@ -215,6 +257,14 @@ const updateMaterial = (patch, { inspector = true } = {}) => {
 };
 
 // ---- events (called from compose.js's listeners) ----
+export function onPaintDragStart(e) {
+  const id = e.target.closest?.('[data-texture]')?.dataset.texture;
+  if (!id) return false;
+  e.dataTransfer.setData('application/x-flatform-texture', id);
+  e.dataTransfer.effectAllowed = 'copy';
+  return true;
+}
+
 export async function onPaintClick(t) {
   const act = t.dataset.act;
   if (t.dataset.select) { selectPiece(t.dataset.select); return true; }
@@ -224,6 +274,15 @@ export async function onPaintClick(t) {
     const name = rec(key).name || pieces().find((p) => p.key === key)?.name || '';
     row.querySelector('.pname').outerHTML = `<input class="inp pname-edit" data-rename-input="${esc(key)}" value="${esc(name)}" aria-label="Piece name">`;
     row.querySelector('.pname-edit').focus();
+    return true;
+  }
+  if (t.dataset.texture) { applyTexture(selected, t.dataset.texture); return true; }
+  if (act === 'tex-clear') { updateMaterial({ texture: null }); return true; }
+  if (act === 'tex-import') { $('#texFile', ctx.root)?.click(); return true; }
+  if (act === 'tex-sync') {
+    try { textures = await send(`/api/textures/sync?workspace=${encodeURIComponent(texWs())}`, 'POST', {}); } catch (e) { toast(e.message); }
+    ctx.renderInspector();
+    setTimeout(() => loadTextures(true), 1000);
     return true;
   }
   if (t.dataset.level) { colorLevel = t.dataset.level; ctx.renderInspector(); return true; }
@@ -299,6 +358,14 @@ export function onPaintInput(t) {
     updateMaterial({ [t.dataset.mat]: v }, { inspector: false });
     return true;
   }
+  if (t.dataset.tex && t.type === 'range') {
+    const v = Number(t.value);
+    t.style.setProperty('--p', `${((v - t.min) / (t.max - t.min)) * 100}%`);
+    $(`#v-${t.id}`, ctx.root).textContent = t.dataset.tex === 'scale' ? `${fixed(v, 1)}×` : `${v}°`;
+    const cur = deserializeMaterial(rec(selected).material).texture;
+    if (cur) updateMaterial({ texture: { ...cur, [t.dataset.tex]: v } }, { inspector: false });
+    return true;
+  }
   if (t.dataset.mat && t.type === 'color') { if (t.nextElementSibling?.classList.contains('v')) t.nextElementSibling.textContent = t.value; updateMaterial({ [t.dataset.mat]: t.value }, { inspector: false }); return true; }
   return false;
 }
@@ -343,6 +410,16 @@ export async function onPaintChange(t) {
   if (act === 'light-preset') { ctx.change({ look: { ...lookOf(), lights: lightsFromPreset(t.value) } }); return true; }
   if (act === 'export-part') { exportPart = t.value; ctx.renderInspector(); return true; }
   if (act === 'alt-helmet') { altHelmet = t.checked; return true; }
+  if (t.id === 'texFile' && t.files[0]) {
+    const file = t.files[0];
+    t.value = '';
+    try {
+      const item = await api(`/api/textures/import?workspace=${encodeURIComponent(texWs())}&name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
+      await loadTextures(true);
+      if (selected) applyTexture(selected, item.id);
+    } catch (e) { toast(e.message); }
+    return true;
+  }
   if (t.id === 'lookFile' && t.files[0]) {
     const file = t.files[0];
     const kind = t.dataset.kind;

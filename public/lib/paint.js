@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { resolveColors, deserializeMaterial, DEFAULT_MATERIAL, TINT_SLOTS, packTintMask, packEmissiveMask, textureSet, exportWarnings, meanLuminance, hexRgb } from './tenno.js';
+import { textureUrl, isCustomId } from './textures.js';
 import { presetFor, stripHighlights, voteRegions, groupFaces, kmeans, clusterStats, labelClusters, mergeInference, REGION_IDS } from './infer.js';
 
 export const pieceKey = (meshIndex, name, group = null) => `${name || 'mesh'}#${meshIndex}${group == null ? '' : `@${group}`}`;
@@ -92,6 +93,28 @@ export function detailNormalMap(kind, { size = 0.4, density = 0.5 } = {}) {
 
 // The MeshPhysicalMaterial for a piece record over its original material. The piece reads the scene environment
 // (envMapIntensity 1, no envMap of its own), so inferred paint, chrome and glass reflect the HDRI or backdrop.
+// Library textures (ambientCG / Poly Haven, or your own import), loaded once per URL and tiled per piece.
+let textureWorkspace = 'car';
+export function setTextureWorkspace(w) { textureWorkspace = w; }
+const loadedTextures = new Map();
+function libraryMap(ref, map, mat, srgb) {
+  const url = textureUrl(ref.id, map, textureWorkspace);
+  let base = loadedTextures.get(url);
+  if (!base) {
+    base = new THREE.TextureLoader().load(url, () => { mat.needsUpdate = true; });
+    loadedTextures.set(url, base);
+  }
+  const t = base.clone();
+  t.source = base.source; // share the pixels, not the tiling
+  t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(ref.scale, ref.scale);
+  t.center.set(0.5, 0.5);
+  t.rotation = (ref.rotation * Math.PI) / 180;
+  t.needsUpdate = true;
+  return t;
+}
+
 export function pieceMaterial(piece, original, paint, cached) {
   const m = deserializeMaterial(piece.material);
   const colors = resolveColors(paint, piece);
@@ -119,6 +142,13 @@ export function pieceMaterial(piece, original, paint, cached) {
   mat.emissive.set(glow ? colors[piece.slot] : m.emissive);
   mat.emissiveIntensity = glow ? Math.max(m.emissiveIntensity, 2) : m.emissiveIntensity;
   mat.normalScale.set(m.normalScale, m.normalScale);
+  if (m.texture) {
+    mat.map = libraryMap(m.texture, 'color', mat, true);
+    if (!isCustomId(m.texture.id)) {
+      mat.normalMap = libraryMap(m.texture, 'normal', mat, false);
+      mat.roughnessMap = libraryMap(m.texture, 'roughness', mat, false);
+    }
+  }
   mat.envMapIntensity = 1;
   mat.userData.sss.amount.value = m.sss;
   mat.userData.sss.radius.value = m.sssRadius;

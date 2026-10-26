@@ -8,6 +8,7 @@
 // - Texture set, PNG only: <Part>_d diffuse, _e emissive, _n normal, _r roughness, _s specular/metalness, _t tint mask.
 //   d/n/r/s are 2048², t and e 1024² for warframe skins; alt helmets are authored 2048×1024.
 // - Albedo: non-metals about 50 % luminance (128/255), metals about 80 % (186/255).
+import { normalizeTextureRef } from './textures.js';
 
 export const SLOTS = [
   { id: 'primary', label: 'Primary', tint: 'Tint0', channel: 0 },
@@ -118,6 +119,8 @@ export function serializeMaterial(m) {
   const out = {};
   for (const k of MATERIAL_KEYS) if (m[k] !== undefined && JSON.stringify(m[k]) !== JSON.stringify(DEFAULT_MATERIAL[k])) out[k] = m[k];
   if (m.preset) out.preset = m.preset;
+  const t = normalizeTextureRef(m.texture);
+  if (t) out.texture = t;
   return out;
 }
 export function deserializeMaterial(json) {
@@ -125,6 +128,8 @@ export function deserializeMaterial(json) {
   if (!json || typeof json !== 'object') return out;
   for (const k of MATERIAL_KEYS) if (json[k] !== undefined) out[k] = json[k];
   if (json.preset && Object.hasOwn(MATERIAL_PRESETS, json.preset)) out.preset = json.preset;
+  const t = normalizeTextureRef(json.texture);
+  if (t) out.texture = t;
   return out;
 }
 // What the Blender script needs for a piece: Principled BSDF inputs including Subsurface Weight/Radius/Color.

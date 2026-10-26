@@ -11,7 +11,7 @@ import { initMotion, renderMotionGroup, onMotionClick, onMotionInput, onMotionCh
 import { initTools, renderToolsGroup, onToolsClick, onToolsChange, onCanvasClick, onToolsKey } from './compose-tools.js';
 import { initPath, renderPathGroup, onPathClick, onPathChange } from './compose-path.js';
 import { initLighting, renderLightingGroup, onLightingClick } from './compose-lighting.js';
-import { initPaint, renderPaintGroups, afterRender, onPaintClick, onPaintInput, onPaintChange, selectPiece } from './compose-paint.js';
+import { initPaint, renderPaintGroups, afterRender, onPaintClick, onPaintInput, onPaintChange, selectPiece, onPaintDragStart, onTextureDrop } from './compose-paint.js';
 
 let root;
 let m;
@@ -571,6 +571,18 @@ function bind() {
     }
   });
   cv.addEventListener('pointerup', () => { drag = null; });
+  // Drag a texture tile from the Material group onto a piece.
+  el.addEventListener('dragstart', (e) => { onPaintDragStart(e); });
+  cv.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('application/x-flatform-texture')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+  cv.addEventListener('drop', (e) => {
+    const id = e.dataTransfer.getData('application/x-flatform-texture');
+    if (!id || !studio?.model) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const r = cv.getBoundingClientRect();
+    const key = studio.pick(e.clientX - r.left, e.clientY - r.top);
+    if (key) onTextureDrop(id, key); else toast('Drop the texture on a piece of the model');
+  });
   // A click (not a drag) on the model picks that piece for the Parts, Color and Material groups.
   let down = null;
   cv.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; }, true);

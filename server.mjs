@@ -29,6 +29,7 @@ import { createUpdater, parseVersion, updateOptions } from './updates.mjs';
 import { SERVICES, LOCAL, CONVERT_CREDITS, entry, append, parse, summary, defaultThresholds } from './ledger.mjs';
 import { check as checkTennogen, fixPlan, CONTENT_TYPES, EXPORT_MODES } from './public/lib/tennogen.js';
 import { pngSize, resizePng } from './png.mjs';
+import { createTextureLibrary } from './textures.mjs';
 import { localEngine as createLocalEngine, downloadWeights, weightsReady, checkCuda, UPSCALER_FILES } from './local.mjs';
 import { loadPoses } from './public/lib/poses.js';
 const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
@@ -149,6 +150,7 @@ export async function startServer({
   onWorkspaceSwitch = null, // called after the active workspace changes; startApp() restarts on the new folder
   localEngine = null, // tests pass a mock; otherwise local.mjs starts TRELLIS on the first local generation
   weightsFetch = globalThis.fetch, // the weight downloader's network (tests mock it)
+  textureFetch = globalThis.fetch, // the texture library's network: ambientCG and Poly Haven (tests mock it)
   cudaCheck = checkCuda,
   onLowBalance, // (service, { balance, threshold }) when GET /api/spend finds a balance under its alert (main.mjs notifies)
 }) {
@@ -551,6 +553,7 @@ export async function startServer({
 
   // ---- Local engine (local.mjs): TRELLIS on the user's GPU, started on first use, stopped on close ----
   const weightsDir = () => settings.localEngine?.weightsDir || path.join(dataDir, 'local-engine', 'weights');
+  const textures = createTextureLibrary({ dir: path.join(dataDir, 'textures'), fetch: textureFetch });
   const upscalerDir = () => path.join(path.dirname(weightsDir()), 'upscaler');
   let localInst = localEngine;
   let localFor = null;
@@ -1232,6 +1235,23 @@ export async function startServer({
     }
     if (area === 'local' && !id && method === 'GET') return send(res, 200, await localView());
     if (area === 'local' && id === 'download' && method === 'POST') { startDownload(); return send(res, 202, await localView()); }
+    // Texture library: CC0 surfaces synced from ambientCG / Poly Haven (cached for offline), and your own per workspace.
+    if (area === 'textures') {
+      const w = url.searchParams.get('workspace');
+      if (!id && method === 'GET') return send(res, 200, await textures.list(w));
+      if (id === 'sync' && !sub && method === 'POST') {
+        const ids = (await readJson(req)).ids;
+        textures.sync(Array.isArray(ids) ? ids.map(String) : undefined);
+        return send(res, 202, await textures.list(w));
+      }
+      if (id === 'licenses' && !sub && method === 'GET') return send(res, 200, await textures.licenses());
+      if (id === 'import' && !sub && method === 'POST') {
+        const t = await textures.importTexture(w, url.searchParams.get('name'), await readBody(req, 25 * 1024 * 1024, 'Texture too large (max 25 MB)'));
+        return send(res, 201, t);
+      }
+      if (id && sub && method === 'GET') { const f = await textures.file(id, sub, w); return serveFile(res, f.file, { 'Content-Type': f.type, 'Cache-Control': 'max-age=3600' }); }
+      if (id && !sub && method === 'DELETE') { await textures.remove(w, id); return send(res, 200, await textures.list(w)); }
+    }
     if (area === 'local' && id === 'base' && method === 'GET') return send(res, 200, baseSetup()); // what Generate Spin Set and thumbnails use
     if (area === 'keys' && id && !sub) {
       const provider = providerParam(id, true);
