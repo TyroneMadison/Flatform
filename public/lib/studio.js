@@ -20,11 +20,12 @@ import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { GroundedSkybox } from 'three/addons/objects/GroundedSkybox.js';
 import { HorizontalBlurShader } from 'three/addons/shaders/HorizontalBlurShader.js';
 import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
-import { STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, PLATES, plateUrl, plateThumb, plateCamera } from './pipeline.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, PLATES, plateUrl, plateThumb, plateCamera, CAR_LENGTH, hfovOf, isCarShape, modelScale, fitDistance, frameOrbit } from './pipeline.js';
 
 RectAreaLightUniformsLib.init();
 
-export const CAR_LENGTH = 4.6;
+export { CAR_LENGTH };
 export const RING = '#ff7a66'; // the accent colour of the app
 export const GOLD = '#f2b56b'; // the showroom's floor ring
 export const CAMERAS = {
@@ -60,8 +61,12 @@ export function defaultScene(settings = {}) {
     backdrop: null, x: 0, y: 0, snap: true, turn: 30, scale: 1, sameSize: true,
     camera: 'front34', lens: 50, matchLighting: true, key: 1.3, fill: 0.3, rim: 1.4,
     reflection: 0.7, shadow: 0.5, autoOrient: true, center: true, flip: false,
+    // Camera view mode. 'car': the preset above (matched to the photo, eye level), unchanged since v0.4. 'free': an
+    // orbit camera, kept in orbit = { position, target } so renders use it too. fit: 'all' after "Frame all" in car view.
+    view: 'car', orbit: null, fit: 'footprint',
   };
 }
+export const VIEWS = { car: 'Car view', free: 'Free roam' };
 export const lookOf = (preset) => (preset === 'transparent' || preset === 'showroom' ? preset : 'studio');
 // Share of the frame width the car's footprint diagonal spans (the widest it can look at any turn).
 const FILL = { wide: 0.7, square: 0.84 };
@@ -501,7 +506,8 @@ export class Studio {
     if (s.autoOrient && measure().x > size.z) m.rotation.y = -Math.PI / 2; // scans lie along X, nose on +X: turn it to +Z
     if (s.flip) m.rotation.y += Math.PI; // a scan can't tell its nose from its tail
     measure();
-    m.scale.setScalar((CAR_LENGTH / Math.max(size.x, size.z, 1e-6)) * (s.sameSize ? 1 : s.scale));
+    this.carLike = isCarShape(size); // tall models (humanoids) are never size-locked, see pipeline.js modelScale
+    m.scale.setScalar(modelScale(size, s));
     measure();
     const c = box.getCenter(new THREE.Vector3());
     if (s.center) { m.position.x -= c.x; m.position.z -= c.z; }
@@ -537,36 +543,26 @@ export class Studio {
   // Frames the car for the look (4:3 studio or 1:1 transparent) and fits that frame inside the canvas.
   // The camera is placed so the lens changes perspective, not the size of the car in the frame.
   applyCamera() {
-    if (this.freeCamera) { // Review: OrbitControls owns the camera
-      this.camera.aspect = this.width / this.height;
-      this.camera.updateProjectionMatrix();
-      this.frameRect = { x: 0, y: 0, width: this.width, height: this.height };
-      return;
-    }
     const s = this.state;
+    if (s.view === 'free') return this.applyFreeCamera();
+    if (this.controls) this.controls.enabled = false;
     if (plateOf(s)) return this.applyPlateCamera(plateOf(s).cam);
     const preset = CAMERAS[s.camera] || CAMERAS.front34;
     const aspect = aspectOf(s.preset);
-    const hfov = 2 * Math.atan(17.5 / s.lens); // 35 mm film gauge
+    const hfov = hfovOf(s.lens);
     // Metres visible across the frame at the car: the footprint diagonal over the fill share, so a turning car
     // never leaves the frame and fills the same share of it whatever its proportions.
     const size = this.carSize || new THREE.Vector3(1.9, 1.3, CAR_LENGTH);
     const width = Math.hypot(size.x, size.z) / (aspect > 1 ? FILL.wide : FILL.square);
-    const distance = width / 2 / Math.tan(hfov / 2);
+    let distance = width / 2 / Math.tan(hfov / 2);
     const target = new THREE.Vector3(0, size.y / 2 + (aspect > 1 ? 0.06 * width : 0), 0); // 4:3 looks keep some floor
+    const sphere = s.fit === 'all' && this.sphere();
+    if (sphere) { distance = Math.max(distance, fitDistance(sphere.radius, hfov, aspect)); target.copy(sphere.center); }
     const el = THREE.MathUtils.degToRad(preset.elevation);
-    this.camera.position.set(0, target.y + distance * Math.sin(el), distance * Math.cos(el));
+    this.camera.position.set(target.x, target.y + distance * Math.sin(el), target.z + distance * Math.cos(el));
     this.camera.lookAt(target);
-    const view = this.width / this.height;
-    const tanV = Math.tan(hfov / 2) / aspect; // vertical half-angle of the look
-    this.camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(view >= aspect ? tanV : (tanV * aspect) / view));
-    this.camera.aspect = view;
-    this.camera.near = 0.1;
-    this.camera.far = distance * 6;
-    this.camera.updateProjectionMatrix();
-    this.frameRect = view >= aspect
-      ? { x: (this.width - this.height * aspect) / 2, y: 0, width: this.height * aspect, height: this.height }
-      : { x: 0, y: (this.height - this.width / aspect) / 2, width: this.width, height: this.width / aspect };
+    this.target = target;
+    this.fitFrame(Math.tan(hfov / 2) / aspect, aspect, 0.1, distance * 6);
   }
 
   // A photo scene: the camera the photo was taken with (pipeline.js plateCamera), fitted inside the canvas like
@@ -574,19 +570,101 @@ export class Studio {
   applyPlateCamera(cal) {
     const aspect = 4 / 3;
     const cam = plateCamera(cal, aspect);
+    const target = new THREE.Vector3(...cam.target);
     this.camera.position.set(...cam.position);
-    this.camera.lookAt(...cam.target);
-    const view = this.width / this.height;
+    this.camera.lookAt(target);
+    this.target = target;
     const tanV = Math.tan(THREE.MathUtils.degToRad(cam.vfov) / 2);
+    this.fitFrame(tanV, aspect, 0.1, 200);
+    if (this.state.fit === 'all' && this.model) {
+      // "Frame all": the photo's camera aims at the floor, not the model, so pull back along its own line of
+      // sight until every corner of the model projects inside the frame (at most 10× the photo's distance).
+      for (let k = 0; k < 40 && !this.framesModel(0.92); k++) this.camera.position.sub(target).multiplyScalar(1.06).add(target);
+      this.camera.updateMatrixWorld();
+    }
+    this.coverBackground();
+  }
+
+  // Whether the model's whole bounding box projects inside the look's frame (ndc ±limit).
+  framesModel(limit = 1) {
+    if (!this.model) return true;
+    this.camera.updateMatrixWorld();
+    const box = new THREE.Box3().setFromObject(this.model);
+    const f = this.frameRect;
+    const sx = this.width / f.width; // the frame is letterboxed inside the canvas; ndc is canvas-wide
+    const sy = this.height / f.height;
+    for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) {
+      const p = new THREE.Vector3(x, y, z).project(this.camera);
+      if (p.z > 1 || Math.abs(p.x * sx) > limit || Math.abs(p.y * sy) > limit) return false;
+    }
+    return true;
+  }
+
+  // Free roam: the orbit camera (state.orbit), through the look's frame so what sits inside the safe area renders.
+  applyFreeCamera() {
+    const s = this.state;
+    const aspect = plateOf(s) ? 4 / 3 : aspectOf(s.preset);
+    if (!s.orbit) { // first time: start exactly where the car view camera is
+      s.view = 'car';
+      this.applyCamera();
+      s.view = 'free';
+      s.orbit = { position: this.camera.position.toArray(), target: this.target.toArray() };
+    }
+    const target = new THREE.Vector3(...s.orbit.target);
+    this.camera.position.set(...s.orbit.position);
+    this.camera.lookAt(target);
+    this.target = target;
+    if (this.controls) { this.controls.target.copy(target); this.controls.enabled = true; }
+    this.fitFrame(Math.tan(hfovOf(s.lens) / 2) / aspect, aspect, 0.05, 2000);
+    this.coverBackground();
+  }
+
+  // The look's frame (its aspect) inside the canvas: fov from the frame's vertical half-angle tangent, letterboxed.
+  fitFrame(tanV, aspect, near, far) {
+    const view = this.width / this.height;
     this.camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(view >= aspect ? tanV : (tanV * aspect) / view));
     this.camera.aspect = view;
-    this.camera.near = 0.1;
-    this.camera.far = 200;
+    this.camera.near = near;
+    this.camera.far = far;
     this.camera.updateProjectionMatrix();
     this.frameRect = view >= aspect
       ? { x: (this.width - this.height * aspect) / 2, y: 0, width: this.height * aspect, height: this.height }
       : { x: 0, y: (this.height - this.width / aspect) / 2, width: this.width, height: this.width / aspect };
-    this.coverBackground();
+  }
+
+  // The model's bounding sphere in scene space (rotation-proof, so a turning car stays framed), or null.
+  sphere() {
+    if (!this.model) return null;
+    this.pivot.updateMatrixWorld(true);
+    return new THREE.Box3().setFromObject(this.model).getBoundingSphere(new THREE.Sphere());
+  }
+
+  // Free roam in the composer: OrbitControls own the camera between pointer events (drag orbits, wheel zooms,
+  // right or Shift drag pans). Every move is copied into state.orbit; onChange(orbit, settled) redraws and saves.
+  enableOrbit(onChange) {
+    const c = this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    Object.assign(c, { enabled: false, minDistance: 0.2, maxDistance: 400, screenSpacePanning: true });
+    c.addEventListener('change', () => {
+      this.state.orbit = { position: this.camera.position.toArray(), target: c.target.toArray() };
+      onChange(this.state.orbit, false);
+    });
+    c.addEventListener('end', () => onChange(this.state.orbit, true));
+    this.applyCamera(); // the constructor's update() aimed the camera at the origin
+  }
+
+  // "Frame all": the whole model in view with a little padding. Free roam moves the orbit camera back along its
+  // own line of sight; car view keeps the preset's angle and photo camera but pulls back until the model fits.
+  // Returns the scene fields that changed, for saving.
+  frameAll() {
+    const sphere = this.sphere();
+    if (!sphere) return null;
+    const s = this.state;
+    if (s.view === 'free') {
+      if (!s.orbit) this.applyFreeCamera();
+      s.orbit = frameOrbit({ center: sphere.center.toArray(), radius: sphere.radius }, s.orbit.position, hfovOf(s.lens), plateOf(s) ? 4 / 3 : aspectOf(s.preset));
+    } else s.fit = 'all';
+    this.applyCamera();
+    return s.view === 'free' ? { orbit: s.orbit } : { fit: s.fit };
   }
 
   resize(width, height, pixelRatio = 1) {
@@ -891,6 +969,7 @@ export class Studio {
   }
 
   dispose() {
+    this.controls?.dispose();
     this.clearStage();
     if (this.model) disposeTree(this.model);
     for (const t of Object.values(this.envs)) t.dispose();

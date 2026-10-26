@@ -20,6 +20,35 @@ export const LIGHT_RANGES = {
 export const DEFAULT_LIGHTING = { key: 1, azimuth: -40, elevation: 40, kelvin: 5600, fill: 1, rim: 1 };
 export const DEFAULT_GLASS = { on: true, tint: '#14202a', opacity: 0.15 };
 
+// ---- model size and camera framing (shared by studio.js, the tests and mirrored in render/blender_turntable.py) ----
+export const CAR_LENGTH = 4.6; // metres every car is normalised to ("Fit")
+export const SENSOR_HALF = 17.5; // half of a 35 mm film gauge: horizontal fov = 2·atan(17.5 / lens)
+export const hfovOf = (lens) => 2 * Math.atan(SENSOR_HALF / lens); // radians
+// A car is longer than it is tall. Anything clearly taller than its longest horizontal span (a humanoid, a tower)
+// is not a car: the fleet size lock doesn't apply to it and Fit means its tallest side is CAR_LENGTH.
+export const isCarShape = ({ x, y, z }) => y <= 1.15 * Math.max(x, z);
+// The scale that normalises a model of raw size {x, y, z}: cars by length (locked with sameSize), others by their
+// largest side, with the Scale slider always live.
+export function modelScale(size, { sameSize = true, scale = 1 } = {}) {
+  const car = isCarShape(size);
+  const fit = CAR_LENGTH / Math.max(car ? Math.max(size.x, size.z) : Math.max(size.x, size.y, size.z), 1e-6);
+  return fit * (car && sameSize ? 1 : scale);
+}
+// Distance from which a sphere of `radius` fits a frame of horizontal fov `hfov` (radians) and `aspect`, with
+// a little padding round it ("Frame all").
+export function fitDistance(radius, hfov, aspect, pad = 1.1) {
+  const half = Math.atan(Math.min(Math.tan(hfov / 2), Math.tan(hfov / 2) / aspect));
+  return (Math.max(radius, 1e-6) * pad) / Math.sin(half);
+}
+// The free-roam orbit that frames a sphere, looking from the same direction as `from` (a position) towards it.
+export function frameOrbit({ center, radius }, from, hfov, aspect) {
+  const d = fitDistance(radius, hfov, aspect);
+  let dir = from.map((v, i) => v - center[i]);
+  const len = Math.hypot(...dir);
+  dir = len > 1e-6 ? dir.map((v) => v / len) : [0, 0.25, 1].map((v) => v / Math.hypot(0, 0.25, 1));
+  return { target: [...center], position: center.map((v, i) => v + dir[i] * d) };
+}
+
 // Validates a full or partial lighting / glass object; returns the merged result or null if anything is off.
 export function cleanLighting(next, base = DEFAULT_LIGHTING) {
   if (!next || typeof next !== 'object' || Array.isArray(next)) return null;

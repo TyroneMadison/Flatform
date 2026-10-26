@@ -4,7 +4,7 @@
 import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy, setupFor, engineLabel } from '../app.js';
 import { icon } from '../lib/icons.js';
 import { FRAMES, HALF, STEP, pad3, LOOKS, PLATES } from '../lib/pipeline.js';
-import { Studio, PRESETS, CAMERAS, defaultScene, lookOf } from '../lib/studio.js';
+import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf } from '../lib/studio.js';
 
 let root;
 let m;
@@ -22,6 +22,8 @@ const fixed = (n, d = 2) => Number(n).toFixed(d);
 const level = (v) => (v <= 0.02 ? 'Off' : v < 0.35 ? 'Soft' : v < 0.7 ? 'Medium' : 'Strong');
 const hasFloor = () => scene.preset === 'ring' || scene.preset === 'showroom'; // the presets with a reflective floor
 const softness = (v) => (v < 0.3 ? 'Hard' : v < 0.7 ? 'Soft' : 'Very soft');
+const carLike = () => studio?.carLike ?? true; // a tall model (humanoid) is never size-locked
+const sizeLocked = () => scene.sameSize && carLike();
 
 export async function mount(el, { id }) {
   root = el;
@@ -97,6 +99,7 @@ export async function mount(el, { id }) {
   try {
     s = studio = new Studio($('#cv', el));
     s.setRig(state.settings || {}); // the light rig and glass set on the Render step
+    s.enableOrbit(onOrbit); // free roam: drag orbits, wheel zooms, right or Shift drag pans
   } catch {
     $('#hudMsg', el).textContent = 'The scene composer needs WebGL, which is not available here.';
     return;
@@ -112,11 +115,19 @@ export async function mount(el, { id }) {
     if (studio !== s) return;
     $('#hudMsg', el).hidden = !s.message;
     $('#hudMsg', el).textContent = s.message;
+    renderInspector(); // the size lock depends on the model's shape
   } catch (e) {
     if (studio !== s) return;
     $('#hudMsg', el).textContent = `Could not load the model: ${e.message}`;
   }
   draw();
+}
+
+// The orbit camera moved (free roam): redraw at once, save once the drag ends.
+function onOrbit(orbit, settled) {
+  scene.orbit = orbit;
+  if (settled) change({ orbit }, { inspector: false });
+  else draw();
 }
 
 export function unmount() {
@@ -152,7 +163,8 @@ function draw() {
 function renderHud() {
   const cam = CAMERAS[scene.camera] || CAMERAS.front34;
   $('#hudScene', root).innerHTML = `${icon('scene', 14)} ${esc(PRESETS[scene.preset].label)}`;
-  $('#hudCam', root).innerHTML = `${icon('camera', 14)} ${PLATES[scene.preset] ? 'Camera matched to the photo · eye level' : `${cam.label} · ${scene.lens} mm · ${cam.height}`}`;
+  $('#hudCam', root).innerHTML = `${icon('camera', 14)} ${scene.view === 'free' ? `Free roam · ${scene.lens} mm · F frames all` : PLATES[scene.preset] ? 'Camera matched to the photo · eye level' : `${cam.label} · ${scene.lens} mm · ${cam.height}`}`;
+  $('#cv', root).classList.toggle('orbit', scene.view === 'free');
   const look = lookOf(scene.preset);
   $('#hudLook', root).textContent = `${look === 'studio' ? 'Studio' : LOOKS[look].label} look · ${look === 'transparent' ? '1:1' : '4:3'} · 2048 px`;
   $('#vp', root).classList.toggle('clear', scene.preset === 'transparent');
@@ -170,12 +182,24 @@ function save() {
 
 async function change(next, { inspector = true } = {}) {
   Object.assign(scene, next);
-  if (studio) await studio.setState(scene);
+  if (studio) {
+    await studio.setState(scene);
+    if (scene.view === 'free') scene.orbit = studio.state.orbit; // the first switch starts from the car camera
+  }
   clearTimeout(saveTimer);
   saveTimer = setTimeout(save, 400);
   if (inspector) renderInspector();
   if ('autoOrient' in next || 'center' in next) renderModel();
   renderScenes();
+  draw();
+}
+
+function frameAll() {
+  const changed = studio?.frameAll();
+  if (!changed) return;
+  Object.assign(scene, changed);
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(save, 400);
   draw();
 }
 
@@ -248,10 +272,10 @@ function slider(key, label, min, max, step, value, text, disabled = false) {
     <input class="range" type="range" id="sl-${key}" data-key="${key}" min="${min}" max="${max}" step="${step}" value="${value}" style="--p:${p}%" ${disabled ? 'disabled' : ''}>
     <span class="v" id="v-${key}">${text}</span></div>`;
 }
-const toggle = (key, label, small, checked) => `<label class="tg"><span>${label}${small ? `<small>${small}</small>` : ''}</span><input class="sw" type="checkbox" role="switch" data-key="${key}" ${checked ? 'checked' : ''}></label>`;
+const toggle = (key, label, small, checked, disabled = false) => `<label class="tg"><span>${label}${small ? `<small>${small}</small>` : ''}</span><input class="sw" type="checkbox" role="switch" data-key="${key}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}></label>`;
 const valueText = {
   x: (v) => `${fixed(v)} m`, y: (v) => `${fixed(v)} m`, turn: (v) => `${Math.round(v)}°`,
-  scale: (v) => (scene.sameSize || Math.abs(v - 1) < 0.005 ? 'Fit' : `×${fixed(v)}`), lens: (v) => `${Math.round(v)} mm`,
+  scale: (v) => (sizeLocked() || Math.abs(v - 1) < 0.005 ? 'Fit' : `×${fixed(v)}`), lens: (v) => `${Math.round(v)} mm`,
   key: (v) => fixed(v, 1), fill: (v) => fixed(v, 1), rim: (v) => fixed(v, 1), reflection: level, shadow: softness,
 };
 
@@ -265,12 +289,16 @@ function renderInspector() {
     </div>
     <div class="grp"><h3>Rotation and scale</h3>
       ${slider('turn', 'Turn', 0, 359, 1, s.turn, valueText.turn(s.turn))}
-      ${slider('scale', 'Scale', 0.5, 1.5, 0.01, s.sameSize ? 1 : s.scale, valueText.scale(s.scale), s.sameSize)}
-      ${toggle('sameSize', 'Same size for every car', 'Locks length so the fleet matches', s.sameSize)}
+      ${slider('scale', 'Scale', 0.2, 1.5, 0.01, sizeLocked() ? 1 : s.scale, valueText.scale(s.scale), sizeLocked())}
+      ${toggle('sameSize', 'Same size for every car', carLike() ? 'Locks length so the fleet matches' : 'Off for this model: it is taller than it is long, so it is not a car', s.sameSize, !carLike())}
       ${toggle('flip', 'Flip front and back', 'Use it if the tail faces the camera at 0°', s.flip)}
     </div>
     <div class="grp" id="grp-camera"><h3>${icon('camera', 14)} Camera</h3>
-      ${PLATES[s.preset] ? '<p class="fine">Set by the photo: eye level, matched to its floor, so the car stands on it. Turn the car with Turn.</p>'
+      <div class="viewmode"><div class="chips seg sm" role="radiogroup" aria-label="View mode">${Object.entries(VIEWS).map(([k, label]) => `<button class="chip" type="button" role="radio" data-view="${k}" aria-checked="${(s.view || 'car') === k}">${label}</button>`).join('')}</div>
+      <button class="btn sm ghostbtn" type="button" data-act="frame" title="Fit the whole model in view (F)">Frame all</button></div>
+      ${s.view === 'free' ? `<p class="fine">Drag to orbit · scroll to zoom · right-drag or Shift-drag to pan · F frames the whole model. Car view keeps its own camera.</p>
+      ${slider('lens', 'Lens', 18, 135, 1, s.lens, valueText.lens(s.lens))}`
+      : PLATES[s.preset] ? '<p class="fine">Set by the photo: eye level, matched to its floor, so the car stands on it. Turn the car with Turn.</p>'
       : `<div class="chips" role="radiogroup" aria-label="Camera preset">${Object.entries(CAMERAS).map(([k, c]) => `<button class="chip" type="button" role="radio" data-camera="${k}" aria-checked="${s.camera === k}">${c.label}</button>`).join('')}</div>
       ${slider('lens', 'Lens', 18, 135, 1, s.lens, valueText.lens(s.lens))}`}
     </div>
@@ -325,6 +353,7 @@ async function loadModel() {
     if (studio !== s) return;
     $('#hudMsg', root).hidden = !s.message;
     $('#hudMsg', root).textContent = s.message;
+    renderInspector();
   } catch (e) {
     if (studio === s) $('#hudMsg', root).textContent = `Could not load the model: ${e.message}`;
   }
@@ -372,8 +401,10 @@ function bind() {
     }
     if (t.dataset.camera) {
       const c = CAMERAS[t.dataset.camera];
-      await change({ camera: t.dataset.camera, turn: c.turn, lens: c.lens });
+      await change({ camera: t.dataset.camera, turn: c.turn, lens: c.lens, fit: 'footprint' });
     }
+    if (t.dataset.view) await change({ view: t.dataset.view }); // the car preset and the orbit are both kept
+    if (t.dataset.act === 'frame') frameAll();
     if (t.dataset.mode) { mode = Number(t.dataset.mode); if (mode === 180 && frame >= HALF) setFrame(0); renderTimeline(); }
     if (t.id === 'play') play();
   });
@@ -429,11 +460,17 @@ function bind() {
   };
   ticks.addEventListener('keydown', keys);
 
+  // F frames the whole model, anywhere on the screen but in a text field.
+  el.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest('input, textarea, select')) { e.preventDefault(); frameAll(); }
+  });
+
   // Viewport: drag to turn the car through the turntable frames, or to move it with the move tool.
+  // In free roam the drag belongs to the orbit camera (OrbitControls on the same canvas).
   const cv = $('#cv', el);
   cv.addEventListener('keydown', keys);
   let drag = null;
-  cv.addEventListener('pointerdown', (e) => { stop(); cv.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, frame, sx: scene.x, sy: scene.y }; });
+  cv.addEventListener('pointerdown', (e) => { if (scene.view === 'free') return; stop(); cv.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, frame, sx: scene.x, sy: scene.y }; });
   cv.addEventListener('pointermove', (e) => {
     if (!drag) return;
     const dx = e.clientX - drag.x;

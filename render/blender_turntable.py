@@ -19,6 +19,7 @@ import os
 import sys
 
 import bpy
+from bpy_extras.object_utils import world_to_camera_view
 from mathutils import Vector
 
 CAR_LENGTH = 4.6
@@ -37,7 +38,28 @@ CAMERAS = {  # elevation in degrees, as in studio.js
 DEFAULTS = {
     "x": 0.0, "y": 0.0, "snap": True, "turn": 30.0, "scale": 1.0, "sameSize": True, "camera": "front34",
     "lens": 50.0, "autoOrient": True, "center": True, "flip": False, "reflection": 0.7,
+    # Camera view mode (studio.js): "car" = the preset camera, "free" = the orbit camera saved in `orbit`
+    # ({"position": [x, y, z], "target": [x, y, z]} in Flatform's Y-up metres). fit "all" = "Frame all" in car view.
+    "view": "car", "orbit": None, "fit": "footprint",
 }
+
+
+def is_car_shape(size):
+    """pipeline.js isCarShape: a car is longer than tall; anything clearly taller is not size-locked."""
+    return size.z <= 1.15 * max(size.x, size.y)  # Blender is Z-up: size.z is the height
+
+
+def model_scale(size, s):
+    """pipeline.js modelScale: cars by length (locked with sameSize), others by their largest side."""
+    car = is_car_shape(size)
+    fit = CAR_LENGTH / max(max(size.x, size.y) if car else max(size.x, size.y, size.z), 1e-6)
+    return fit * (1 if car and s["sameSize"] else s["scale"])
+
+
+def fit_distance(radius, hfov, aspect, pad=1.1):
+    """pipeline.js fitDistance: how far back a sphere of `radius` fits a frame of horizontal fov `hfov` (radians)."""
+    half = math.atan(min(math.tan(hfov / 2), math.tan(hfov / 2) / aspect))
+    return max(radius, 1e-6) * pad / math.sin(half)
 
 
 def parse_args():
@@ -311,7 +333,7 @@ def import_car(path, s):
         model.rotation_euler.z += math.pi
     lo, hi = bounds()
     size = hi - lo
-    model.scale = [CAR_LENGTH / max(size.x, size.y, 1e-6) * (1 if s["sameSize"] else s["scale"])] * 3
+    model.scale = [model_scale(size, s)] * 3
     lo, hi = bounds()
     center = (lo + hi) / 2
     if s["center"]:
@@ -320,7 +342,9 @@ def import_car(path, s):
     if s["snap"]:
         model.location.z -= lo.z
     pivot.location = (s["x"], 0, 0 if s["snap"] else s["y"])
-    return pivot, meshes, hi - lo
+    lo, hi = bounds()  # the bounding sphere and box corners in scene space, for "Frame all"
+    corners = [Vector((x, y, z)) for x in (lo.x, hi.x) for y in (lo.y, hi.y) for z in (lo.z, hi.z)]
+    return pivot, meshes, hi - lo, ((lo + hi) / 2, (hi - lo).length / 2, corners)
 
 
 def hex_linear(h):
@@ -356,38 +380,61 @@ def plate_lighting(lighting, sun):
     return out
 
 
-def plate_camera(cam, aspect):
-    """The camera pipeline.js plateCamera solved for the photo; Flatform's Y-up (x, y, z) is Blender's (x, -z, y)."""
+def aim_camera(data, location, target):
+    obj = bpy.data.objects.new("camera", data)
+    bpy.context.scene.collection.objects.link(obj)
+    obj.location = location
+    obj.rotation_euler = (Vector(target) - Vector(location)).to_track_quat("-Z", "Y").to_euler()
+    bpy.context.scene.camera = obj
+    return obj
+
+
+def plate_camera(cam, aspect, s, sphere):
+    """The camera pipeline.js plateCamera solved for the photo; Flatform's Y-up (x, y, z) is Blender's (x, -z, y).
+    "Frame all" pulls back along the photo's own view until the whole model fits (studio.js applyPlateCamera)."""
     (px, py, pz), (tx, ty, tz) = cam["position"], cam["target"]
     data = bpy.data.cameras.new("camera")
     data.sensor_fit = "HORIZONTAL"
     data.angle = 2 * math.atan(math.tan(math.radians(cam["vfov"]) / 2) * aspect)
-    obj = bpy.data.objects.new("camera", data)
-    bpy.context.scene.collection.objects.link(obj)
-    obj.location = (px, -pz, py)
-    obj.rotation_euler = (Vector((tx, -tz, ty)) - obj.location).to_track_quat("-Z", "Y").to_euler()
-    bpy.context.scene.camera = obj
+    location, target = Vector((px, -pz, py)), Vector((tx, -tz, ty))
+    cam_obj = aim_camera(data, location, target)
+    if s["fit"] == "all":  # the photo's camera aims at the floor: pull back along its view until every corner fits
+        scene = bpy.context.scene
+        for _ in range(40):
+            bpy.context.view_layer.update()
+            seen = [world_to_camera_view(scene, cam_obj, c) for c in sphere[2]]
+            if all(0.04 <= v.x <= 0.96 and 0.04 <= v.y <= 0.96 and v.z > 0 for v in seen):
+                break
+            cam_obj.location = target + (cam_obj.location - target) * 1.06
 
 
-def place_camera(s, look, size):
+def lens_camera(lens):
+    data = bpy.data.cameras.new("camera")
+    data.sensor_fit = "HORIZONTAL"
+    data.sensor_width = 35
+    data.lens = float(lens)
+    return data
+
+
+def free_camera(s):
+    """Free roam: the orbit camera saved by the composer, with the lens slider's field of view."""
+    (px, py, pz), (tx, ty, tz) = s["orbit"]["position"], s["orbit"]["target"]
+    aim_camera(lens_camera(s["lens"]), (px, -pz, py), (tx, -tz, ty))
+
+
+def place_camera(s, look, size, sphere):
     """Fitted to the car's footprint like studio.js applyCamera; size is the normalised car (x, y, z = height)."""
     aspect = 1.0 if look == "transparent" else 4 / 3
     lens = float(s["lens"])
     hfov = 2 * math.atan(17.5 / lens)  # 35 mm film gauge, like studio.js
     width = math.hypot(size.x, size.y) / (FILL["wide"] if aspect > 1 else FILL["square"])
     distance = width / 2 / math.tan(hfov / 2)
-    target_z = size.z / 2 + (0.06 * width if aspect > 1 else 0)
+    target = Vector((0, 0, size.z / 2 + (0.06 * width if aspect > 1 else 0)))
+    if s["fit"] == "all":  # "Frame all": the whole model, from the preset's angle
+        distance = max(distance, fit_distance(sphere[1], hfov, aspect))
+        target = sphere[0]
     el = math.radians(CAMERAS.get(s["camera"], 13.0))
-    cam_data = bpy.data.cameras.new("camera")
-    cam_data.sensor_fit = "HORIZONTAL"
-    cam_data.sensor_width = 35
-    cam_data.lens = lens
-    cam = bpy.data.objects.new("camera", cam_data)
-    bpy.context.scene.collection.objects.link(cam)
-    cam.location = (0, -distance * math.cos(el), target_z + distance * math.sin(el))
-    direction = Vector((0, 0, target_z)) - cam.location
-    cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
-    bpy.context.scene.camera = cam
+    aim_camera(lens_camera(lens), (target.x, target.y - distance * math.cos(el), target.z + distance * math.sin(el)), target)
 
 
 def setup_render(width, height, look, samples):
@@ -453,13 +500,15 @@ def main():
     else:
         build_ring_studio(float(s["reflection"]))
     apply_rig(lighting)
-    pivot, meshes, size = import_car(args.glb, s)
+    pivot, meshes, size, sphere = import_car(args.glb, s)
     apply_glass(meshes, glass)
-    if plate:
-        plate_camera(plate["camera"], width / height)
-    else:
-        place_camera(s, args.look, size)
     setup_render(width, height, "transparent" if photo else args.look, args.samples)
+    if s["view"] == "free" and s["orbit"]:
+        free_camera(s)
+    elif plate:
+        plate_camera(plate["camera"], width / height, s, sphere)
+    else:
+        place_camera(s, args.look, size, sphere)
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.frames):
         # Same direction as the in-app renderer: positive yaw turns the car clockwise seen from above.
