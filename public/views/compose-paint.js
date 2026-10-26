@@ -10,6 +10,7 @@ import {
 } from '../lib/tenno.js';
 import { REGIONS } from '../lib/infer.js';
 import { DEFAULT_LOOK, mergeLook, STUDIO_PRESETS, LIGHT_PRESETS, lightsFromPreset, HDRIS, TONE_MAPPINGS, QUALITIES, BACKGROUND_KINDS, isHdri, isBackgroundImage } from '../lib/look.js';
+import { compareSet, lumaStats } from '../lib/compare.js';
 import { ColorPicker } from '../lib/color-picker.js';
 import { inferFromPhoto, revertInference, exportTennoGen, exportGlb } from '../lib/paint.js';
 
@@ -23,8 +24,9 @@ let exportPart = 'Body';
 let altHelmet = false;
 let busyText = '';
 let lastWarnings = [];
+let lastCompare = null; // TennoGen compare checklist for the last exported set
 
-export function initPaint(c) { ctx = c; selected = null; picker = null; busyText = ''; lastWarnings = []; }
+export function initPaint(c) { ctx = c; selected = null; picker = null; busyText = ''; lastWarnings = []; lastCompare = null; }
 export const paintOf = () => ctx.scene().paint || defaultPaint();
 export const lookOf = () => mergeLook(ctx.scene().look);
 const pieces = () => ctx.studio()?.pieces() || [];
@@ -160,6 +162,7 @@ export function renderPaintGroups() {
         <button class="btn sm sec" type="button" data-act="export-glb" ${studio?.model && outDir && !busyText ? '' : 'disabled'}>${icon('cube', 14)}<span>GLB with named materials</span></button>
       </div>
       <p class="fine">${outDir ? `${esc(exportPart)}_d/_e/_n/_r/_s/_t.png (2048², tint and emissive 1024²) go to <code>${esc(outDir)}${state.settings.platform === 'win32' ? '\\' : '/'}tennogen</code>; the GLB to <code>models</code>.` : 'Choose an output folder on the Render step first.'}</p>
+      ${lastCompare ? `<div class="checklist" role="group" aria-label="TennoGen compare"><p class="fine"><b>${lastCompare.pass ? 'Ready to submit' : 'Fix before submitting'}</b> · checked against the TennoGen template set</p><ul>${lastCompare.checks.map((c) => `<li class="${c.pass ? 'ok' : 'bad'}">${c.pass ? 'Pass' : 'Fail'}: ${esc(c.label)}${!c.pass && c.got != null ? ` (got ${esc(String(c.got))})` : ''}</li>`).join('')}</ul></div>` : ''}
       ${lastWarnings.length ? `<ul class="warnlist">${lastWarnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     </div>`;
   return parts + color + material + sceneGrp + exportGrp;
@@ -384,6 +387,23 @@ async function runInference() {
   }
 }
 
+// Reads each exported texture back (size, channels, albedo luminance) and checks it against the template set.
+async function compareFiles(files) {
+  const info = [];
+  for (const f of files) {
+    const bmp = await createImageBitmap(f.blob);
+    const c = new OffscreenCanvas(Math.min(256, bmp.width), Math.min(256, bmp.height));
+    const g = c.getContext('2d');
+    g.drawImage(bmp, 0, 0, c.width, c.height);
+    const data = g.getImageData(0, 0, c.width, c.height).data;
+    let alpha = false;
+    for (let i = 3; i < data.length; i += 4) if (data[i] < 255) { alpha = true; break; }
+    info.push({ name: f.name, width: bmp.width, height: bmp.height, channels: alpha ? 4 : 3, luma: /_d\.png$/i.test(f.name) ? lumaStats(data) : null });
+    bmp.close();
+  }
+  return compareSet(info, { part: exportPart, altHelmet });
+}
+
 async function runExport(glb) {
   const studio = ctx.studio();
   const m = ctx.model();
@@ -405,6 +425,7 @@ async function runExport(glb) {
       const { files, warnings } = await exportTennoGen(studio.model, paintOf(), { part: exportPart, altHelmet });
       for (const f of files) await put(`tennogen/${f.name}`, f.blob);
       lastWarnings = warnings;
+      lastCompare = await compareFiles(files).catch(() => null);
       toast(`${files.length} textures saved to ${started.outDir}${warnings.length ? ` · ${warnings.length} warning${warnings.length > 1 ? 's' : ''}` : ''}`, warnings.length ? 'error' : 'info');
     }
     if (native && started.outDir) native.openPath(started.outDir).catch(() => {});

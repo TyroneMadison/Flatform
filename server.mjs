@@ -17,6 +17,10 @@ import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/
 import { resolveColors, deserializeMaterial, blenderMaterial } from './public/lib/tenno.js';
 import { inferRegions, checkAnthropicKey } from './inference.mjs';
 import { createQueue } from './batch.mjs';
+import { createWorkspaces } from './workspaces.mjs';
+import { rollbackCommand, isSafe } from './public/lib/history.js';
+import { normalizeTheme } from './public/lib/theme.js';
+import { execFile } from 'node:child_process';
 import { findFfmpeg, encodeVideo } from './video.mjs';
 import { RESOLUTIONS, FORMATS as VIDEO_FORMATS, QUALITIES as VIDEO_QUALITIES, extensionFor } from './public/lib/turntable.js';
 import { threeDAIStudio, createLimiter, THREE_D_AI_BASE, HIGH } from './providers.mjs';
@@ -110,6 +114,9 @@ export function blenderCandidates(platform = process.platform, env = process.env
   ];
 }
 
+// git with an argv list (no shell), in the project folder from Settings.
+const git = (cwd, args) => new Promise((ok, fail) => execFile('git', args, { cwd, timeout: 30000, maxBuffer: 4 << 20 }, (e, out, err) => (e ? fail(new HttpError(500, (err || e.message).trim().split('\n')[0])) : ok(out))));
+
 /**
  * Starts the app server on 127.0.0.1.
  * keyStore: keys.mjs createKeyStore() — get/source/set/remove(provider). Keys never reach the page.
@@ -133,6 +140,8 @@ export async function startServer({
   hdriDir = path.join(PUBLIC, 'img', 'hdri'), // built-in HDRIs for Blender (a resource file in the packaged app)
   updateUrl,
   updateDelayMs,
+  workspaces = null, // workspaces.mjs; startApp() passes it, tests may leave it out
+  onWorkspaceSwitch = null, // called after the active workspace changes; startApp() restarts on the new folder
   onLowBalance, // (service, { balance, threshold }) when GET /api/spend finds a balance under its alert (main.mjs notifies)
 }) {
   const MODELS = path.join(dataDir, 'models');
@@ -762,6 +771,12 @@ export async function startServer({
           try { next.setups[p] = normalize({ ...setup, provider: p }); } catch { throw new HttpError(400, 'Unknown provider or engine'); }
         }
       } else if (['texture', 'pbr', 'alsoTransparent'].includes(k)) bool(k);
+      else if (k === 'theme') next.theme = normalizeTheme(body.theme);
+      else if (k === 'gridUnit') { if (!['m', 'ft'].includes(body.gridUnit)) throw new HttpError(400, 'Grid unit must be m or ft'); next.gridUnit = body.gridUnit; }
+      else if (k === 'gitRepo') {
+        if (typeof body.gitRepo !== 'string' || (body.gitRepo && (!path.isAbsolute(body.gitRepo) || !existsSync(path.join(body.gitRepo, '.git'))))) throw new HttpError(400, 'That folder is not a git repository');
+        next.gitRepo = body.gitRepo;
+      }
       else if (k === 'ffmpegPath') {
         if (typeof body.ffmpegPath !== 'string' || body.ffmpegPath.length > 1024 || (body.ffmpegPath && (!path.isAbsolute(body.ffmpegPath) || !existsSync(body.ffmpegPath)))) throw new HttpError(400, 'ffmpeg was not found at that path');
         next.ffmpegPath = body.ffmpegPath;
@@ -1105,6 +1120,37 @@ export async function startServer({
         try { return send(res, 200, await batch.set(sub, b.status, b.error)); } catch (e) { throw new HttpError(e.status || 400, e.message); }
       }
     }
+    if (area === 'workspaces') {
+      if (!workspaces) throw new HttpError(404, 'Workspaces are off');
+      if (!id && method === 'GET') return send(res, 200, workspaces.view());
+      try {
+        if (!id && method === 'POST') return send(res, 201, await workspaces.add(await readJson(req)));
+        if (id === 'active' && method === 'POST') {
+          const v = await workspaces.setActive((await readJson(req)).id);
+          send(res, 200, { ...v, restarting: Boolean(onWorkspaceSwitch) });
+          if (onWorkspaceSwitch) setTimeout(onWorkspaceSwitch, 50);
+          return;
+        }
+      } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(e.status || 400, e.message); }
+    }
+    if (area === 'history') {
+      const repo = settings.gitRepo;
+      if (!repo) throw new HttpError(409, 'Pick the project folder (a git repository) in Settings first');
+      if (id === 'git' && method === 'GET') {
+        const out = await git(repo, ['log', '--max-count=50', '--pretty=format:%H%x09%h%x09%cI%x09%s']);
+        const branch = (await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+        return send(res, 200, { branch, commits: out.split('\n').filter(Boolean).map((l) => { const [sha, short, date, ...msg] = l.split('\t'); return { sha, short, date, subject: msg.join('\t') }; }) });
+      }
+      if (id === 'rollback' && method === 'POST') {
+        const b = await readJson(req);
+        let cmds;
+        try { cmds = rollbackCommand(b); } catch (e) { throw new HttpError(400, e.message); }
+        if (!isSafe(cmds)) throw new HttpError(400, 'Refused: not a safe rollback');
+        if ((await git(repo, ['status', '--porcelain'])).trim()) throw new HttpError(409, 'Commit or stash your changes first');
+        for (const argv of cmds) await git(repo, argv);
+        return send(res, 200, { ok: true, ran: cmds.map((a) => `git ${a.join(' ')}`) });
+      }
+    }
     if (area === 'ffmpeg' && !id && method === 'GET') {
       const found = findFfmpeg({ configured: settings.ffmpegPath });
       return send(res, 200, { found: Boolean(found), path: found, configured: settings.ffmpegPath });
@@ -1191,9 +1237,28 @@ export async function startServer({
   return { server, port: server.address().port, close };
 }
 
+// The app with workspaces: dataDir is the base folder; each workspace runs the server on its own folder.
+// Switching closes the server and starts it again on the same port with the new folder.
+export async function startApp(opts) {
+  const workspaces = createWorkspaces({ baseDir: opts.dataDir });
+  await workspaces.load();
+  let cur;
+  const boot = async (port) => {
+    cur = await startServer({ ...opts, port, dataDir: workspaces.activeDir(), workspaces, onWorkspaceSwitch: restart });
+  };
+  async function restart() {
+    const port = cur.port;
+    cur.server.closeAllConnections?.();
+    await cur.close();
+    await boot(port);
+  }
+  await boot(opts.port || 0);
+  return { get port() { return cur.port; }, get server() { return cur.server; }, close: () => cur.close(), workspaces };
+}
+
 // `node server.mjs`: browser version, keys from TRIPO_API_KEY and THREE_D_AI_STUDIO_KEY.
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
-  const { port } = await startServer({
+  const { port } = await startApp({
     dataDir: path.resolve(process.env.DATA_DIR || path.join(ROOT, 'data')),
     port: Number(process.env.PORT || 5173),
     ...(process.env.TRIPO_BASE && { apiBase: process.env.TRIPO_BASE }),

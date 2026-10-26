@@ -1,7 +1,9 @@
 // Compose: the scene composer, and the model's own panel (versions, approve, regenerate, clean up; this used to be
 // the Review step). One Three.js studio, the scene presets (Showroom first), an inspector and a turntable timeline.
 // The scene is saved per model (scene.json next to the model) so a render reproduces it exactly.
-import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy, setupFor, engineLabel } from '../app.js';
+import { createHistory, isUndo, isRedo } from '../lib/history.js';
+import { dimensions, gridSpec, REFERENCES } from '../lib/grid.js';
+import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy, setupFor, engineLabel, activeWorkspace } from '../app.js';
 import { icon } from '../lib/icons.js';
 import { FRAMES, HALF, STEP, pad3, LOOKS, PLATES } from '../lib/pipeline.js';
 import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf } from '../lib/studio.js';
@@ -12,6 +14,9 @@ let root;
 let m;
 let studio;
 let scene;
+const hist = createHistory();
+let lastPush = 0;
+let gridOn = false;
 let frame = 0;
 let mode = 360;
 let tool = 'turn';
@@ -35,7 +40,7 @@ export async function mount(el, { id }) {
     el.innerHTML = `${stepper('compose', m)}<p class="muted">${m ? 'This model is not ready yet.' : 'Pick a model from the library first.'} <a class="link" href="${m ? `#/generate/${m.id}` : '#/library'}">${m ? 'Show progress' : 'Open library'}</a></p>`;
     return;
   }
-  scene = { ...defaultScene(state.settings), ...m.scene };
+  scene = { ...defaultScene(state.settings), ...(activeWorkspace()?.camera === 'free' && { view: 'free' }), ...m.scene }; // Warframe workspaces start in free roam
   initPaint({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   el.innerHTML = `
@@ -58,6 +63,7 @@ export async function mount(el, { id }) {
         <div class="hud h1" id="hudScene"></div>
         <div class="hud h2" id="hudCam"></div>
         <div class="hud h3" id="hudLook"></div>
+        <div class="hud dims" id="hudDims" hidden></div>
         <div class="hud msg" id="hudMsg" role="status">Loading model…</div>
         <div class="vtool" role="toolbar" aria-label="Viewport tools">
           <button class="vt" type="button" data-tool="move" aria-pressed="false" title="Move the car" aria-label="Move the car">${icon('move')}</button>
@@ -141,6 +147,8 @@ function onOrbit(orbit, settled) {
 }
 
 export function unmount() {
+  hist.clear();
+  gridOn = false;
   stopMotion();
   stop();
   observer?.disconnect();
@@ -195,7 +203,11 @@ function save() {
   send(`/api/models/${m.id}`, 'PATCH', { scene }).then(upsert).catch((e) => toast(e.message));
 }
 
-async function change(next, { inspector = true } = {}) {
+async function change(next, { inspector = true, fromHistory = false } = {}) {
+  if (!fromHistory && Object.keys(next).length) {
+    if (Date.now() - lastPush > 600) hist.push(scene, Object.keys(next).join(', ')); // one step per burst (a slider drag)
+    lastPush = Date.now();
+  }
   Object.assign(scene, next);
   if (studio) {
     await studio.setState(scene);
@@ -207,6 +219,25 @@ async function change(next, { inspector = true } = {}) {
   if ('autoOrient' in next || 'center' in next) renderModel();
   renderScenes();
   draw();
+  if (gridOn) renderGrid();
+}
+
+async function stepHistory(redo) {
+  const prev = redo ? hist.redo(scene) : hist.undo(scene);
+  if (!prev) return toast(redo ? 'Nothing to redo' : 'Nothing to undo', 'info');
+  for (const k of Object.keys(scene)) if (!(k in prev)) delete scene[k];
+  lastPush = 0;
+  await change(prev, { fromHistory: true });
+  renderGrid();
+}
+const gridUnit = () => state.settings?.gridUnit || 'm';
+function renderGrid() {
+  if (!studio) return;
+  const size = studio.modelSize();
+  if (gridOn && size) studio.setGrid(true, { ...gridSpec(size, gridUnit()), refs: [REFERENCES.human, REFERENCES.car] });
+  else studio.setGrid(false);
+  const el = $('#hudDims', root);
+  if (el) { el.hidden = !gridOn || !size; el.textContent = size ? dimensions(size, gridUnit()).text : ''; }
 }
 
 function frameAll() {
@@ -320,6 +351,12 @@ function renderInspector() {
     <div class="grp" id="grp-light"><h3>${icon('light', 14)} Light</h3>
       ${toggle('matchLighting', 'Match lighting to scene', 'Key, fill and rim follow the studio', s.matchLighting)}
       ${s.matchLighting ? '' : `<div class="lights">${slider('key', 'Key', 0, 3, 0.1, s.key, valueText.key(s.key))}${slider('fill', 'Fill', 0, 3, 0.1, s.fill, valueText.fill(s.fill))}${slider('rim', 'Rim', 0, 3, 0.1, s.rim, valueText.rim(s.rim))}</div>`}
+    </div>
+    <div class="grp" id="grp-grid"><h3>Reference grid</h3>
+      <label class="tg"><span>Show grid and scale<small>Person 1.8 m and car 4.5 m for size. Not rendered.</small></span><input class="sw" type="checkbox" role="switch" data-grid="on" ${gridOn ? 'checked' : ''}></label>
+      <div class="chips seg sm" role="radiogroup" aria-label="Units">${[['m', 'Meters'], ['ft', 'Feet']].map(([k, l]) => `<button class="chip" type="button" role="radio" data-unit="${k}" aria-checked="${gridUnit() === k}">${l}</button>`).join('')}</div>
+      <div class="mg-row"><button class="btn sm ghostbtn" type="button" data-act="undo" ${hist.canUndo ? '' : 'disabled'} title="Ctrl+Z">Undo</button><button class="btn sm ghostbtn" type="button" data-act="redo" ${hist.canRedo ? '' : 'disabled'} title="Ctrl+Shift+Z">Redo</button></div>
+      ${hist.canUndo ? `<ol class="histlist fine">${hist.list().slice(0, 8).map((h) => `<li>${esc(h.label)}</li>`).join('')}</ol>` : ''}
     </div>
     <div class="grp" id="grp-ground"><h3>Ground</h3>
       ${slider('reflection', 'Reflection', 0, 1, 0.01, s.reflection, hasFloor() ? level(s.reflection) : 'n/a', !hasFloor())}
@@ -481,6 +518,20 @@ function bind() {
     setFrame(mode === 180 ? Math.max(0, Math.min(HALF - 1, frame + d)) : frame + d);
   };
   ticks.addEventListener('keydown', keys);
+
+  // Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y): undo and redo scene edits, except while typing in a text field.
+  el.addEventListener('keydown', (e) => {
+    if (e.target.closest('input[type=text], input[type=search], textarea')) return;
+    if (isUndo(e)) { e.preventDefault(); stepHistory(false); } else if (isRedo(e)) { e.preventDefault(); stepHistory(true); }
+  });
+  // Grid controls live in the inspector.
+  el.addEventListener('click', async (e) => {
+    const u = e.target.closest('[data-unit]');
+    if (u) { try { state.settings = await send('/api/settings', 'POST', { gridUnit: u.dataset.unit }); } catch (err) { toast(err.message); } renderInspector(); renderGrid(); }
+    const a = e.target.closest('[data-act="undo"], [data-act="redo"]');
+    if (a) stepHistory(a.dataset.act === 'redo');
+  });
+  el.addEventListener('change', (e) => { if (e.target.dataset.grid) { gridOn = e.target.checked; renderGrid(); } });
 
   // F frames the whole model, anywhere on the screen but in a text field.
   el.addEventListener('keydown', (e) => {

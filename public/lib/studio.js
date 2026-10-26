@@ -675,6 +675,38 @@ export class Studio {
   // Animation preview: show the clip at time t (seconds), or null for the still pose.
   setClipTime(t) { this.clipTime = t; this.applyModel(); this.ptDirty = true; }
 
+  // Reference grid (Compose only, never in renders): floor and back grid, scale silhouettes. Returns the model size in m.
+  modelSize() {
+    if (!this.model) return null;
+    this.pivot.updateMatrixWorld(true);
+    const size = new THREE.Box3().setFromObject(this.model).getSize(new THREE.Vector3());
+    return { x: size.x, y: size.y, z: size.z };
+  }
+  setGrid(on, { cell = 1, divisions = 10, refs = [] } = {}) {
+    if (this.refGrid) { this.scene.remove(this.refGrid); this.refGrid.traverse((o) => { o.geometry?.dispose(); o.material?.dispose?.(); }); this.refGrid = null; }
+    if (on) {
+      const g = new THREE.Group();
+      g.name = 'referenceGrid';
+      const size = cell * divisions;
+      const floor = new THREE.GridHelper(size, divisions, 0xff7a66, 0x555555);
+      floor.position.y = 0.001;
+      const back = new THREE.GridHelper(size, divisions, 0xff7a66, 0x555555);
+      back.rotation.x = Math.PI / 2;
+      back.position.set(0, size / 2, -size / 2);
+      g.add(floor, back);
+      let x = -size / 2 + 0.6;
+      for (const r of refs) {
+        const box = new THREE.Mesh(new THREE.BoxGeometry(r.width, r.height, r.depth), new THREE.MeshBasicMaterial({ color: 0x9fd3ff, wireframe: true, transparent: true, opacity: 0.6 }));
+        box.position.set(x + r.width / 2, r.height / 2, -size / 4);
+        x += r.width + 0.4;
+        g.add(box);
+      }
+      this.refGrid = g;
+      this.scene.add(g);
+    }
+    this.ptDirty = true;
+  }
+
   applyLights() {
     const s = this.state;
     const rig = this.rig.lighting;

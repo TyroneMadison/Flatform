@@ -1,5 +1,6 @@
 // Library: search, filters and cards. A card opens the model page; the side panel keeps quick actions (downloads,
 // retry, regenerate, delete) for the last model looked at.
+import { activeWorkspace } from '../app.js';
 import { $, $$, esc, state, api, send, toast, go, findModel, upsert, fileUrl, thumbOf, statusText, statusClass, isGenerating,
   isRendered, renderedTurns, retryModel, confirmDialog, refresh, openPicker, busy, setupFor, engineLabel, providerOf, FORMATS } from '../app.js';
 import { icon } from '../lib/icons.js';
@@ -14,6 +15,17 @@ let filter = 'all';
 let query = '';
 let selectedId = null;
 
+// Each workspace has its own home: Warframe gets drawing, import and the TennoGen check; Car gets photo, batch and render.
+function quickActions() {
+  const w = activeWorkspace();
+  if (w?.kind === 'warframe') return `<button class="btn pri" type="button" id="newPhoto">${icon('plus')}<span>New from drawing</span></button>
+      <button class="btn sec" type="button" data-quick="import"><span>Import model</span></button>
+      <button class="btn ghostbtn" type="button" data-quick="tenno"><span>TennoGen export check</span></button>`;
+  return `<button class="btn pri" type="button" id="newPhoto">${icon('plus')}<span>New from photo</span></button>${w ? `
+      <button class="btn ghostbtn" type="button" data-quick="batch"><span>Batch color variants</span></button>
+      <button class="btn ghostbtn" type="button" data-quick="render"><span>Render turntable</span></button>` : ''}`;
+}
+
 export function mount(el) {
   root = el;
   selectedId = findModel(state.lastId) ? state.lastId : state.models[0]?.id ?? null;
@@ -22,7 +34,7 @@ export function mount(el) {
     <div><h1 class="ph">Library</h1><p class="sub">Every model is saved on this computer, in <span class="mono">${esc(state.settings?.libraryDir || 'the app data folder')}</span></p></div>
     <div class="lh-act">
       <label class="search glass">${icon('search')}<span class="sr-only">Search models</span><input type="search" id="q" placeholder="Search models" autocomplete="off"></label>
-      <button class="btn pri" type="button" id="newPhoto">${icon('plus')}<span>New from photo</span></button>
+      ${quickActions()}
     </div>
   </div>
   <div class="chips filters" role="group" aria-label="Filter models">${FILTERS.map(([k, l]) => `<button class="chip" type="button" data-filter="${k}" aria-pressed="${k === filter}">${l}</button>`).join('')}</div>
@@ -32,7 +44,12 @@ export function mount(el) {
   </section>`;
   $('#q', el).value = query;
   $('#q', el).addEventListener('input', (e) => { query = e.target.value; update(); });
-  $('#newPhoto', el).addEventListener('click', () => { go('#/drop'); setTimeout(openPicker, 50); });
+  $('#newPhoto', el)?.addEventListener('click', () => { go('#/drop'); setTimeout(openPicker, 50); });
+  el.addEventListener('click', (e) => {
+    const q = e.target.closest('[data-quick]')?.dataset.quick;
+    if (q === 'import') { go('#/drop'); setTimeout(openPicker, 50); }
+    if (q === 'render' || q === 'batch' || q === 'tenno') { const id = selectedId || state.models[0]?.id; if (!id) return toast('Add a model first', 'info'); go(q === 'tenno' ? `#/compose/${id}` : `#/render/${id}`); }
+  });
   el.addEventListener('click', onClick);
   el.addEventListener('keydown', (e) => {
     if (e.target.matches('.rename') && e.key === 'Enter') e.target.blur();

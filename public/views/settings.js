@@ -1,12 +1,13 @@
 // 07 · Settings: providers and keys, rendering, the output folder, updates and about. Only non-secret values are stored
 // in settings.json; keys go to the OS keychain and never come back to this page: it only learns whether one is saved.
+import { PRESETS as THEMES, normalizeTheme, resolveTheme, applyTheme, contrast, AAA } from '../lib/theme.js';
 import { $, esc, state, api, send, toast, refresh, native, fmt, fmtBalance, saveKey, confirmDialog, arrowRadios, refreshUpdate, refreshSpend, topUp } from '../app.js';
 import { PROVIDERS } from '../lib/engines.js';
 import { icon } from '../lib/icons.js';
 import { PRESETS } from '../lib/studio.js';
 
 const SCENES = Object.entries(PRESETS).map(([k, p]) => [k, k === 'showroom' ? 'Showroom (default)' : k === 'miami' ? 'Miami street at night (your HDRI)' : p.label]);
-const SECTIONS = [['providers', 'Providers'], ['spend', 'Spend'], ['rendering', 'Rendering'], ['output', 'Output folder'], ['about', 'About']];
+const SECTIONS = [['providers', 'Providers'], ['spend', 'Spend'], ['rendering', 'Rendering'], ['output', 'Output folder'], ['appearance', 'Appearance'], ['history', 'History'], ['about', 'About']];
 const RELEASES = 'https://github.com/TyroneMadison/Flatform/releases';
 const results = {}; // provider → { ok, text } from the last Test or key change
 let root;
@@ -101,6 +102,20 @@ async function onClick(e) {
       if (file) save({ blenderPath: file });
     } else showField('blenderField');
   }
+  if (act === 'theme') { const theme = { preset: t.dataset.value, custom: {} }; applyTheme(theme); save({ theme }); }
+  if (act === 'theme-reset') { applyTheme(undefined); save({ theme: { preset: 'dark', custom: {} } }); }
+  if (act === 'git-repo') {
+    const dir = native ? await native.pickFolder() : prompt('Project folder (a git repository), full path');
+    if (dir) { await save({ gitRepo: dir.trim() }); loadGit(); }
+  }
+  if (act === 'git-load') loadGit();
+  if (act === 'rollback') {
+    const { sha, mode } = t.dataset;
+    const text = mode === 'revert' ? `Add a new commit that undoes every change after ${sha.slice(0, 7)}. Nothing is deleted.` : `Make a new branch at ${sha.slice(0, 7)} and switch to it. The current branch stays as it is.`;
+    if (!(await confirmDialog({ title: 'Roll back to this version', text, ok: mode === 'revert' ? 'Revert' : 'New branch' }))) return;
+    try { const r = await send('/api/history/rollback', 'POST', { sha, mode }); toast(`Done: ${r.ran.join('; ')}`, 'info'); } catch (err) { toast(err.message); }
+    loadGit();
+  }
   if (act === 'show-library') native?.showItemInFolder(s.libraryDir).catch((err) => toast(err.message));
   if (act === 'check-update' && !checking) {
     checking = true;
@@ -119,6 +134,12 @@ function showField(id) {
 
 async function onChange(e) {
   const t = e.target;
+  if (t.dataset.themeColor) {
+    const cur = normalizeTheme(state.settings.theme);
+    const theme = { ...cur, custom: { ...cur.custom, [t.dataset.themeColor]: t.value } };
+    applyTheme(theme);
+    save({ theme });
+  }
   if (t.name === 'alsoTransparent') save({ alsoTransparent: t.checked });
   if (t.name === 'defaultScene') save({ defaultScene: t.value });
   if (t.name === 'autoCheck') save({ updates: { autoCheck: t.checked } });
@@ -228,6 +249,37 @@ function updateStatus() {
   return u?.checkedAt ? `✓ You're up to date${at}` : 'Not checked yet';
 }
 
+function appearanceHtml() {
+  const th = normalizeTheme(state.settings.theme);
+  const c = resolveTheme(th);
+  const ratio = contrast(c.text, c.bg);
+  return `<div class="card glass"><h2 class="label">Theme</h2>
+    <p class="fine">Changes the app's look only. Models, scenes, materials and renders never change.</p>
+    <div class="chips" role="radiogroup" aria-label="Theme">${Object.entries(THEMES).map(([k, p]) => `<button class="chip" type="button" role="radio" aria-checked="${th.preset === k}" data-act="theme" data-value="${k}"><span class="swatch" style="background:${p.primary}"></span>${esc(p.label)}</button>`).join('')}</div>
+    ${['primary', 'secondary', 'accent'].map((k) => `<div class="field"><span class="flabel">${k[0].toUpperCase() + k.slice(1)}</span><input class="inp" type="color" data-theme-color="${k}" value="${c[k]}" aria-label="${k} color"></div>`).join('')}
+    <p class="fine">Text contrast ${ratio.toFixed(1)}:1${ratio >= AAA ? ' (meets WCAG AAA)' : ''}</p>
+    <button class="btn ghostbtn" type="button" data-act="theme-reset">Reset to Flatform Dark</button>
+  </div>`;
+}
+
+let git = null;
+async function loadGit() {
+  try { git = await api('/api/history/git'); } catch (e) { git = { error: e.message }; }
+  redraw();
+}
+function historyHtml() {
+  const s = state.settings;
+  if (s.gitRepo && !git) setTimeout(loadGit);
+  return `<div class="card glass"><h2 class="label">Version history</h2>
+    <div class="field"><span class="flabel">Project folder</span><div class="inp mono">${s.gitRepo ? esc(s.gitRepo) : '<span class="muted">Not set</span>'}</div>
+      <button class="btn ghostbtn" type="button" data-act="git-repo">${icon('folder')}<span>Choose</span></button></div>
+    <p class="fine">Roll back is always safe: a revert commit or a new branch. Nothing is reset, force pushed or deleted. In Compose, Ctrl+Z and Ctrl+Shift+Z undo and redo scene edits.</p>
+    ${git?.error ? `<p class="form-error">${esc(git.error)}</p>` : ''}
+    ${git?.commits ? `<p class="fine">Branch <b>${esc(git.branch)}</b></p><ul class="histlist">${git.commits.map((c, i) => `<li><span class="mono">${esc(c.short)}</span> ${esc(c.subject)} <small class="muted">${esc(new Date(c.date).toLocaleString())}</small>
+      ${i ? `<button class="btn sm ghostbtn" type="button" data-act="rollback" data-mode="branch" data-sha="${esc(c.sha)}">New branch here</button><button class="btn sm ghostbtn" type="button" data-act="rollback" data-mode="revert" data-sha="${esc(c.sha)}">Revert to this</button>` : '<small>current</small>'}</li>`).join('')}</ul>` : ''}
+  </div>`;
+}
+
 function aboutHtml() {
   const s = state.settings;
   return `<div class="card glass"><h2 class="label">Updates</h2>
@@ -295,7 +347,7 @@ function spendHtml() {
 
 export function update() {
   if (!state.settings || !root?.isConnected) return;
-  const html = { providers: providersHtml, spend: spendHtml, rendering: renderingHtml, output: outputHtml, about: aboutHtml }[section]();
+  const html = { providers: providersHtml, spend: spendHtml, rendering: renderingHtml, output: outputHtml, appearance: appearanceHtml, history: historyHtml, about: aboutHtml }[section]();
   const box = $('#settings', root);
   // Keep the page as it is while someone is typing in it.
   const focused = box.contains(document.activeElement) ? document.activeElement : null;

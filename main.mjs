@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startServer } from './server.mjs';
+import { startApp } from './server.mjs';
 import { createKeyStore } from './keys.mjs';
 import { updateOptions } from './updates.mjs';
 import { PROVIDERS } from './public/lib/engines.js';
@@ -143,7 +143,7 @@ app.whenReady().then(async () => {
     canEncrypt: () => safeStorage.isEncryptionAvailable(),
     env: process.env,
   });
-  const { port } = await startServer({
+  const { port } = await startApp({
     dataDir: path.join(app.getPath('userData'), 'library'),
     keyStore,
     // Looks for a newer release on GitHub; Download links open in the browser through the window-open handler below.
