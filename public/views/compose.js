@@ -1,7 +1,7 @@
 // Compose: the scene composer, and the model's own panel (versions, approve, regenerate, clean up; this used to be
 // the Review step). One Three.js studio, the scene presets (Showroom first), an inspector and a turntable timeline.
 // The scene is saved per model (scene.json next to the model) so a render reproduces it exactly.
-import { createHistory, isUndo, isRedo } from '../lib/history.js';
+import { createHistory, historyKey } from '../lib/history.js';
 import { dimensions, gridSpec, REFERENCES } from '../lib/grid.js';
 import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy, setupFor, engineLabel, activeWorkspace } from '../app.js';
 import { icon } from '../lib/icons.js';
@@ -18,7 +18,7 @@ let m;
 let studio;
 let scene;
 const hist = createHistory();
-let lastPush = 0;
+let listeners; // document and window listeners, removed on unmount
 let gridOn = false;
 let frame = 0;
 let mode = 360;
@@ -52,6 +52,10 @@ export async function mount(el, { id }) {
   el.innerHTML = `
   <div class="comp-top">${stepper('compose', m)}
     <div class="ctop-act">
+      <div class="undo-pair" role="group" aria-label="Undo and redo">
+        <button class="btn icon ghostbtn" type="button" data-act="undo" id="undoBtn" title="Undo (Ctrl+Z)" aria-label="Undo" aria-keyshortcuts="Control+Z" disabled>${icon('undo')}</button>
+        <button class="btn icon ghostbtn" type="button" data-act="redo" id="redoBtn" title="Redo (Ctrl+Y or Ctrl+Shift+Z)" aria-label="Redo" aria-keyshortcuts="Control+Y Control+Shift+Z" disabled>${icon('redo')}</button>
+      </div>
       <button class="btn sec" type="button" data-render="still">${icon('camera')}<span>Render still</span></button>
       <button class="btn pri" type="button" data-render="turntable">${icon('film')}<span>Render turntable</span></button>
     </div>
@@ -149,15 +153,16 @@ export async function mount(el, { id }) {
   draw();
 }
 
-// The orbit camera moved (free roam): redraw at once, save once the drag ends.
+// The orbit camera moved (free roam): redraw at once, save once the drag ends. scene.orbit only changes when the drag
+// ends, so the whole orbit is one undo step back to where it started.
 function onOrbit(orbit, settled) {
-  scene.orbit = orbit;
   if (settled) change({ orbit }, { inspector: false });
   else draw();
 }
 
 export function unmount() {
   hist.clear();
+  listeners?.abort();
   gridOn = false;
   stopMotion();
   stop();
@@ -213,12 +218,11 @@ function save() {
   send(`/api/models/${m.id}`, 'PATCH', { scene }).then(upsert).catch((e) => toast(e.message));
 }
 
-async function change(next, { inspector = true, fromHistory = false } = {}) {
-  if (!fromHistory && Object.keys(next).length) {
-    if (Date.now() - lastPush > 600) hist.push(scene, Object.keys(next).join(', ')); // one step per burst (a slider drag)
-    lastPush = Date.now();
-  }
+// Every scene edit comes through here, so every edit is undoable. record: false is for bookkeeping that is not an edit.
+async function change(next, { inspector = true, fromHistory = false, record = true } = {}) {
+  if (!fromHistory && record && Object.keys(next).length) hist.record(scene, Object.keys(next).join(', '));
   Object.assign(scene, next);
+  renderUndo();
   if (studio) {
     await studio.setState(scene);
     if (scene.view === 'free') scene.orbit = studio.state.orbit; // the first switch starts from the car camera
@@ -236,9 +240,13 @@ async function stepHistory(redo) {
   const prev = redo ? hist.redo(scene) : hist.undo(scene);
   if (!prev) return toast(redo ? 'Nothing to redo' : 'Nothing to undo', 'info');
   for (const k of Object.keys(scene)) if (!(k in prev)) delete scene[k];
-  lastPush = 0;
   await change(prev, { fromHistory: true });
   renderGrid();
+}
+function renderUndo() {
+  const u = $('#undoBtn', root), r = $('#redoBtn', root);
+  if (u) u.disabled = !hist.canUndo;
+  if (r) r.disabled = !hist.canRedo;
 }
 const gridUnit = () => state.settings?.gridUnit || 'm';
 function renderGrid() {
@@ -252,11 +260,7 @@ function renderGrid() {
 
 function frameAll() {
   const changed = studio?.frameAll();
-  if (!changed) return;
-  Object.assign(scene, changed);
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(save, 400);
-  draw();
+  if (changed) change(changed, { inspector: false });
 }
 
 function setFrame(f) {
@@ -365,8 +369,6 @@ function renderInspector() {
     <div class="grp" id="grp-grid"><h3>Reference grid</h3>
       <label class="tg"><span>Show grid and scale<small>Person 1.8 m and car 4.5 m for size. Not rendered.</small></span><input class="sw" type="checkbox" role="switch" data-grid="on" ${gridOn ? 'checked' : ''}></label>
       <div class="chips seg sm" role="radiogroup" aria-label="Units">${[['m', 'Meters'], ['ft', 'Feet']].map(([k, l]) => `<button class="chip" type="button" role="radio" data-unit="${k}" aria-checked="${gridUnit() === k}">${l}</button>`).join('')}</div>
-      <div class="mg-row"><button class="btn sm ghostbtn" type="button" data-act="undo" ${hist.canUndo ? '' : 'disabled'} title="Ctrl+Z">Undo</button><button class="btn sm ghostbtn" type="button" data-act="redo" ${hist.canRedo ? '' : 'disabled'} title="Ctrl+Shift+Z">Redo</button></div>
-      ${hist.canUndo ? `<ol class="histlist fine">${hist.list().slice(0, 8).map((h) => `<li>${esc(h.label)}</li>`).join('')}</ol>` : ''}
     </div>
     <div class="grp" id="grp-ground"><h3>Ground</h3>
       ${slider('reflection', 'Reflection', 0, 1, 0.01, s.reflection, hasFloor() ? level(s.reflection) : 'n/a', !hasFloor())}
@@ -534,11 +536,16 @@ function bind() {
   };
   ticks.addEventListener('keydown', keys);
 
-  // Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y): undo and redo scene edits, except while typing in a text field.
-  el.addEventListener('keydown', (e) => {
-    if (e.target.closest('input[type=text], input[type=search], textarea')) return;
-    if (isUndo(e)) { e.preventDefault(); stepHistory(false); } else if (isRedo(e)) { e.preventDefault(); stepHistory(true); }
-  });
+  // Ctrl+Z undoes, Ctrl+Y or Ctrl+Shift+Z redoes, wherever the focus is on this screen, except while typing in a field.
+  // A pointer drag (slider, colour picker, orbit, move tool) is one undo step from pointer down to pointer up.
+  listeners = new AbortController();
+  const { signal } = listeners;
+  document.addEventListener('keydown', (e) => {
+    const k = historyKey(e);
+    if (k) { e.preventDefault(); stepHistory(k === 'redo'); }
+  }, { signal });
+  el.addEventListener('pointerdown', () => hist.begin(scene), { capture: true, signal });
+  for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, () => hist.end(), { signal });
   // Grid controls live in the inspector.
   el.addEventListener('click', async (e) => {
     const u = e.target.closest('[data-unit]');

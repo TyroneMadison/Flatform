@@ -1,10 +1,23 @@
 // Edit history for a model's scene (undo/redo) and the safe git rollback used by the History panel.
 // Rollback is only ever `git revert` or a new branch at an old commit: never reset, never force, never deletes history.
 
-export function createHistory({ limit = 100 } = {}) {
+export function createHistory({ limit = 100, burst = 600, now = Date.now } = {}) {
   let past = [], future = [];
+  let last = 0; // when the last edit was recorded
+  let gesture = null; // a drag in progress: { before, recorded }
   const clone = (v) => JSON.parse(JSON.stringify(v));
   return {
+    // Call with the state BEFORE an edit. A drag (begin..end) is one step however long it runs; other edits within
+    // `burst` ms of each other (a key held on a slider, a wheel zoom) merge into one step too.
+    record(current, label = 'Edit') {
+      if (gesture) {
+        if (!gesture.recorded) { this.push(gesture.before, label); gesture.recorded = true; }
+      } else if (now() - last > burst) this.push(current, label);
+      last = now();
+    },
+    // A pointer went down: remember the state now, record it only if the drag actually changes something.
+    begin(current) { gesture = { before: clone(current), recorded: false }; },
+    end() { if (gesture?.recorded) last = 0; gesture = null; }, // the next edit after a drag is its own step
     // Call with the state BEFORE an edit; it becomes the undo target.
     push(prev, label = 'Edit') {
       if (past.length && JSON.stringify(past.at(-1).value) === JSON.stringify(prev)) return;
@@ -14,12 +27,14 @@ export function createHistory({ limit = 100 } = {}) {
     },
     undo(current) {
       const e = past.pop();
+      last = 0; // the next edit after an undo or redo is always its own step
       if (!e) return null;
       future.push({ value: clone(current), label: e.label, at: Date.now() });
       return clone(e.value);
     },
     redo(current) {
       const e = future.pop();
+      last = 0;
       if (!e) return null;
       past.push({ value: clone(current), label: e.label, at: Date.now() });
       return clone(e.value);
@@ -27,12 +42,17 @@ export function createHistory({ limit = 100 } = {}) {
     get canUndo() { return past.length > 0; },
     get canRedo() { return future.length > 0; },
     list: () => past.map((e) => ({ label: e.label, at: e.at })).reverse(),
-    clear() { past = []; future = []; },
+    clear() { past = []; future = []; gesture = null; last = 0; },
   };
 }
 
-export const isUndo = (e) => (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z';
-export const isRedo = (e) => (e.ctrlKey || e.metaKey) && ((e.shiftKey && e.key.toLowerCase() === 'z') || e.key.toLowerCase() === 'y');
+export const isUndo = (e) => (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z';
+export const isRedo = (e) => (e.ctrlKey || e.metaKey) && !e.altKey && ((e.shiftKey && e.key.toLowerCase() === 'z') || e.key.toLowerCase() === 'y');
+// Typing in a field keeps the field's own undo: text-like inputs, textareas, selects and contenteditable.
+const TYPING = new Set(['text', 'search', 'number', 'email', 'url', 'password', 'tel']);
+export const isTyping = (t) => Boolean(t && (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t.tagName === 'INPUT' && TYPING.has((t.type || 'text').toLowerCase()))));
+// Which history step a key press asks for: 'undo', 'redo' or null (not a shortcut, or the user is typing).
+export const historyKey = (e) => (isTyping(e.target) ? null : isUndo(e) ? 'undo' : isRedo(e) ? 'redo' : null);
 
 const SHA = /^[0-9a-f]{7,40}$/i;
 const BRANCH = /^(?!-)(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]{1,100}(?<![./])$/;
