@@ -23,6 +23,7 @@ export const state = {
   frames: {}, // composer turntable frame per model, so "Render still" uses the current angle
   lastId: null, // model last opened in a flow screen
   spend: null, // GET /api/spend: totals, daily series, per-model costs, balances and low-balance flags per provider
+  workspace: 'car', // 'car' or 'warframe': stamped on models created or imported from a home screen
 };
 
 export async function api(path, opts = {}) {
@@ -172,7 +173,7 @@ async function importModels(files) {
     state.importing = file.name;
     announce(`Importing ${file.name}`);
     refresh();
-    try { last = upsert(await importModel(file)); } catch (e) { toast(e.message); }
+    try { last = upsert(await importModel(file, state.workspace)); } catch (e) { toast(e.message); }
   }
   state.importing = null;
   refresh();
@@ -215,6 +216,7 @@ async function pump() {
         const form = new FormData();
         form.append('name', item.name);
         form.append('setup', JSON.stringify(item.setup));
+        form.append('workspace', state.workspace);
         for (const [view, p] of Object.entries(item.files)) form.append(view, new File([p.file], p.file.name || `${view}.jpg`, { type: p.type }));
         const m = upsert(await api(item.modelId ? `/api/models/${item.modelId}/versions` : '/api/models', { method: 'POST', body: form }));
         state.queue.splice(state.queue.indexOf(item), 1);
@@ -412,6 +414,7 @@ function renderFrame() {
   const target = focusModel();
   const links = [
     ['New', 'plus', '#/drop', ['drop', 'setup', 'generate']],
+    ['Warframe', 'cube', '#/warframe', ['warframe']],
     ['Library', 'library', '#/library', ['library', 'model']],
     ['Scenes', 'scene', target ? `#/compose/${target.id}` : '#/library', ['compose']],
     ['Renders', 'film', target ? `#/render/${target.id}` : '#/library', ['render']],
@@ -435,7 +438,7 @@ function renderFrame() {
 }
 
 // ---- routing ----
-const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings'];
+const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings', 'warframe'];
 export let route = { name: 'drop', id: null };
 let current = null;
 let navToken = 0;

@@ -323,8 +323,9 @@ export async function startServer({
       const file = form.get(view);
       if (file && typeof file === 'object') views[view] = await toImage(Buffer.from(await file.arrayBuffer()), file.type);
     }
-    return { setup, views, name: form.get('name') };
+    return { setup, views, name: form.get('name'), workspace: workspaceOf(form.get('workspace')) };
   }
+  const workspaceOf = (w) => (w === 'warframe' ? 'warframe' : 'car');
 
   // Checks a setup has the photos it needs. views: { front, left, back, right } of { image, type }.
   function checkViews(setup, views) {
@@ -410,7 +411,7 @@ export async function startServer({
     const preview = form.get('preview');
     const id = randomUUID();
     const now = new Date().toISOString();
-    const m = { id, name: cleanName(form.get('name') || originalName.replace(/\.[^.]+$/, '')), created_at: now, activeVersion: 1, versions: [] };
+    const m = { id, name: cleanName(form.get('name') || originalName.replace(/\.[^.]+$/, '')), created_at: now, activeVersion: 1, versions: [], workspace: workspaceOf(form.get('workspace')) };
     m.slug = uniqueSlug(m.name, slugsExcept(m));
     await mkdir(path.join(MODELS, m.id), { recursive: true });
     await writeFile(path.join(MODELS, m.id, 'model.glb'), glb);
@@ -431,12 +432,12 @@ export async function startServer({
   }
 
   async function createModel(req, queryName) {
-    const { setup, views, name } = await readInput(req);
+    const { setup, views, name, workspace } = await readInput(req);
     if (!setup) throw new HttpError(400, 'Add a photo');
     checkViews(setup, views);
     const id = randomUUID();
     const task_id = await submit(setup, views, id);
-    const m = { id, name: cleanName(name ?? queryName), created_at: new Date().toISOString(), activeVersion: 1, versions: [] };
+    const m = { id, name: cleanName(name ?? queryName), created_at: new Date().toISOString(), activeVersion: 1, versions: [], workspace: workspace || 'car' };
     m.slug = uniqueSlug(m.name, slugsExcept(m));
     await mkdir(path.join(MODELS, m.id), { recursive: true });
     m.versions.push(newVersion(1, setup, task_id, await saveViews(m, 1, views)));

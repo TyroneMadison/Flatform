@@ -26,7 +26,8 @@ export async function runCheck(m, fix = false) {
 export function tennogenCard(m, disabled = false) {
   const r = reports.get(m.id);
   const mode = state.settings?.tennogenCheck || 'warn';
-  const types = Object.entries(CONTENT_TYPES).map(([k, t]) => `<option value="${k}" ${m.tennogen?.type === k ? 'selected' : ''}>${t.label}</option>`).join('');
+  const current = m.tennogen?.type || state.tennogenType || 'warframe'; // the Warframe home's template picks a type
+  const types = Object.entries(CONTENT_TYPES).map(([k, t]) => `<option value="${k}" ${current === k ? 'selected' : ''}>${t.label}</option>`).join('');
   const verdict = !m.tennogen ? '<p class="fine">Pick the folder with your six PNG maps (and the FBX). Names and sizes are checked against the TennoGen guides.</p>'
     : !r ? `<button class="pick wide" type="button" data-tg="check" ${busy || disabled ? 'disabled' : ''}>Check my files</button>`
       : r.pass ? `<button class="pick wide ok" type="button" data-tg="check" ${busy || disabled ? 'disabled' : ''}>✓ All names look good${r.warnings ? ` · ${r.warnings} note${r.warnings > 1 ? 's' : ''}` : ''}</button>`
