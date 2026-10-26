@@ -18,7 +18,7 @@ test('HDRI import accepts .hdr and .exr, rejects others; built-ins resolve to fi
   assert.equal(checkHdri('scene.png').ok, false);
   assert.equal(checkHdri('builtin:nope').ok, false);
   assert.equal(checkHdri(null).ok, true);
-  assert.equal(Object.keys(HDRIS).length, 4);
+  assert.equal(Object.keys(HDRIS).length, 7);
   for (const name of Object.keys(HDRIS)) {
     assert.equal(checkHdri(`builtin:${name}`).ok, true);
     assert.equal(hdriUrl(`builtin:${name}`), `/img/hdri/${name}.hdr`);

@@ -238,3 +238,7 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16
 .skyrow { display: grid; grid-template-columns: 1fr 64px auto auto; gap: 6px; align-items: center; margin: 4px 0; }
 label.check { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; cursor: pointer; }
 label.check input[type="range"] { flex: 1 1 100%; }
+.lightgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 8px 0; }
+.lightcard { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid var(--line, #333); border-radius: 10px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; text-align: left; }
+.lightcard[aria-checked="true"] { border-color: var(--accent, #e8735a); box-shadow: 0 0 0 1px var(--accent, #e8735a); }
+.lightcard img, .lightcard .ph { width: 100%; aspect-ratio: 4 / 3; border-radius: 6px; object-fit: cover; background: #222; display: block; }

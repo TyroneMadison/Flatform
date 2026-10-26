@@ -13,6 +13,9 @@ export const HDRIS = {
   studio_small_08: { label: 'Studio small 08', note: 'Bright softbox studio' },
   brown_photostudio_02: { label: 'Brown photo studio', note: 'Warm photo studio' },
   kloofendal_48d_partly_cloudy_puresky: { label: 'Kloofendal sky', note: 'Partly cloudy outdoor sky' },
+  garage: { label: 'Garage', note: 'Concrete garage, daylight from the door' },
+  goegap_road: { label: 'Desert dusk', note: 'Desert road at sunset' },
+  white_studio_02: { label: 'White cyclorama', note: 'Clean white studio, soft light' },
 };
 export const hdriUrl = (file) => (file.startsWith('builtin:') ? `/img/hdri/${file.slice(8)}.hdr` : `/backdrops/${encodeURIComponent(file)}`);
 export const isHdri = (name) => HDRI_TYPES.includes(String(name).slice(String(name).lastIndexOf('.')).toLowerCase());
@@ -87,6 +90,34 @@ export const STUDIO_PRESETS = {
     background: { kind: 'gradient', color: '#000000', color2: '#1d1a1a' }, hdri: { file: 'builtin:studio_small_08', intensity: 0.8, rotation: 0 },
     lights: lightsFromPreset('rim'), ao: { on: true, strength: 1.2 }, tone: 'aces', exposure: 1.1, ssr: { on: true, strength: 0.6 }, aa: 'smaa', quality: 'high',
   }),
+};
+// Lighting studio: one-click environments. Each sets only the HDRI (file, turn, strength, shown as the
+// background or not) and the tone, so the rest of the look and the scene stay as they are.
+export const LIGHTING_PRESETS = {
+  garage: { label: 'Garage', hdri: { file: 'builtin:garage', rotation: 90, intensity: 1, background: true, blur: 0.15 }, tone: 'agx' },
+  desertDusk: { label: 'Desert dusk', hdri: { file: 'builtin:goegap_road', rotation: 200, intensity: 1.1, background: true, blur: 0 }, tone: 'aces' },
+  whiteCyc: { label: 'White cyclorama', hdri: { file: 'builtin:white_studio_02', rotation: 0, intensity: 1, background: true, blur: 0.6 }, tone: 'neutral' },
+  studioSoft: { label: 'Soft studio', hdri: { file: 'builtin:studio_small_03', rotation: 30, intensity: 1.2, background: false, blur: 0 }, tone: 'agx' },
+  studioBright: { label: 'Bright studio', hdri: { file: 'builtin:studio_small_08', rotation: 0, intensity: 1, background: false, blur: 0 }, tone: 'neutral' },
+  photoWarm: { label: 'Warm photo studio', hdri: { file: 'builtin:brown_photostudio_02', rotation: 0, intensity: 1, background: false, blur: 0 }, tone: 'neutral' },
+  outdoorSky: { label: 'Open sky', hdri: { file: 'builtin:kloofendal_48d_partly_cloudy_puresky', rotation: 0, intensity: 1, background: true, blur: 0 }, tone: 'aces' },
+};
+export const applyLightingPreset = (look, id) => {
+  const p = LIGHTING_PRESETS[id];
+  if (!p) return mergeLook(look);
+  const base = mergeLook(look);
+  return mergeLook({ ...base, hdri: { ...p.hdri }, tone: p.tone });
+};
+export const lightingPresetOf = (look) => {
+  const l = mergeLook(look);
+  return Object.keys(LIGHTING_PRESETS).find((k) => { const h = LIGHTING_PRESETS[k].hdri; return l.hdri.file === h.file && l.hdri.background === h.background && l.hdri.rotation === h.rotation; }) || null;
+};
+// Whether a look change needs the stage rebuilt. Swapping one HDRI for another (same background setting) does
+// not: the environment and background are replaced in place.
+export const lookNeedsRebuild = (a, b) => {
+  a = mergeLook(a); b = mergeLook(b);
+  const hdriSwap = a.hdri.file && b.hdri.file && a.hdri.background === b.hdri.background;
+  return a.background.kind !== b.background.kind || a.background.image !== b.background.image || (!hdriSwap && a.hdri.file !== b.hdri.file) || a.hdri.background !== b.hdri.background;
 };
 // Validates a saved preset collection (settings.studioPresets): { name: look } with sane names.
 export function cleanStudioPresets(obj) {

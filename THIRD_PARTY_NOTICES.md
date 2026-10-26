@@ -27,7 +27,7 @@ https://github.com/strukturag/libheif.
 
 ## Studio HDRIs (bundled in `public/img/hdri/`, CC0 1.0)
 
-Four 1k environment maps from [Poly Haven](https://polyhaven.com), released under
+Seven 1k environment maps from [Poly Haven](https://polyhaven.com), released under
 [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (public domain, no attribution required; credited with thanks).
 
 | File | Source |
@@ -36,6 +36,9 @@ Four 1k environment maps from [Poly Haven](https://polyhaven.com), released unde
 | `studio_small_08.hdr` | https://polyhaven.com/a/studio_small_08 (Sergej Majboroda) |
 | `brown_photostudio_02.hdr` | https://polyhaven.com/a/brown_photostudio_02 (Sergej Majboroda) |
 | `kloofendal_48d_partly_cloudy_puresky.hdr` | https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky (Greg Zaal) |
+| `garage.hdr` | https://polyhaven.com/a/garage (Greg Zaal) |
+| `goegap_road.hdr` | https://polyhaven.com/a/goegap_road (Greg Zaal) |
+| `white_studio_02.hdr` | https://polyhaven.com/a/white_studio_02 (Grzegorz Wronkowski) |
 
 ## Fonts (bundled in `public/fonts/`, SIL Open Font License 1.1)
 

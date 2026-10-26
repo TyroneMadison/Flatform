@@ -21,7 +21,7 @@ import { GroundedSkybox } from 'three/addons/objects/GroundedSkybox.js';
 import { HorizontalBlurShader } from 'three/addons/shaders/HorizontalBlurShader.js';
 import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { mergeLook, effectsFor, hdriUrl } from './look.js';
+import { mergeLook, effectsFor, hdriUrl, lookNeedsRebuild } from './look.js';
 import { Post, PathTraced, TONE } from './post.js';
 import { applyPaint, regroup, pickPiece, listPieces } from './paint.js';
 import { applyMotion } from './rig.js';
@@ -528,8 +528,7 @@ export class Studio {
   async setState(next) {
     const prev = this.state;
     this.state = { ...prev, ...next };
-    const a = mergeLook(prev.look), b = mergeLook(this.state.look);
-    const lookRebuild = a.background.kind !== b.background.kind || a.background.image !== b.background.image || a.hdri.file !== b.hdri.file || a.hdri.background !== b.hdri.background;
+    const lookRebuild = lookNeedsRebuild(prev.look, this.state.look);
     if (!this.built || prev.preset !== this.state.preset || prev.backdrop !== this.state.backdrop || Boolean(prev.modeled) !== Boolean(this.state.modeled) || lookRebuild) await this.buildPreset();
     this.applyModel();
     this.applyLights();
