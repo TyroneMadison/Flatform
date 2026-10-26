@@ -74,13 +74,15 @@ export const sourceType = (file = '') => (/\.png$/i.test(file) ? 'PNG' : 'JPEG')
 // Generation stages, from the provider's job status and progress.
 const STAGE_NAMES = {
   tripo: ['Uploaded to Tripo', 'Task started', 'Building geometry', 'Painting textures', 'Saving GLB to library'],
+  local: ['Sent to your graphics card', 'Waiting for its turn', 'Building the shape', 'Painting textures', 'Saving GLB to library'],
   '3daistudio': ['Sent to 3D AI Studio', 'Waiting for its turn', 'Building geometry', 'Painting textures', 'Saving GLB to library'],
 };
-export const providerOf = (v) => (v?.provider === '3daistudio' ? '3daistudio' : 'tripo');
+export const providerOf = (v) => (v?.provider === '3daistudio' || v?.provider === 'local' ? v.provider : 'tripo');
 export const stagesOf = (v) => STAGE_NAMES[providerOf(v)];
 export function stageOf(v) {
   if (v.status === 'ready') return 5;
   const [done, running] = providerOf(v) === 'tripo' ? [v.tripo_status === 'success', v.tripo_status === 'running']
+    : providerOf(v) === 'local' ? [v.upstream_status === 'success', v.upstream_status === 'running']
     : [v.upstream_status === 'FINISHED', v.upstream_status === 'IN_PROGRESS'];
   if (done) return 4;
   if (running) return (v.progress || 0) < 50 ? 2 : 3;
@@ -96,6 +98,7 @@ export function statusText(m) {
 export const statusClass = (m) => ({ ready: 'ready', failed: 'fail' })[m.status] || 'gen';
 // "Tripo v3.1" or "3D AI Studio · Hitem3D 3.0", for a version (or the model's active one).
 export function engineLabel(v) {
+  if (providerOf(v) === 'local') return 'Local (free) · TRELLIS';
   if (providerOf(v) === 'tripo') return `Tripo ${String(v.options?.model || state.settings?.model || 'v3.1').split('-')[0]}`;
   return `3D AI Studio · ${ENGINES[v.engine]?.label || ''}`;
 }

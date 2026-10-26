@@ -11,7 +11,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, PLATES, plateCamera } from './public/lib/pipeline.js';
-import { PROVIDERS, VIEWS, normalize, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
+import { PROVIDERS, VIEWS, DEFAULT_PROVIDER, normalize, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
 import { estimate } from './public/lib/pricing.js';
 import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
 import { resolveColors, deserializeMaterial, blenderMaterial } from './public/lib/tenno.js';
@@ -26,9 +26,10 @@ import { RESOLUTIONS, FORMATS as VIDEO_FORMATS, QUALITIES as VIDEO_QUALITIES, ex
 import { threeDAIStudio, createLimiter, THREE_D_AI_BASE, HIGH } from './providers.mjs';
 import { createKeyStore } from './keys.mjs';
 import { createUpdater, parseVersion, updateOptions } from './updates.mjs';
-import { SERVICES, CONVERT_CREDITS, entry, append, parse, summary, defaultThresholds } from './ledger.mjs';
+import { SERVICES, LOCAL, CONVERT_CREDITS, entry, append, parse, summary, defaultThresholds } from './ledger.mjs';
 import { check as checkTennogen, fixPlan, CONTENT_TYPES, EXPORT_MODES } from './public/lib/tennogen.js';
 import { pngSize, resizePng } from './png.mjs';
+import { localEngine as createLocalEngine, downloadWeights, weightsReady, checkCuda } from './local.mjs';
 import { loadPoses } from './public/lib/poses.js';
 const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
 
@@ -146,6 +147,9 @@ export async function startServer({
   updateDelayMs,
   workspaces = null, // workspaces.mjs; startApp() passes it, tests may leave it out
   onWorkspaceSwitch = null, // called after the active workspace changes; startApp() restarts on the new folder
+  localEngine = null, // tests pass a mock; otherwise local.mjs starts TRELLIS on the first local generation
+  weightsFetch = globalThis.fetch, // the weight downloader's network (tests mock it)
+  cudaCheck = checkCuda,
   onLowBalance, // (service, { balance, threshold }) when GET /api/spend finds a balance under its alert (main.mjs notifies)
 }) {
   const MODELS = path.join(dataDir, 'models');
@@ -166,7 +170,8 @@ export async function startServer({
   }
 
   const defaults = {
-    region: 'global', model, texture: true, pbr: true, provider: 'tripo', setups: {},
+    region: 'global', model, texture: true, pbr: true, provider: DEFAULT_PROVIDER, setups: {},
+    localEngine: { weightsDir: '', python: '' }, // '' = <data folder>/local-engine/weights and "python" on PATH
     renderer: 'three', blenderPath: '', ffmpegPath: '', outputRoot: '', defaultScene: 'showroom', alsoTransparent: true, backdrops: {},
     lighting: DEFAULT_LIGHTING, glass: DEFAULT_GLASS,
     studioPresets: {}, // the user's saved scene looks (look.js), by name; the shipped ones live in the page
@@ -363,6 +368,14 @@ export async function startServer({
       task: setup.mode === 'views' ? 'multiview_to_model' : 'image_to_model', model: setup.options.model || setup.engine,
       credits: estimate(setup).credits, modelId,
     };
+    if (setup.provider === 'local') {
+      const uris = Object.fromEntries(Object.entries(views).map(([view, { image, type }]) => [view, `data:${type};base64,${image.toString('base64')}`]));
+      let out;
+      try { out = await local().submit(uris, setup.options); } catch (e) { throw new HttpError(e.status || 502, e.message); }
+      if (typeof out?.task_id !== 'string' || !out.task_id) throw new HttpError(502, 'Local engine: no task id');
+      append(SPEND, entry({ service: LOCAL, ...spend, credits: 0, taskId: out.task_id })).catch((e) => console.error(`Spend ledger: ${e.message}`));
+      return out.task_id;
+    }
     if (setup.provider === 'tripo') {
       const { image, type } = views.front;
       const form = new FormData();
@@ -517,11 +530,54 @@ export async function startServer({
     } else if (FAILED.includes(t.status)) Object.assign(v, { status: 'failed', error: failure(t) });
   }
 
+  // Local jobs are checked when the page asks, like Tripo. The GLB comes straight from the local service.
+  async function refreshLocal(m, v) {
+    let t;
+    try { t = await local().status(v.task_id); } catch (e) {
+      if (e.status === 404) Object.assign(v, { status: 'failed', error: 'The local engine restarted and lost this job. Click Retry.' });
+      return;
+    }
+    v.progress = t.progress ?? v.progress;
+    v.upstream_status = t.status;
+    if (t.status === 'success') {
+      const glb = await local().result(v.task_id);
+      const name = vname('model', v.n) + '.glb';
+      await writeFile(path.join(MODELS, m.id, name), glb);
+      Object.assign(v, { glb: name, status: 'ready', progress: 100, credits: 0 });
+    } else if (t.status === 'failed') Object.assign(v, { status: 'failed', error: `Local engine: ${t.error || 'failed'}` });
+  }
+
+  // ---- Local engine (local.mjs): TRELLIS on the user's GPU, started on first use, stopped on close ----
+  const weightsDir = () => settings.localEngine?.weightsDir || path.join(dataDir, 'local-engine', 'weights');
+  let localInst = localEngine;
+  let localFor = null;
+  function local() {
+    const key = `${weightsDir()}|${settings.localEngine?.python || ''}`;
+    if (!localInst || (!localEngine && localFor !== key)) {
+      localInst?.stop?.();
+      localInst = createLocalEngine({ weightsDir: weightsDir(), python: settings.localEngine?.python || 'python', cuda: cudaCheck });
+      localFor = key;
+    }
+    return localInst;
+  }
+  const weightsJob = { running: false, done: 0, file: null, error: null };
+  async function localView() {
+    const gpu = await cudaCheck().then((g) => ({ ok: true, ...g }), (e) => ({ ok: false, error: e.message }));
+    return { weightsDir: weightsDir(), ready: weightsReady(weightsDir()), python: settings.localEngine?.python || '', gpu, download: { running: weightsJob.running, done: weightsJob.done, file: weightsJob.file, error: weightsJob.error } };
+  }
+  function startDownload() {
+    if (weightsJob.running) return;
+    Object.assign(weightsJob, { running: true, done: 0, file: null, error: null });
+    weightsJob.promise = downloadWeights({ dir: weightsDir(), fetch: weightsFetch, onProgress: (p) => Object.assign(weightsJob, p) })
+      .catch((e) => { weightsJob.error = e.message; })
+      .finally(() => { weightsJob.running = false; });
+  }
+
   // Tripo tasks are checked when the page asks. 3D AI Studio jobs are checked by the poller below instead.
   async function refreshModel(m) {
-    const pending = m.versions.filter((v) => v.status === 'generating' && v.provider === 'tripo');
+    const pending = m.versions.filter((v) => v.status === 'generating' && (v.provider === 'tripo' || v.provider === 'local'));
     if (!pending.length) return;
-    for (const v of pending) await refreshVersion(m, v);
+    for (const v of pending) await (v.provider === 'local' ? refreshLocal(m, v) : refreshVersion(m, v));
     mirror(m);
     await save();
   }
@@ -609,6 +665,7 @@ export async function startServer({
 
   const wallet = { at: 0 }; // last 3D AI Studio balance; it costs one of the 3 requests a minute, so it's kept a while
   async function account(provider, fresh) {
+    if (provider === 'local') return { hasKey: true, free: true, ready: weightsReady(weightsDir()) };
     if (!keyStore.get(provider)) return { hasKey: false };
     if (provider === 'tripo') return { hasKey: true, ...(await tripo('/account/balance')) };
     if (fresh || Date.now() - wallet.at > 5 * 60 * 1000) {
@@ -632,7 +689,7 @@ export async function startServer({
     if (provider === '3daistudio') { Object.assign(wallet, balance, { at: Date.now() }); wakePoller(1000); } // jobs waiting for a key
     return { hasKey: true, ...balance };
   }
-  const keySources = () => Object.fromEntries(Object.keys(PROVIDERS).map((p) => [p, keyStore.source(p)]));
+  const keySources = () => Object.fromEntries(Object.keys(PROVIDERS).filter((p) => !PROVIDERS[p].local).map((p) => [p, keyStore.source(p)]));
   // The vision key (Anthropic) is checked with a free models call, then saved like the provider keys.
   async function saveVisionKey(key) {
     key = String(key ?? '').trim();
@@ -641,8 +698,8 @@ export async function startServer({
     await keyStore.set('anthropic', key);
     return { hasKey: true };
   }
-  const providerParam = (p) => {
-    if (!Object.hasOwn(PROVIDERS, p)) throw new HttpError(404, 'Unknown provider');
+  const providerParam = (p, keyed) => {
+    if (!Object.hasOwn(PROVIDERS, p) || (keyed && PROVIDERS[p].local)) throw new HttpError(404, 'Unknown provider');
     return p;
   };
 
@@ -841,6 +898,11 @@ export async function startServer({
           if (!Object.hasOwn(PROVIDERS, p)) throw new HttpError(400, 'Unknown provider');
           try { next.setups[p] = normalize({ ...setup, provider: p }); } catch { throw new HttpError(400, 'Unknown provider or engine'); }
         }
+      } else if (k === 'localEngine') {
+        const l = body.localEngine;
+        const okPath = (x) => x === '' || (typeof x === 'string' && x.length < 1024 && path.isAbsolute(x));
+        if (!l || typeof l !== 'object' || !okPath(l.weightsDir ?? '') || !okPath(l.python ?? '')) throw new HttpError(400, 'localEngine needs full folder and file paths');
+        next.localEngine = { weightsDir: l.weightsDir ?? settings.localEngine.weightsDir, python: l.python ?? settings.localEngine.python };
       } else if (['texture', 'pbr', 'alsoTransparent'].includes(k)) bool(k);
       else if (k === 'theme') next.theme = normalizeTheme(body.theme);
       else if (k === 'gridUnit') { if (!['m', 'ft'].includes(body.gridUnit)) throw new HttpError(400, 'Grid unit must be m or ft'); next.gridUnit = body.gridUnit; }
@@ -1162,8 +1224,10 @@ export async function startServer({
       if (!Array.isArray(body.stats) || body.stats.length > 32) throw new HttpError(400, 'Bad cluster statistics');
       return send(res, 200, await inferRegions({ stats: body.stats, image: typeof body.image === 'string' ? body.image : null, key: keyStore.get('anthropic') }));
     }
+    if (area === 'local' && !id && method === 'GET') return send(res, 200, await localView());
+    if (area === 'local' && id === 'download' && method === 'POST') { startDownload(); return send(res, 202, await localView()); }
     if (area === 'keys' && id && !sub) {
-      const provider = providerParam(id);
+      const provider = providerParam(id, true);
       if (method === 'PUT') return send(res, 200, { ...(await saveKey(provider, (await readJson(req)).key)), keys: keySources() });
       if (method === 'DELETE') {
         await keyStore.remove(provider);
@@ -1341,6 +1405,7 @@ export async function startServer({
     clearTimeout(pollTimer);
     ai.limiter.stop();
     updater.stop();
+    localInst?.stop?.(); // the TRELLIS service closes with the app
     return new Promise((ok) => server.close(ok));
   };
   return { server, port: server.address().port, close };

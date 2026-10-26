@@ -255,6 +255,11 @@ function footHtml() {
   const n = jobCount();
   const total = each * Math.max(1, n);
   const a = accountOf(provider);
+  if (PROVIDERS[provider].local) { // free: no key, no balance
+    const why = !n ? (setup.mode === 'views' ? 'Add the front view' : 'Add a photo') : setup.mode === 'views' && VIEWS.filter((v) => p.views[v]).length < 2 ? 'Add at least one more view' : '';
+    const line = [n > 1 && `${n} models`, why, a && !a.ready && 'one-time download needed, see Settings', 'runs on your graphics card'].filter(Boolean).join(' · ');
+    return `<div class="cost" role="status"><b>Free</b><span>${esc(line)}</span></div><button class="btn pri gen" type="button" data-act="generate"${why ? ' disabled' : ''}>Generate</button>`;
+  }
   const noKey = state.settings?.keys?.[provider] === 'none' || a?.hasKey === false;
   const balance = a?.hasKey && a.balance != null ? Number(a.balance) : null;
   const short = balance != null && balance < total;

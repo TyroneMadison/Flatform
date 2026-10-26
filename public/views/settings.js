@@ -75,6 +75,7 @@ async function onClick(e) {
   const s = state.settings;
   const { act, provider } = t.dataset;
   if (act === 'provider') save({ provider: t.dataset.value });
+  if (act === 'local-download') { try { localInfo = await send('/api/local/download', 'POST'); } catch (err) { toast(err.message); } redraw(); loadLocal().then(redraw); }
   if (act === 'test') await test(provider);
   if (act === 'replace') { replacing = provider; redraw(); $(`#key-${provider}`, root)?.focus(); }
   if (act === 'cancel') { replacing = null; redraw(); }
@@ -171,6 +172,7 @@ async function onSubmit(e) {
 
 // One card per provider, both built the same way.
 function card(id) {
+  if (PROVIDERS[id].local) return localCard();
   const p = PROVIDERS[id];
   const s = state.settings;
   const source = s.keys?.[id] || 'none';
@@ -192,6 +194,32 @@ function card(id) {
     <div class="ph2"><div class="av" aria-hidden="true">${id === 'tripo' ? 'T' : '3D'}</div><div><b id="pc-${id}">${p.name}</b><p>${sub}</p></div><span class="pill ${pill[0]}">● ${pill[1]}</span></div>
     ${field}
     <div class="res${r ? (r.ok === false ? ' bad' : r.ok ? ' ok' : '') : ''}" id="pc-res-${id}" role="status">${r ? `${r.ok === false ? '✗' : r.ok ? '✓' : ''} ${esc(r.text)}` : `<span>Get a key at <a href="${p.keyUrl}" target="_blank" rel="noopener">${esc(new URL(p.keyUrl).host)}</a>. Test runs the free balance check.</span>`}</div>
+  </div>`;
+}
+
+// The free local engine: no key, just a one-time download and a graphics card.
+let localInfo = null;
+let localTimer = null;
+async function loadLocal() {
+  try { localInfo = await api('/api/local'); } catch (err) { localInfo = { error: err.message }; }
+  clearTimeout(localTimer);
+  if (localInfo?.download?.running) localTimer = setTimeout(() => loadLocal().then(redraw), 1000);
+}
+const gb = (bytes) => `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+function localCard() {
+  const l = localInfo;
+  if (!l) { loadLocal().then(redraw); return '<div class="pc glass"><b>Local (free)</b><p class="fine">Checking…</p></div>'; }
+  const d = l.download || {};
+  const status = l.error ? l.error : d.running ? `Downloading ${esc(d.file || '')} · ${gb(d.done || 0)} of about 3.3 GB`
+    : l.ready ? 'Ready. Generate with Local (free) to use it.' : d.error ? `${d.error}` : 'Not downloaded yet. About 3.3 GB, one time.';
+  return `<div class="pc glass" aria-labelledby="pc-local">
+    <div class="ph2"><div class="av" aria-hidden="true">PC</div><div><b id="pc-local">Local (free)</b><p><span>TRELLIS on your graphics card · $0 per model</span></p></div>
+      <span class="pill ${l.ready ? 'ok' : 'none'}">● ${l.ready ? 'Ready' : 'Not set up'}</span></div>
+    <p class="fine">Graphics card: ${l.gpu?.ok ? `${esc(l.gpu.name)} · ${l.gpu.memoryGB} GB` : esc(l.gpu?.error || 'unknown')}</p>
+    <p class="fine">Saved in <span class="mono">${esc(l.weightsDir || '')}</span></p>
+    ${d.running ? `<progress max="${3.3 * 1024 ** 3}" value="${d.done || 0}" style="width:100%"></progress>` : ''}
+    <div class="kf"><button class="btn sm pri" type="button" data-act="local-download"${d.running || l.ready ? ' disabled' : ''}>${d.error ? 'Try again' : 'Download local engine'}</button></div>
+    <div class="res${d.error ? ' bad' : l.ready ? ' ok' : ''}" role="status">${esc(status)}</div>
   </div>`;
 }
 
@@ -303,7 +331,7 @@ const spent = (x) => `${fmt(x.credits)} <span class="muted">${money(x.usd)}</spa
 
 // Last 30 days as stacked bars, Tripo under 3D AI Studio. Plain SVG; each bar has its day and credits as a tooltip.
 function chart(days) {
-  const ids = Object.keys(PROVIDERS);
+  const ids = Object.keys(PROVIDERS).filter((id) => !PROVIDERS[id].local); // free runs add nothing to the bars
   const colors = { tripo: 'var(--accent)', '3daistudio': 'var(--soft)' };
   const max = Math.max(1, ...days.map((d) => ids.reduce((s, id) => s + d[id], 0)));
   const w = 10;
@@ -342,6 +370,7 @@ function spendHtml() {
     <div class="card glass"><h2 class="label">Last 30 days</h2>${chart(sp.daily)}</div>
     <div class="card glass"><h2 class="label">Cost per model</h2>
       ${rows ? `<table class="spendt"><thead><tr><th>Provider</th><th>Model</th><th>Calls</th><th>Credits</th><th>USD</th></tr></thead><tbody>${rows}</tbody></table>` : '<p class="fine">No paid calls yet.</p>'}</div>
+    ${sp.free?.calls ? `<p class="fine">Local (free): ${fmt(sp.free.calls)} models made on this PC · $0.00</p>` : ''}
     <p class="fine">Credits are what each call costs on the providers' price lists. US dollars are an estimate at ${Object.entries(sp.usdPerCredit).map(([id, r]) => `${PROVIDERS[id].name} $${r}`).join(', ')} per credit. Flatform warns once a session when a balance drops under its alert.</p>`;
 }
 

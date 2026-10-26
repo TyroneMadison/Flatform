@@ -4,6 +4,9 @@
 import { TRIPO_DIRECT as TD, THREE_D_AI as AI } from './pricing.js';
 
 export const PROVIDERS = {
+  local: {
+    name: 'Local (free)', sub: 'TRELLIS on your PC', host: '127.0.0.1', env: null, local: true, // no key, no credits, no network
+  },
   tripo: {
     name: 'Tripo', sub: 'direct', host: 'openapi.tripo3d.ai', env: 'TRIPO_API_KEY',
     keyUrl: 'https://developers.tripo3d.com/en/keys', keyHint: 'tsk_…',
@@ -106,6 +109,21 @@ function tripoOptions(direct, version) {
 const engineRow = { key: 'engine', group: 'quality', label: 'Engine', type: 'engine' }; // drawn by the screen, not an option
 
 export const ENGINES = {
+  'local-trellis': {
+    provider: 'local', label: 'TRELLIS (local)', views: true,
+    options: [
+      {
+        key: 'texture_size', group: 'quality', label: 'Texture size', type: 'seg', default: 2048,
+        values: [[1024, '1024'], [2048, '2048'], [4096, '4096']], brief: (v) => `${v} px texture`,
+      },
+      { key: 'steps', group: 'quality', label: 'Steps', type: 'slider', default: 25, range: () => [12, 50], step: 1, format: String, brief: (v) => `${v} steps` },
+      {
+        key: 'simplify', group: 'mesh', label: 'Simplify', type: 'slider', default: 0.9, range: () => [0, 0.98], step: 0.01, format: (v) => `${Math.round(v * 100)}%`,
+        info: 'How much of the raw mesh to remove. Lower keeps more detail and makes a bigger file.', brief: (v) => `simplify ${Math.round(v * 100)}%`,
+      },
+      seed('seed', 'Seed'),
+    ],
+  },
   'tripo-direct': { provider: 'tripo', label: 'Tripo', views: false, options: tripoOptions(true) },
   'tripo-3.2': { provider: '3daistudio', label: 'Tripo 3.2', views: true, version: '3.2', options: tripoOptions(false, '3.2') },
   'tripo-3.1': { provider: '3daistudio', label: 'Tripo 3.1', views: true, version: '3.1', options: tripoOptions(false, '3.1') },
@@ -167,7 +185,13 @@ export const optionSpecs = (engine) => ENGINES[engine].options.filter((s) => s.t
 const valuesOf = (spec, o) => spec.values.filter(([, , , show]) => !show || show(o));
 
 // One-click starting points. Each is completed with the engine's defaults; prices come from pricing.js.
+export const DEFAULT_PROVIDER = 'local';
 export const PRESETS = {
+  local: [
+    { id: 'fast', name: 'Quick look', desc: 'Free · 1024 texture', engine: 'local-trellis', options: { texture_size: 1024, steps: 12, simplify: 0.95 } },
+    { id: 'balanced', name: 'Balanced', desc: 'Free · 2048 texture', engine: 'local-trellis', options: {} },
+    { id: 'max', name: 'Max detail', desc: 'Free · 4096 texture, most mesh', engine: 'local-trellis', options: { texture_size: 4096, steps: 50, simplify: 0.5 } },
+  ],
   tripo: [
     { id: 'fast', name: 'Fast draft', desc: 'Quick look, fast texture', engine: 'tripo-direct', options: { texture: 'color', texture_model: '3.5', texture_quality: 'fast' } },
     { id: 'balanced', name: 'Balanced', desc: 'PBR · HD texture', engine: 'tripo-direct', options: { texture: 'pbr', texture_quality: 'detailed' } },
