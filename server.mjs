@@ -1137,7 +1137,7 @@ export async function startServer({
         windowsHide: true, env: script ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' } : process.env,
       });
       job.child = child;
-      let tail = '';
+      let tail = '', fatal = '';
       let buffered = '';
       const onData = (chunk) => {
         buffered += chunk;
@@ -1146,13 +1146,15 @@ export async function startServer({
         for (const line of lines) {
           const hit = line.match(/^FLATFORM_FRAME (\d+) (\d+)/);
           if (hit) job.frame = Number(hit[1]);
+          else if (/^FLATFORM_ERROR /.test(line)) fatal = line.trim(); // the script's own error beats any later line
           else if (line.trim()) tail = line.trim();
         }
       };
       child.stdout.setEncoding('utf8').on('data', onData);
-      child.stderr.setEncoding('utf8').on('data', (d) => { tail = String(d).trim().split(/\r?\n/).at(-1) || tail; });
+      let errTail = ''; // an uncaught Python error goes to stderr (its warnings too, which are skipped)
+      child.stderr.setEncoding('utf8').on('data', (d) => { errTail = String(d).split(/\r?\n/).filter((l) => /error|exception/i.test(l) && !/warning/i.test(l)).at(-1)?.trim() || errTail; });
       child.on('error', reject);
-      child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(job.status === 'cancelled' ? 'Cancelled' : `Blender stopped (exit ${code}): ${tail}`))));
+      child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(job.status === 'cancelled' ? 'Cancelled' : `Blender stopped (exit ${code}): ${fatal || errTail || buffered.trim() || tail}`))));
     });
   }
 
@@ -1570,7 +1572,7 @@ export async function startServer({
     }
     if (area === 'blender' && !id && method === 'GET') {
       const found = findBlender();
-      return send(res, 200, { found: Boolean(found), path: found, configured: settings.blenderPath });
+      return send(res, 200, { found: Boolean(found), path: found, configured: settings.blenderPath, auto: Boolean(found) && found !== settings.blenderPath });
     }
     // TennoGen: check a texture folder, or check and fix it (renames, resizes).
     if (area === 'poses' && !id && method === 'GET') {

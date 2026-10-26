@@ -98,6 +98,7 @@ async function onClick(e) {
   if (act === 'output') {
     if (native) { const dir = await native.pickFolder(); if (dir) save({ outputRoot: dir }); } else showField('outputField');
   }
+  if (act === 'blender-auto') save({ blenderPath: '' });
   if (act === 'blender') {
     if (native) {
       const filters = s.platform === 'win32' ? [{ name: 'Blender', extensions: ['exe'] }] : s.platform === 'darwin' ? [{ name: 'Blender', extensions: ['app'] }] : [{ name: 'Blender', extensions: ['*'] }];
@@ -250,8 +251,10 @@ function renderingHtml() {
         <button class="chip" type="button" role="radio" aria-checked="${s.renderer === 'blender' && Boolean(b?.found)}" data-act="renderer" data-value="blender" ${b?.found ? '' : 'disabled'}>Blender (Cycles)</button>
       </div></div>
     <div class="field"><span class="flabel">Blender</span>
-      <div class="inp ${b?.found ? 'mono' : 'warn'}" title="${esc(b?.path || '')}">${b?.found ? esc(b.path) : 'Not found · install Blender 4.x to render'}</div>
-      <button class="btn sec" type="button" data-act="blender">${icon('folder')}<span>Locate Blender</span></button></div>
+      <div class="inp ${b?.found ? 'mono' : 'warn'}" title="${esc(b?.path || '')}">${b?.found ? esc(b.path) : 'Not installed on this computer · get it free from blender.org (version 4 or later)'}</div>
+      <button class="btn sec" type="button" data-act="blender">${icon('folder')}<span>${b?.found ? 'Use a different Blender' : 'Locate Blender'}</span></button>
+      ${b?.configured ? '<button class="btn ghostbtn" type="button" data-act="blender-auto">Find it for me</button>' : ''}</div>
+    ${b?.found ? `<p class="fine">${b.auto ? 'Flatform found Blender on this computer by itself.' : 'Using the Blender you picked.'}</p>` : ''}
     ${pathForm('blenderField', 'blenderPath', 'Blender path', s.blenderPath, s.platform === 'win32' ? 'C:\\Program Files\\Blender Foundation\\Blender 4.2\\blender.exe' : '/Applications/Blender.app')}
     <div class="field"><label class="flabel" for="defaultScene">Default scene</label>
       <select class="inp" id="defaultScene" name="defaultScene">${SCENES.map(([k, l]) => `<option value="${k}" ${s.defaultScene === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>

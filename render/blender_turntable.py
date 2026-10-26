@@ -738,9 +738,10 @@ def build_environment(env):
                 continue
             before = set(bpy.context.scene.objects)
             bpy.ops.import_scene.gltf(filepath=p["path"])
+            imported = set(bpy.context.scene.objects) - before  # before root exists, or root would parent itself
             root = bpy.data.objects.new(f"env glb {i}", None)
             bpy.context.scene.collection.objects.link(root)
-            for o in set(bpy.context.scene.objects) - before:
+            for o in imported:
                 if o.parent is None:
                     o.parent = root
                 o.name = f"env {o.name}"  # hidden with the rest when a place HDRI shows (grounded_dome)

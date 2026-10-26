@@ -92,3 +92,33 @@ test('kind on create and PATCH; cars are never rigged; a humanoid rig is a new v
     await app.close();
   }
 });
+
+test('a failed Blender run reports the script\'s own error, not a warning or the banner', async () => {
+  const data = await mkdtemp(path.join(tmpdir(), 'flatform-rigfail-'));
+  temps.push(data);
+  const app = await startServer({ dataDir: data, defaultOutputRoot: path.join(data, 'out'), keyStore: createKeyStore({ env: {} }), apiBase: 'http://127.0.0.1:9/v3', threeDAIBase: 'http://127.0.0.1:9' });
+  const base = `http://127.0.0.1:${app.port}`;
+  const json = async (url, method = 'GET', body) => (await fetch(base + url, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body && JSON.stringify(body) })).json();
+  try {
+    const form = new FormData();
+    form.append('glb', new Blob([await readFile(path.join(ROOT, 'test-app', 'seed', 'humanoid.glb'))]), 'model.glb');
+    form.append('name', 'Hero'); form.append('kind', 'humanoid');
+    const hero = await (await fetch(`${base}/api/models/import`, { method: 'POST', body: form })).json();
+    const blender = await json('/api/settings', 'POST', { blenderPath: path.join(ROOT, 'test', 'fixtures', 'failing-blender.mjs') });
+    assert.ok(blender);
+    assert.equal((await json('/api/blender')).auto, false); // the picked one, not one found by itself
+    await json(`/api/models/${hero.id}/rig`, 'POST');
+    let job;
+    for (let i = 0; i < 100 && (job = await json(`/api/models/${hero.id}/rig`)).status === 'running'; i++) await new Promise((ok) => setTimeout(ok, 50));
+    assert.equal(job.status, 'failed');
+    assert.equal(job.error, 'The model could not be placed');
+  } finally {
+    await app.close();
+  }
+});
+
+test('an environment model is parented to its own empty, never to itself (Blender 5 refuses that)', async () => {
+  const py = await readFile(path.join(ROOT, 'render', 'blender_turntable.py'), 'utf8');
+  const i = py.indexOf('imported = set(bpy.context.scene.objects) - before');
+  assert.ok(i > 0 && i < py.indexOf('root = bpy.data.objects.new(f"env glb'));
+});

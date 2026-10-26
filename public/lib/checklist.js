@@ -11,6 +11,7 @@ export const CHECKLIST = [
     { id: 'rig-switch', text: 'Switch the sample car to Humanoid and back to Car; leave and reopen Compose: the choice is kept.', open: 'car' },
     { id: 'rig-new-kind', text: 'Switch to the Warframe workspace and make a model from sample photo person.png: it is a Humanoid. Back in Car, car.png gives a Car.' },
     { id: 'rig-no-blender', text: 'Settings: clear the Blender path (the mock). On the humanoid with no skeleton, Pose and motion says plainly that Blender is not installed and Auto-rig is greyed out. Locate test-app/mock-blender.mjs again afterwards.', open: 'humanoid' },
+    { id: 'blender-found', text: 'Settings, Rendering: click Find it for me. Blender shows its folder and says Flatform found it by itself (on this PC the portable Blender 5.2.2 in your home folder). "Not installed" only shows when there is truly no Blender. Locate test-app/mock-blender.mjs again afterwards.' },
     { id: 'rig-render', text: 'Render the posed humanoid with Blender: frames are written (mock Blender). With the real Blender set in Settings, the pose shows in the frames.', open: 'humanoid-rigged' },
   ] },
   { group: 'Rooms', items: [
