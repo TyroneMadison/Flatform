@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import * as THREE from 'three';
-import { ENVIRONMENTS, envParts, partBounds, blenderEnvironment } from '../public/lib/environments.js';
+import { ENVIRONMENTS, envParts, partBounds, blenderEnvironment, skyRotation, rainDrops, envScale } from '../public/lib/environments.js';
 import { buildEnvironment } from '../public/lib/env3d.js';
 import { envCamera, letterbox, CAR_LENGTH } from '../public/lib/pipeline.js';
 import { HDRIS, LIGHTING_PRESETS, hdriGround, blenderLook, applyLightingPreset } from '../public/lib/look.js';
@@ -80,8 +81,10 @@ test('the scene shows at the same size at any window shape (the 4:3 frame is let
 test('Blender builds the same places at the same scale, and place HDRIs sit on a real floor', () => {
   for (const slug of PLACES) {
     const cam = envCamera(ENVIRONMENTS[slug].cam);
-    const b = blenderEnvironment(slug, cam, { hdri: (n) => `/hdri/${n}.hdr` });
-    assert.deepEqual(b.parts, envParts(ENVIRONMENTS[slug]));
+    const b = blenderEnvironment(slug, cam, { hdri: (n) => `/hdri/${n}.hdr`, glb: (f) => `/env/${f}` });
+    assert.deepEqual(b.parts.map(({ path, ...p }) => p), envParts(ENVIRONMENTS[slug]));
+    for (const p of b.parts) if (p.glb) assert.equal(p.path, `/env/${p.glb}`);
+    assert.deepEqual(b.rain, ENVIRONMENTS[slug].rain || null);
     assert.deepEqual(b.camera, cam);
     if (b.sky.hdri) assert.equal(b.sky.path, `/hdri/${b.sky.hdri}.hdr`);
     assert.deepEqual(JSON.parse(JSON.stringify(b)), b, 'survives the command line');
@@ -94,4 +97,51 @@ test('Blender builds the same places at the same scale, and place HDRIs sit on a
     if (p.hdri.background) assert.deepEqual(blenderLook(applyLightingPreset({}, id)).hdri.ground, [height, radius]);
   }
   assert.deepEqual(hdriGround('my-upload.hdr'), [1.7, 40]);
+});
+
+test('the places use real CC0 models, each bundled and credited; Coast, Night City, Villa and Desert have some', () => {
+  const notices = readFileSync(new URL('../THIRD_PARTY_NOTICES.md', import.meta.url), 'utf8');
+  for (const slug of ['golden-hour-coast', 'night-city-rain', 'modern-villa-driveway', 'desert-highway-dusk']) {
+    assert.ok(envParts(ENVIRONMENTS[slug]).some((p) => p.glb), `${slug} has models`);
+  }
+  for (const e of Object.values(ENVIRONMENTS)) {
+    for (const p of envParts(e).filter((x) => x.glb)) {
+      assert.ok(existsSync(new URL(`../public/env/${p.glb}`, import.meta.url)), `${p.glb} is bundled`);
+      assert.ok(notices.includes(`\`${p.glb}\``), `${p.glb} is in THIRD_PARTY_NOTICES.md`);
+    }
+  }
+  for (const name of ['umhlanga_sunrise', 'shanghai_bund']) assert.ok(notices.includes(`\`${name}.hdr\``), `${name}.hdr credited`);
+  assert.equal(ENVIRONMENTS['golden-hour-coast'].sky.hdri, 'umhlanga_sunrise');
+  assert.equal(ENVIRONMENTS['night-city-rain'].sky.hdri, 'shanghai_bund');
+});
+
+test('an HDRI sky turns so its sun comes from the key light', () => {
+  for (const [slug, e] of Object.entries(ENVIRONMENTS).filter(([, x]) => x.sky.hdri)) {
+    // three.js turns the sky like an object about Y: a direction at angle atan2(z, x) moves to angle - rotation.
+    const sun = 2 * Math.PI * (e.sky.sunU - 0.5) - THREE.MathUtils.degToRad(skyRotation(e));
+    const az = THREE.MathUtils.degToRad(e.light.sun.azimuth);
+    const key = Math.atan2(Math.cos(az), Math.sin(az)); // studio.js key light position
+    assert.ok(Math.abs(Math.atan2(Math.sin(sun - key), Math.cos(sun - key))) < 1e-9, slug);
+  }
+});
+
+test('Night City rain: the same streaks in the app and in Blender', () => {
+  const { rain } = ENVIRONMENTS['night-city-rain'];
+  const drops = rainDrops(rain);
+  assert.equal(drops.length, rain.drops);
+  assert.deepEqual(rainDrops(rain), drops, 'fixed seed');
+  for (const [x, y, z] of drops) assert.ok(Math.abs(x) <= rain.box[0] / 2 && y >= 0 && y <= rain.box[1] && Math.abs(z) <= rain.box[2] / 2);
+  // render/blender_turntable.py rain_drops, run on its own (no Blender here): identical numbers.
+  const py = readFileSync(new URL('../render/blender_turntable.py', import.meta.url), 'utf8').match(/^def rain_drops[\s\S]*?\n(?=\S)/m)[0];
+  let out;
+  try { out = execFileSync('python', ['-c', `import json\n${py}\nprint(json.dumps(rain_drops(json.loads('${JSON.stringify(rain)}'))[:50]))`], { encoding: 'utf8' }); } catch { return; } // no Python: skip the cross-check
+  JSON.parse(out).forEach((d, i) => d.forEach((v, k) => assert.ok(Math.abs(v - drops[i][k]) < 1e-12, `drop ${i}`)));
+});
+
+test('a place scales to the model: a car by its length, a person by their height', () => {
+  assert.equal(envScale({ x: 1.9, y: 1.3, z: 4.6 }, 'car'), 1);
+  assert.equal(envScale({ x: 0.6, y: 1.8, z: 0.3 }, 'humanoid'), 1);
+  assert.ok(Math.abs(envScale({ x: 1.5, y: 4.6, z: 0.8 }, 'humanoid') - 4.6 / 1.8) < 1e-9);
+  assert.equal(envScale({ x: 0.1, y: 0.1, z: 0.1 }, 'car'), 0.25);
+  assert.equal(envScale(null), 1);
 });

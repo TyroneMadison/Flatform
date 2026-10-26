@@ -197,10 +197,6 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16
 .sg-bar.l { left: 7%; } .sg-bar.r { right: 7%; }
 .sg-floor { position: absolute; left: 0; right: 0; bottom: 0; height: 34%; background: linear-gradient(#0c0b0a, #030303 70%); }
 .sg-ring { position: absolute; left: 14%; right: 14%; bottom: 12%; height: 30%; border-radius: 50%; border: 1px solid var(--accent); box-shadow: 0 0 6px 1px var(--glow); }
-.s-show { background: #08080a; }
-.s-show .sg-panel { left: 12%; right: 12%; top: -6%; height: 12%; opacity: .7; }
-.s-show .sg-floor { background: linear-gradient(#0e0d0d, #050505 70%); }
-.s-show .sg-ring { border-color: #f2b56b; box-shadow: 0 0 4px rgba(242, 181, 107, .6); }
 .s-clear .checker, .checker { position: absolute; inset: 0; background: conic-gradient(#d9dce1 25%, #fff 0 50%, #d9dce1 0 75%, #fff 0) 0 0 / 10px 10px; }
 .s-cyc { background: radial-gradient(ellipse at 50% 30%, #fff, #e9ebee 60%, #d6d9de); }
 .sc-shadow { position: absolute; left: 26%; right: 26%; bottom: 20%; height: 12%; background: radial-gradient(ellipse, rgba(0, 0, 0, .22), transparent 70%); }

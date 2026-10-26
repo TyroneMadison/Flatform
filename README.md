@@ -128,8 +128,8 @@ npm run dist     # build the installer for this OS into dist/
 Flatform Test: double-click `Launch-Flatform-Test.cmd` (or run `electron . --flatform-test`). It is a separate app
 (name Flatform Test, its own app id, data in `test-app/data`, update checks off) with mock Tripo, 3D AI Studio and
 Blender, seeded with sample models, photos and every room, and a Test screen with the v3 checklist. Delete
-`test-app/data` to start it fresh. `test-app/make-samples.py` and `test-app/make-room-thumbs.mjs` rebuild its
-samples and the room thumbnails with a real Blender.
+`test-app/data` to start it fresh. `test-app/make-samples.py` rebuilds its samples with a
+real Blender; `npx electron test-app/make-env-thumbs.mjs` re-renders the scene thumbnails in the app's own renderer.
 
 Releases: push a tag like `v0.4.0`. GitHub Actions builds Windows and Mac and attaches them to a draft release.
 

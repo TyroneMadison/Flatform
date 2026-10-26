@@ -189,7 +189,7 @@ function draw() {
     if (studio.tracing && !studio.pt?.done) { // progressive path tracing: one sample per frame until done
       $('#hudLook', root).textContent = `Path traced · ${studio.samples} samples`;
       draw();
-    }
+    } else if (studio.animating) draw(); // rain keeps falling
   });
   renderHud();
 }
@@ -301,10 +301,8 @@ function renderTimeline() {
 function renderScenes() {
   const art = {
     ring: '<div class="stage s-ring"><div class="sg-wall"></div><div class="sg-panel"></div><div class="sg-bar l"></div><div class="sg-bar r"></div><div class="sg-floor"></div><div class="sg-ring"></div></div>',
-    showroom: '<div class="stage s-show"><div class="sg-panel"></div><div class="sg-bar l"></div><div class="sg-bar r"></div><div class="sg-floor"></div><div class="sg-ring"></div></div>',
     transparent: '<div class="stage s-clear"><div class="checker"></div><div class="sc-shadow"></div></div>',
     cyclorama: '<div class="stage s-cyc"><div class="sc-shadow"></div></div>',
-    'soft-studio': '<div class="stage s-cyc" style="filter:brightness(.35)"><div class="sc-shadow"></div></div>',
     miami: '<div class="stage s-miami"><div class="sm-sky"></div><div class="sm-city"></div><div class="sm-road"></div><div class="sm-neon"></div></div>',
     custom: '<div class="stage s-hdri"></div>',
   };
@@ -314,9 +312,9 @@ function renderScenes() {
     const photo = file && /\.(jpe?g|png)$/i.test(file) ? `<img class="thumb" src="/backdrops/${encodeURIComponent(file)}" alt="">` : '';
     const note = (key === 'miami' || key === 'custom') && file ? `${file.endsWith('.hdr') || file.endsWith('.exr') ? 'HDRI' : 'Backdrop'} added · click again to replace` : p.note;
     const needs = (key === 'miami' || key === 'custom') && !file;
-    const thumb = p.env && !art[key] ? `<div class="stage"><img class="thumb" src="${p.thumb}" alt="" onerror="this.remove()"></div>` : '';
-    return `<button class="scn${key === 'showroom' ? ' pinned' : ''}" type="button" data-preset="${key}" aria-pressed="${scene.preset === key}">
-      <div class="scn-th">${thumb || (photo ? `<div class="stage">${photo}</div>` : art[key])}${needs ? `<div class="up">${icon('upload', 18)}</div>` : ''}${key === 'showroom' ? '<span class="pin">Default</span>' : ''}</div>
+    const thumb = p.env ? `<div class="stage"><img class="thumb" src="${p.thumb}" alt="" onerror="this.remove()"></div>` : '';
+    return `<button class="scn${key === 'white-cyc-studio' ? ' pinned' : ''}" type="button" data-preset="${key}" aria-pressed="${scene.preset === key}">
+      <div class="scn-th">${thumb || (photo ? `<div class="stage">${photo}</div>` : art[key])}${needs ? `<div class="up">${icon('upload', 18)}</div>` : ''}${key === 'white-cyc-studio' ? '<span class="pin">Default</span>' : ''}</div>
       <div class="scn-t"><b>${p.label}</b><span>${esc(note)}</span></div></button>`;
   }).join('');
   const box = $('#scenes', root);

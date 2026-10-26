@@ -50,6 +50,11 @@ test('kind on create and PATCH; cars are never rigged; a humanoid rig is a new v
     assert.equal(refused.status, 409);
     assert.match(refused.body.error, /cars are never rigged/);
 
+    if (!(await json('/api/blender')).body.found) { // no Blender on this computer: a plain answer, nothing runs
+      const none = await json(`/api/models/${hero.id}/rig`, 'POST');
+      assert.equal(none.status, 409);
+      assert.match(none.body.error, /Blender, which was not found\. Install Blender/);
+    }
     assert.equal((await json('/api/settings', 'POST', { blenderPath: FAKE_BLENDER })).status, 200);
     assert.equal((await json(`/api/models/${hero.id}/rig`, 'POST')).status, 202);
     let job;

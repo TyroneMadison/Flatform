@@ -26,7 +26,7 @@ import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 import { normalizeDecals, decalMaterialParams, decalUrl } from './decals.js';
 import { mergeLook, effectsFor, hdriUrl, lookNeedsRebuild, hdriGround } from './look.js';
 import { buildEnvironment } from './env3d.js';
-import { envScale } from './environments.js';
+import { envScale, skyRotation } from './environments.js';
 import { Post, PathTraced, TONE } from './post.js';
 import { applyPaint, regroup, pickPiece, listPieces } from './paint.js';
 import { applyMotion } from './rig.js';
@@ -1103,6 +1103,7 @@ export class Studio {
     this.floor = null;
     this.catcher = null;
     this.envGroup = null;
+    this.rain = null;
     this.hideDome();
     this.skyTarget?.dispose();
     this.skyTarget = null;
@@ -1183,6 +1184,7 @@ export class Studio {
     const group = await buildEnvironment(e, { loadGlb: async (file) => (await new GLTFLoader().loadAsync(`/env/${encodeURIComponent(file)}`)).scene });
     if (build !== this.builds) { disposeTree(group); return; }
     this.envGroup = add(group);
+    this.rain = group.getObjectByName('rain') || null; // Night City Rain: falls while the view draws (animating)
     const { light } = e;
     add(new THREE.HemisphereLight(...light.sky));
     this.catcher = add(new THREE.Mesh(new THREE.PlaneGeometry(40, 40).rotateX(-Math.PI / 2), new THREE.ShadowMaterial({ opacity: light.shadow * 0.45, depthWrite: false })));
@@ -1220,8 +1222,8 @@ export class Studio {
         if (build !== this.builds) return;
         this.scene.background = tex;
         this.scene.environment = env;
-        this.scene.backgroundRotation.set(0, deg(sky.rotation || 0), 0);
-        this.scene.environmentRotation.set(0, deg(sky.rotation || 0), 0);
+        this.scene.backgroundRotation.set(0, deg(skyRotation(e)), 0);
+        this.scene.environmentRotation.set(0, deg(skyRotation(e)), 0);
         this.scene.backgroundIntensity = sky.intensity ?? 1;
       } catch { this.scene.background = new THREE.Color(e.light.sky[0]); this.message = `Sky ${sky.hdri}.hdr is missing`; }
     } else if (sky.sun) {
@@ -1350,7 +1352,11 @@ export class Studio {
     });
   }
 
+  // True while the scene moves on its own (rain), so views keep drawing frames.
+  get animating() { return Boolean(this.rain); }
+
   render() {
+    this.rain?.userData.update(performance.now() / 1000);
     if (this.model) this.shadow.update(this.renderer, this.scene, this.state.shadow);
     this.shadow.plane.visible = Boolean(this.model);
     if (this.tracing && this.pt?.tracer && !this.ptDirty && !this.ptBusy) { if (this.pt.renderSample() || this.pt.done) return; }

@@ -495,7 +495,7 @@ def apply_look(look, meshes):
         env = nt.nodes.new("ShaderNodeTexEnvironment")
         env.image = bpy.data.images.load(hdri["path"])
         mapping = nt.nodes.new("ShaderNodeMapping")
-        mapping.inputs["Rotation"].default_value = (0, 0, math.radians(hdri.get("rotation", 0)))
+        mapping.inputs["Rotation"].default_value = (0, 0, -math.radians(hdri.get("rotation", 0)))  # minus: Mapping turns the lookup
         coord = nt.nodes.new("ShaderNodeTexCoord")
         nt.links.new(coord.outputs["Generated"], mapping.inputs["Vector"])
         nt.links.new(mapping.outputs["Vector"], env.inputs["Vector"])
@@ -630,8 +630,8 @@ def env_world(sky, reflect):
     if sky.get("path") and os.path.exists(sky["path"]):
         env = nt.nodes.new("ShaderNodeTexEnvironment")
         env.image = bpy.data.images.load(sky["path"])
-        mapping = nt.nodes.new("ShaderNodeMapping")
-        mapping.inputs["Rotation"].default_value = (0, 0, math.radians(sky.get("rotation", 0)))
+        mapping = nt.nodes.new("ShaderNodeMapping")  # turns the lookup, so minus three.js's turn (skyRotation)
+        mapping.inputs["Rotation"].default_value = (0, 0, -math.radians(sky.get("rotation", 0)))
         coord = nt.nodes.new("ShaderNodeTexCoord")
         nt.links.new(coord.outputs["Generated"], mapping.inputs["Vector"])
         nt.links.new(mapping.outputs["Vector"], env.inputs["Vector"])
@@ -668,6 +668,56 @@ def env_world(sky, reflect):
         nt.links.new(bg.outputs["Background"], mix.inputs[1])
         nt.links.new(seen.outputs["Background"], mix.inputs[2])
         nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
+
+
+def rain_drops(rain):
+    """environments.js rainDrops: the same streak starts from the same mulberry32 seed (32-bit integer maths)."""
+    a = 0x9E3779B9
+    m = 0xFFFFFFFF
+
+    def imul(x, y):
+        return (x * y) & m
+
+    def rand():
+        nonlocal a
+        a = (a + 0x6D2B79F5) & m
+        t = imul(a ^ (a >> 15), 1 | a)
+        t = ((t + imul(t ^ (t >> 7), 61 | t)) & m) ^ t
+        return ((t ^ (t >> 14)) & m) / 4294967296
+
+    w, h, d = rain["box"]
+    return [[(rand() - 0.5) * w, rand() * h, (rand() - 0.5) * d] for _ in range(rain["drops"])]
+
+
+def build_rain(rain):
+    """env3d.js buildRain, frozen at t = 0: every streak a thin crossed pair of quads, faintly lit and see-through."""
+    verts, faces, half, n = [], [], 0.004, 0
+    for x, y, z in rain_drops(rain):
+        for dx, dz in ((half, 0), (0, half)):
+            for py in (y, y + rain["length"]):
+                verts += [bl((x - dx, py, z - dz)), bl((x + dx, py, z + dz))]
+            faces.append((n, n + 1, n + 3, n + 2))
+            n += 4
+    mesh = bpy.data.meshes.new("rain")
+    mesh.from_pydata(verts, [], faces)
+    obj = bpy.data.objects.new("rain", mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    mat = bpy.data.materials.new("rain")
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+    em = nt.nodes.new("ShaderNodeEmission")
+    em.inputs["Color"].default_value = (*hex_linear(rain["color"]), 1)
+    em.inputs["Strength"].default_value = 1.5
+    clear = nt.nodes.new("ShaderNodeBsdfTransparent")
+    mix = nt.nodes.new("ShaderNodeMixShader")
+    mix.inputs["Fac"].default_value = rain["opacity"]
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    nt.links.new(clear.outputs["BSDF"], mix.inputs[1])
+    nt.links.new(em.outputs["Emission"], mix.inputs[2])
+    nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
+    obj.data.materials.append(mat)
+    env_object("rain", obj)
 
 
 def build_environment(env):
@@ -714,6 +764,8 @@ def build_environment(env):
             obj = bpy.context.active_object
         obj.data.materials.append(mats[p["mat"]])
         env_object(f"{p['mat']} {i}", obj, p.get("rot"))
+    if env.get("rain"):
+        build_rain(env["rain"])
     for i, l in enumerate(env["lights"]):
         w, h = l["area"]
         a = light("AREA", f"env light {i}", bl(l["at"]), l["power"] * w * h * AREA_W, size=(w, h), target=bl(l["aim"]), color=hex_linear(l["color"]))
@@ -738,7 +790,7 @@ def grounded_dome(path, height, radius, rotation, strength):
     nt.nodes.clear()
     coord = nt.nodes.new("ShaderNodeTexCoord")
     mapping = nt.nodes.new("ShaderNodeMapping")  # the same turn as the world HDRI in apply_look
-    mapping.inputs["Rotation"].default_value = (0, 0, math.radians(rotation))
+    mapping.inputs["Rotation"].default_value = (0, 0, -math.radians(rotation))
     env = nt.nodes.new("ShaderNodeTexEnvironment")
     env.image = bpy.data.images.load(path)
     em = nt.nodes.new("ShaderNodeEmission")

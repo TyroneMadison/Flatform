@@ -1,6 +1,6 @@
 // Compose, the Pose and motion group: model type (auto or set), car stance or humanoid pose, part tags for wheels,
 // doors, hood and trunk, and the animation preview (play, pause, speed, loop, scrub). Saved in scene.motion.
-import { $, esc, api, send, toast } from '../app.js';
+import { $, esc, api, send, toast, state } from '../app.js';
 import { MODEL_TYPES, STANCES, STANCE_DEFAULT, STANCE_LIMITS, applyStance, availableStances, POSES, BONES, clipsFor, TAGS, deserializePose } from '../lib/motion.js';
 import { tagsFor, modelInfo } from '../lib/rig.js';
 import { listPieces } from '../lib/paint.js';
@@ -84,8 +84,10 @@ export function renderMotionGroup() {
 let rigging = null; // model id being rigged
 function rigPanel() {
   const busy = rigging === ctx.model()?.id;
+  const noBlender = state.blender && !state.blender.found; // checked at startup and in Settings (/api/blender)
   return `<div class="warnbox" role="alert"><b>No skeleton</b><p>This model has no bones, so poses and humanoid animations can't move it. Rig it first.</p></div>
-    <button class="btn pri" type="button" data-mo-act="rig" ${busy ? 'disabled' : ''}>${busy ? 'Rigging in Blender…' : 'Auto-rig (free, in Blender)'}</button>
+    ${noBlender ? '<p class="fine" id="noBlender"><b>Blender is not installed on this computer.</b> Auto-rig runs in Blender (free from blender.org, version 4 or later). Install it, or locate it in Settings, then come back here.</p>' : ''}
+    <button class="btn pri" type="button" data-mo-act="rig" ${busy || noBlender ? 'disabled' : ''}>${busy ? 'Rigging in Blender…' : 'Auto-rig (free, in Blender)'}</button>
     <p class="fine">Builds a skeleton with Mixamo bone names, binds it with automatic weights and saves it as a new version. Works best on a model standing upright, facing the camera, arms out or down.</p>`;
 }
 async function rig() {
