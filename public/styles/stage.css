@@ -276,7 +276,7 @@ body:has(#queueTray:not([hidden])) .icard { max-height: calc(50% - 40px); }
 .setup.v3 .su-center .su-left { min-height: 0; }
 .setup.v3 .sh { margin-bottom: 2px; }
 
-/* ---- 1.1.1 polish ---- */
+/* ---- 1.2 polish ---- */
 /* Help text: the small grey lines hide unless Settings › Show help text is on. .keep marks a line with live info. */
 body.hide-descriptions :is(p.fine, p.sub, span.sub, .tg small, .help):not(.keep) { display: none; }
 /* One button style across the side panel: same size, weight and font, labels wrap instead of overflowing. */

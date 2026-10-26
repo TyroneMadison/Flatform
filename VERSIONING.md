@@ -4,9 +4,9 @@ Flatform's version is `package.json` → `version`. Everything else (the title b
 check, the installer name) reads it from there.
 
 - Releases step by 0.1: 1.1, 1.2 … 1.9, then 2.0, 2.1 … There is no 1.10.
-- Written as semver `X.Y.0` (`1.1.0`). The app shows it short: "Version 1.1".
-- A quick fix to a release, if ever needed, is `X.Y.1`, `X.Y.2` …; it shows in full ("1.1.1").
-- Each release gets a tag `vX.Y.0` (`v1.1.0`). Pushing the tag builds Windows and Mac into a draft GitHub release;
+- Written as semver `X.Y.0` (`1.2.0`). The app shows it short: "Version 1.2".
+- There are no patch numbers: every release, fixes included, is the next `X.Y.0`.
+- Each release gets a tag `vX.Y.0` (`v1.2.0`). Pushing the tag builds Windows and Mac into a draft GitHub release;
   the build stops if the tag and `package.json` disagree.
 - The Windows installer is `Flatform-Setup-X.Y.0.exe`.
 - Every release gets an entry at the top of [CHANGELOG.md](CHANGELOG.md).

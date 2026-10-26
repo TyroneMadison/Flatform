@@ -2,26 +2,38 @@
 
 Newest first. Numbering: [VERSIONING.md](VERSIONING.md).
 
-## Unreleased
+## 1.2 (1.2.0)
 
-- **Same rooms in every workspace.** Car and Warframe pick from one room list (environments.js `ROOMS`), with the same
-  pictures; the old flat car scenes (ring studio, plain white room, Miami, your backdrop) are gone, and a scene saved
-  in one opens in its closest room (`roomFor`), in the app and in Blender. Every room is checked for a real 4.6 m car:
-  on the floor, turning clear of everything, room for its roof and through the garage door.
-- **A picture of every room.** The World picker shows each place as a picture card with its name under it,
-  rendered from the real 3D room at its own camera (320 x 200 WebP in `public/img/rooms/`). Hover a card to read
-  what the place is like. Night City's picture uses its softer glow, so the model is not washed out.
-- **Auto-rig that holds together.** Add joints now finds the arms, legs, head and joints from the model's own shape
-  (which way it faces, slices through the body, paths along each limb), so armoured Tripo models no longer tear or
-  smear when posed. Separate armour pieces move whole with the limb they sit on; bigger pieces bend only with their
-  own limb. If the limbs can't be found, Flatform says so plainly and lets you click the chin, groin, elbows, wrists,
-  knees and ankles instead.
-- **Rigging runs on its own.** The model on screen stays as it is until the version with joints is ready and checked,
-  then swaps in. Renders started meanwhile wait in the queue ("Rigging…" in the title bar).
-- **Undo covers poses and joints.** Ctrl+Z, the Undo buttons and the Undo on every note share one history that now
-  includes the model version: undo takes back hand-posed bones, moments, adding joints and Reset scene.
-- **Reset scene goes back to the model before joints.** The versions with joints stay under Versions.
-- **Test rig fix.** On slow computers the Test rig could open to a black view; it now always starts on its feet.
+- **Night City you can see the model in.** The glow is turned way down and the signs and lamps are dimmer, so a
+  shiny spot on the wet street no longer washes out the whole picture.
+- **A tidier tools panel.** Start over is three matching buttons; every button in the panel looks the same; long
+  labels wrap instead of being cut off. The export line says plainly where files go ("Saves to: folder > tennogen >
+  Body_d.png and 5 more"), the 3D file is named after your model, and there is an Open folder button.
+- **Plain words everywhere.** Every screen, message and error is in everyday words. The small grey help lines are
+  hidden to keep things calm; Settings > Look > Show help text brings them back. Hover any control for a short tip.
+- **Tripo detail that just works.** Low detail models go from 500 to 10,000 pieces, starting at 5,000. Saved values
+  are kept inside what Tripo allows, Ready to build warns you when a choice limits the detail, and if Tripo says no
+  you get one plain sentence with Details if you want them.
+- **Undo note.** After a change a small note under the top bar ("Pose changed · Undo") lets you take it back; it
+  fades after 4 seconds.
+- **Free look, and the colour wheel works.** A Free look button lets you spin, zoom and move round the scene; Reset
+  view (or F) brings it back. Picking a colour now really colours the model, in the app and in Blender renders.
+- **Auto-rig that holds together.** Add joints finds the arms, legs and head from the model's own shape, so armoured
+  Tripo models no longer tear or smear when posed. Armour plates move whole with the limb they sit on. If the limbs
+  can't be found, Flatform says so and lets you click the chin, groin, elbows, wrists, knees and ankles instead.
+  Rigging runs on its own: the model on screen stays as it is until the version with joints is ready and checked.
+- **Reset scene goes back to version 1**, the model from before joints. The versions with joints stay under Versions.
+- **Undo you can trust.** Ctrl+Z, the Undo buttons and the undo note share one history that covers poses, moments,
+  adding joints and Reset scene.
+- **Test rig looks the part.** A Look button picks the place, light, time of day, fog, rain and glow, and the Test
+  rig now looks like your main scene, with Fast or High picture. Key caps in the corner show the controls, a short
+  How to play card helps the first time, and Photo (or P) pauses for a polished, true-to-life still. It no longer
+  opens to a black view on slow computers.
+- **A picture of every room.** The World picker shows each place as a picture card; hover a card to read about it.
+- **Same rooms for cars and Warframes.** Both pick from one list of rooms, each checked to fit a real car. Scenes
+  saved with an old car backdrop open in the closest room.
+- **Time stamp on every render.** Pictures and videos get the start time (New York time) in the bottom-right corner,
+  in their file names and in History. Turn it off under Render for clean pictures.
 
 ## 1.1 (1.1.0)
 
