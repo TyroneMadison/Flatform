@@ -15,7 +15,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { findBlender, blenderVersion, blenderPose } from '../blender.mjs';
 import { ENVIRONMENTS, blenderEnvironment } from '../public/lib/environments.js';
-import { envCamera } from '../public/lib/pipeline.js';
+import { envCamera, stillName } from '../public/lib/pipeline.js';
+import { stampFile } from '../public/lib/stamp.js';
 import { applyHips } from '../public/lib/handpose.js';
 import { decode } from '../png.mjs';
 import { blenderMaterial, deserializeMaterial, resolveColors } from '../public/lib/tenno.js';
@@ -202,12 +203,13 @@ if (!BIN) {
       };
       const still = async (m, scene) => {
         if (scene) assert.equal((await j(`/api/models/${m.id}`, 'PATCH', { scene })).status, 200);
-        assert.equal((await j(`/api/renders/${m.id}/start`, 'POST', { looks: ['studio'] })).status, 200);
+        const started = await j(`/api/renders/${m.id}/start`, 'POST', { looks: ['studio'] });
+        assert.equal(started.status, 200);
         assert.equal((await j(`/api/renders/${m.id}/blender`, 'POST', { looks: ['studio'], frames: 0, still: 30 })).status, 202);
         let job;
         for (let i = 0; i < 1200 && (!job || job.status === 'running'); i++) { await new Promise((r) => setTimeout(r, 250)); job = (await j(`/api/renders/${m.id}/blender`)).body; }
         assert.equal(job.status, 'done', job.error);
-        const file = path.join(handoff, m.slug, 'stills', `${m.slug}_studio_030.png`);
+        const file = path.join(handoff, m.slug, 'stills', stillName(m.slug, 'studio', 30, stampFile(started.body.renders.at))); // named with the render time
         assert.ok(existsSync(file), `no still for ${m.name}`);
         outputs.push(file);
         return file;
