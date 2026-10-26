@@ -152,7 +152,8 @@ export function sheetSize(look, turn, width) {
 export const sheetName = (look, turn, width, ext = 'webp') => `${look}-${turn}-${width}.${ext}`;
 export const spriteJsonName = (look, turn) => `${look}-sprite-${turn}.json`;
 export const posterName = (look, ext = 'webp') => `${look}-poster.${ext}`;
-export const stillName = (slug, look, angle) => `${slug}_${look}_${pad3(((Math.round(angle) % 360) + 360) % 360)}.png`;
+// when: the render's time for the file name (stamp.js stampFile), so a new render never writes over an older one.
+export const stillName = (slug, look, angle, when = '') => `${slug}_${look}_${pad3(((Math.round(angle) % 360) + 360) % 360)}${when ? `_${when}` : ''}.png`;
 // Every sheet of a turn: WebP at 512 and 256, plus a PNG of the 512 for the 360.
 export const sheetFiles = (look, turn) => [
   ...WEB_WIDTHS.map((width) => ({ width, type: 'image/webp', name: sheetName(look, turn, width) })),
@@ -185,7 +186,7 @@ export function plannedFiles({ slug, looks, turns, stills = [], models = [] }) {
     }
     if (turns.length) files.push(`web/${posterName(look)}`, `web/${posterName(look, 'png')}`);
   }
-  files.push(...stills.map((s) => `stills/${stillName(slug, s.look, s.angle)}`));
+  files.push(...stills.map((s) => `stills/${stillName(slug, s.look, s.angle, s.when)}`));
   files.push(...models.map((m) => `models/${m}`));
   if (turns.length) files.push('spin-viewer.js', 'viewer.html');
   return [...files, 'HANDOFF.md'];

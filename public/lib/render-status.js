@@ -53,9 +53,9 @@ export const lookName = (l) => ({ showroom: 'Showroom', studio: 'My scene', tran
 
 // The one file a finished render is best shown by, relative to its handoff folder: the drag-to-spin viewer for a
 // turntable, else the still, else the model file.
-export function resultFile({ slug, still, t360, t180, looks = [], yaw = 0 }) {
+export function resultFile({ slug, still, t360, t180, looks = [], yaw = 0, when = '' }) {
   if (t360 || t180) return 'viewer.html';
-  if (still && looks.length) return `stills/${stillName(slug, looks[0], yaw)}`;
+  if (still && looks.length) return `stills/${stillName(slug, looks[0], yaw, when)}`;
   return `${slug}.glb`;
 }
 

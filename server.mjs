@@ -44,6 +44,7 @@ const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
 import { ENHANCE, enhanceBlock } from './enhance.mjs';
 import { createShares, cleanShareUrl } from './share.mjs';
 import { createRenderHistory } from './render-history.mjs';
+import { stampText, stampFile } from './public/lib/stamp.js';
 import { planOvernight, morningSummary, awakeGuard, MAX_TRIES } from './overnight.mjs';
 import { runPlugin, pluginStore } from './plugins.mjs';
 import { DEFAULTS as BACKUP_DEFAULTS, checkBackup, runBackup } from './backup.mjs';
@@ -1120,7 +1121,7 @@ export async function startServer({
   }
 
   // Version history (render-history.mjs): the render's first picture and the settings that made it.
-  const noteVersion = (m, picture, kind) => history.add(m.id, { picture, pass: m.renders?.at, kind,
+  const noteVersion = (m, picture, kind) => history.add(m.id, { picture, pass: m.renders?.at, kind, stamp: stampText(m.renders?.at),
     settings: { scene: m.scene || {}, lighting: settings.lighting, glass: settings.glass } }).catch((e) => console.error(`Version history: ${e.message}`));
 
   // ---- Optional Blender renderer ----
@@ -1159,7 +1160,8 @@ export async function startServer({
   }
 
   // effect: a Render idea's exploded parts or clay / blueprint (render-types.js). paint: Every colour's repainted body.
-  function startBlender(m, { looks = [], frames = FRAMES, still, effect, paint: paintOverride }) {
+  // stamp: burn the render's start time into every picture (the Render step's Time stamp, on unless turned off).
+  function startBlender(m, { looks = [], frames = FRAMES, still, effect, paint: paintOverride, stamp = true }) {
     const bin = findBlender();
     if (!bin) throw new HttpError(409, 'Blender not found. Install Blender 4.x or locate it in Settings.');
     if (!m.renders?.outDir) throw new HttpError(409, 'Start the render first');
@@ -1201,6 +1203,8 @@ export async function startServer({
     if (Object.keys(specs).length) { try { where = glbPieces(readFileSync(path.join(MODELS, m.id, v.glb))); } catch { /* no file: keys only */ } }
     const materials = locatePieces(specs, where);
     const extrasArg = extrasOf(m);
+    const stampArg = stamp !== false && stampText(m.renders.at) ? ['--stamp', stampText(m.renders.at)] : []; // one stamp for every look and frame
+    const stillOut = (look) => path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still, stampFile(m.renders.at)));
     const job = { status: 'running', looks, look: looks[0], frame: 0, frames, error: null };
     jobs.set(m.id, job);
     (async () => {
@@ -1216,12 +1220,12 @@ export async function startServer({
           ...(existsSync(sceneFile) ? ['--scene', sceneFile] : []),
           '--rig', JSON.stringify({ lighting: settings.lighting, glass: settings.glass }),
           ...lookArg, '--materials', materialsFile, ...poseArg, ...effectArg, ...extrasArg, '--kind', m.kind === 'humanoid' ? 'humanoid' : 'car',
-          ...envArg(look),
-          ...(still !== undefined ? ['--still', String(still), '--still-out', path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still))] : []),
+          ...envArg(look), ...stampArg,
+          ...(still !== undefined ? ['--still', String(still), '--still-out', stillOut(look)] : []),
         ]);
       }
       job.status = 'done';
-      const first = still !== undefined ? path.join(m.renders.outDir, 'stills', stillName(m.slug, looks[0], still))
+      const first = still !== undefined ? stillOut(looks[0])
         : path.join(m.renders.outDir, 'frames', looks[0], `${m.slug}_000.png`);
       if (existsSync(first)) await noteVersion(m, first, still !== undefined ? 'Picture' : 'Spin video');
     })().catch((e) => {

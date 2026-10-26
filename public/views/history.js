@@ -54,7 +54,7 @@ function draw() {
     <div class="hv-chips" role="radiogroup" aria-label="Version to look at">${[...list].reverse().map((v) => `<button class="chip" type="button" role="radio" data-hv="${v.n}" aria-checked="${v.n === after}" title="Look at version ${v.n}">Version ${v.n} · ${esc(when(v.at))}</button>`).join('')}</div>
     <p class="sub keep">${!b ? 'This is the only render so far. Render again to compare.' : changes ? `Changed since version ${b.n}: ${esc(changes)}.` : `Same settings as version ${b.n}.`}</p>
     <div class="hv-act"><button class="btn pri" type="button" data-hv-use="${a.n}" title="Put the place, colors, camera and light back as they were">Use version ${a.n}</button>
-      <p class="fine keep">${esc(a.kind || 'Render')} made ${esc(new Date(a.at).toLocaleString())}.</p></div>
+      <p class="fine keep" title="When this render started, New York time. The same time is on the picture and in its file name.">${esc(a.kind || 'Render')} made ${esc(a.stamp || new Date(a.at).toLocaleString())}.</p></div>
     ${list.length > 2 && b ? `<details class="adjust"><summary>Compare with another version</summary><div class="field"><label for="hvBefore">Before</label>
       <select class="inp" id="hvBefore" title="Pick the older version to compare with">${list.filter((v) => v.n !== after).map((v) => `<option value="${v.n}" ${v.n === before ? 'selected' : ''}>Version ${v.n} · ${esc(when(v.at))}</option>`).join('')}</select></div></details>` : ''}
   </div></section>`;

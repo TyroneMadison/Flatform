@@ -3,6 +3,7 @@
 // is uploaded. Also shows the batch variant queue (batch.mjs) with retry and cancel.
 import { $, esc, api, send, toast, native } from '../app.js';
 import { RESOLUTIONS, FORMATS, QUALITIES } from '../lib/turntable.js';
+import { stampFile } from '../lib/stamp.js';
 
 let root, model, ff = null, queue = null, track = (_m, _l, fn) => fn();
 const opts = { look: 'studio', format: 'mp4', resolution: '1080p', fps: 30, quality: 'good', seconds: 0, outDir: '' };
@@ -54,7 +55,7 @@ async function onClick(e) {
     }
     if (act === 'export') {
       t.disabled = true; t.textContent = 'Making video…';
-      const r = await track(model, `Video · ${LOOK_LABEL[opts.look]} · ${opts.format.toUpperCase()}`, () => send('/api/video', 'POST', { modelId: model.id, frames: `frames/${opts.look}`, pattern: `${model.slug}_%03d.png`, name: `${model.slug}_${opts.look}`, outDir: opts.outDir, format: opts.format, resolution: opts.resolution, fps: Number(opts.fps), quality: opts.quality, seconds: Number(opts.seconds) }));
+      const r = await track(model, `Video · ${LOOK_LABEL[opts.look]} · ${opts.format.toUpperCase()}`, () => send('/api/video', 'POST', { modelId: model.id, frames: `frames/${opts.look}`, pattern: `${model.slug}_%03d.png`, name: [model.slug, opts.look, stampFile(model.renders?.at)].filter(Boolean).join('_'), outDir: opts.outDir, format: opts.format, resolution: opts.resolution, fps: Number(opts.fps), quality: opts.quality, seconds: Number(opts.seconds) }));
       toast(`Video saved: ${r.output}`, 'info', native ? [{ label: 'Show in folder', title: 'Show the video on this computer', run: () => native.showItemInFolder(r.output).catch((err) => toast(err.message)) }] : []);
     }
     if (act === 'retry') queue = await send('/api/batch/retry', 'POST', {});

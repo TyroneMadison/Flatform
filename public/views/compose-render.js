@@ -14,6 +14,7 @@ import { tennogenApplies, tennogenCard, onTennogen, onTennogenSubmit, tennogenGa
 import { makeSheets as makeSheetSet, downscale, toBlob } from '../lib/sheets.js';
 import { RENDER_TYPES, typeOf, defaultOption, planRun, cleanExtras } from '../lib/render-types.js';
 import { applyEffect, styled, poster, vertical } from '../lib/render-effects.js';
+import { stampText, stampFile, burnStamp } from '../lib/stamp.js';
 
 let root;
 let m; // the car on screen
@@ -101,7 +102,7 @@ export function showRenderIntent(intent) {
 }
 
 function freshOpts() {
-  const o = { still: false, t360: true, t180: true, models: false, formats: new Set(), ...Object.fromEntries(LOOK_KEYS.map((l) => [l, P.DEFAULT_LOOKS.includes(l)])) };
+  const o = { still: false, t360: true, t180: true, models: false, stamp: true, formats: new Set(), ...Object.fromEntries(LOOK_KEYS.map((l) => [l, P.DEFAULT_LOOKS.includes(l)])) };
   if (state.settings?.alsoTransparent === false && !running()) o.transparent = false;
   return o;
 }
@@ -191,7 +192,9 @@ function renderLeft() {
         <button class="chip" type="button" role="radio" data-renderer="blender" aria-checked="${opts.renderer === 'blender'}" ${!blenderReady() ? 'disabled' : ''} title="${blenderReady() ? 'Renders in Blender with Cycles. Slower, more real light.' : 'Needs Blender. Show where it is in Settings.'}">Best (Blender)</button>
       </div>
       <p class="fine keep">${blenderReady() ? `Blender: ${esc(state.blender.path)}` : 'Blender not found. Quick works fine. For Best, install Blender 4 or show where it is in Settings.'}</p>
-    </div>`;
+    </div>
+    <h2 class="label">Time stamp</h2>
+    ${card('stamp', 'Time stamp', 'Date and time, small, in the bottom-right corner', 'Writes when this render started (New York time) small in the bottom-right corner of every picture and video frame. Turn it off for clean pictures. The time is always in the file name.')}`;
   const box = $('#left', root);
   if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
 }
@@ -555,6 +558,8 @@ async function start(task) {
     const formats = o.models && providerOf(model) === 'tripo' ? [...o.formats] : [];
     const started = await send(`/api/renders/${model.id}/start`, 'POST', { looks: turns.length || o.still ? looks : [], formats });
     const slug = started.slug;
+    // The render's start time: burned into every picture (unless Time stamp is off) and put in the file names.
+    Object.assign(job, { stamp: o.stamp !== false ? stampText(started.renders.at) : '', when: stampFile(started.renders.at) });
     const frames = turns.length ? Math.max(...turns.map(P.turnFrames)) : 0;
     const manifests = {};
     if (turns.length || o.still) {
@@ -568,12 +573,12 @@ async function start(task) {
       await put('spin-viewer.js', await (await fetch('/lib/spin-viewer.js')).blob());
       await put('viewer.html', new Blob([P.viewerHtml({ name: model.name, manifests })]));
     }
-    const stills = o.still ? looks.map((look) => ({ look, angle: job.yaw })) : [];
+    const stills = o.still ? looks.map((look) => ({ look, angle: job.yaw, when: job.when })) : [];
     const models = [`${slug}.glb`, ...formats.map((f) => `${slug}.${f.toLowerCase()} (when Tripo finishes converting)`)];
     await put('HANDOFF.md', new Blob([P.handoffText({ slug, name: model.name, looks: turns.length ? looks : [], turns, stills, models, renderer: job.renderer, version })]));
     upsert(await api(`/api/models/${model.id}`)); // the Library picks up the new poster and badges from this
     job.done = true;
-    Object.assign(task, { status: 'done', outDir: started.outDir, file: extra || resultFile({ slug, still: o.still, t360: o.t360, t180: o.t180, looks, yaw: job.yaw }) });
+    Object.assign(task, { status: 'done', outDir: started.outDir, file: extra || resultFile({ slug, still: o.still, t360: o.t360, t180: o.t180, looks, yaw: job.yaw, when: job.when }) });
     if (o.job) overnightMark(task, 'done');
     progress(`Saved to ${started.outDir}`, job.total, job.total);
     announce(`${model.name}: render finished`);
@@ -610,7 +615,7 @@ async function renderInApp(slug, looks, turns, frames, manifests) {
     const capture = () => {
       fg.clearRect(0, 0, width, height);
       fg.drawImage(ss > 1 ? downscale(canvas, width, height) : canvas, 0, 0);
-      return frame;
+      return burnStamp(frame, job.stamp); // the same stamp on every frame
     };
     try {
       studio.resize(width, height, ss);
@@ -652,7 +657,7 @@ async function renderInApp(slug, looks, turns, frames, manifests) {
         studio.state.turn = job.yaw;
         studio.applyYaw();
         studio.render();
-        await put(`stills/${P.stillName(slug, look, job.yaw)}`, await toBlob(capture(), 'image/png'));
+        await put(`stills/${P.stillName(slug, look, job.yaw, job.when)}`, await toBlob(capture(), 'image/png'));
         progress(`${P.LOOKS[look].label} · picture`, ++done, total);
       }
       await Promise.all(uploads);
@@ -670,7 +675,7 @@ async function renderInApp(slug, looks, turns, frames, manifests) {
 async function renderBlender(slug, looks, turns, frames, manifests) {
   const { model } = job;
   const o = job.opts;
-  await send(`/api/renders/${model.id}/blender`, 'POST', { looks, frames, ...(o.still && { still: job.yaw }), ...(o.effect && { effect: o.effect }), ...(o.paint && { paint: o.paint }) });
+  await send(`/api/renders/${model.id}/blender`, 'POST', { looks, frames, stamp: o.stamp !== false, ...(o.still && { still: job.yaw }), ...(o.effect && { effect: o.effect }), ...(o.paint && { paint: o.paint }) });
   for (;;) {
     await sleep(700);
     const b = await api(`/api/renders/${model.id}/blender`);
@@ -715,12 +720,12 @@ async function afterRender(slug, looks, turns, outDir) {
   if (o.still) {
     for (const look of looks) {
       await checkpoint();
-      let rel = `stills/${P.stillName(slug, look, job.yaw)}`;
+      let rel = `stills/${P.stillName(slug, look, job.yaw, job.when)}`;
       if (tag) { const out = named(rel, tag); await put(out, await (await fetch(src(rel))).blob()); rel = out; }
       if (o.style) {
         progress(`${P.LOOKS[look].label} · drawing it ${o.style === 'cel' ? 'as a cartoon' : 'as a painting'}`, job.total, job.total);
         const out = named(rel, o.style === 'cel' ? 'cartoon' : 'painted');
-        await put(out, await png(await styled(src(rel), o.style)));
+        await put(out, await png(burnStamp(await styled(src(rel), o.style), job.stamp))); // the filter smudges it: write it again
         rel = out;
       }
       if (o.poster != null) { const out = named(rel, 'poster'); await put(out, await png(await poster(src(rel), o.poster || job.model.name))); rel = out; }
@@ -735,12 +740,12 @@ async function afterRender(slug, looks, turns, outDir) {
       dir = `frames/${look}-phone`;
       for (let i = 0; i < frames; i++) {
         await checkpoint();
-        await put(`${dir}/${P.framePath(slug, look, i).split('/').pop()}`, await png(await vertical(src(P.framePath(slug, look, i)))));
+        await put(`${dir}/${P.framePath(slug, look, i).split('/').pop()}`, await png(burnStamp(await vertical(src(P.framePath(slug, look, i))), job.stamp))); // the crop cuts the corner off
         progress(`Cutting the tall phone version · frame ${P.pad3(i + 1)} of ${P.pad3(frames)}`, i + 1, frames);
       }
     }
     progress('Making the video', job.total, job.total);
-    const name = [slug, look, o.video, tag].filter(Boolean).join('_');
+    const name = [slug, look, o.video, tag, job.when].filter(Boolean).join('_');
     try {
       const r = await send('/api/video', 'POST', { modelId: job.model.id, frames: dir, pattern: `${slug}_%03d.png`, name, outDir, format: 'mp4', resolution: o.vertical ? 'vertical' : '1080p', fps: 24, quality: 'good', seconds: 0 });
       file = r.output.split(/[\\/]/).pop();

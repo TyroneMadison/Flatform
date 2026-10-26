@@ -91,6 +91,7 @@ def parse_args():
     # Render ideas (public/lib/render-types.js): {"explode": 0..1 of the model's size, "override": "clay" | "blueprint"}
     p.add_argument("--effect")
     p.add_argument("--extras")  # shelf items (studio.js applyExtras): [{ path, group, at: [x, z], turn }]
+    p.add_argument("--stamp")  # stamp.js stampText: the render's start time, burned bottom-right into every picture
     p.add_argument("--kind", choices=["car", "humanoid"], default="car")  # the model's kind: a humanoid is never auto-turned
     return p.parse_args(argv)
 
@@ -1168,9 +1169,37 @@ def override_materials(meshes, kind):
     print(f"FLATFORM_OVERRIDE {kind}", flush=True)
 
 
-def render_to(path):
+def burn_stamp(path, text):
+    """stamp.js burnStamp: white text with a dark outline in the bottom-right corner, same size and place."""
+    import blf
+    import imbuf
+    ib = imbuf.load(path)
+    w, h = ib.size
+    size = max(12, round(min(w, h) * 0.022))
+    pad = round(size * 0.8)
+    ring = max(1, round(size * 0.08))
+    font = 0
+    with blf.bind_imbuf(font, ib, display_name="sRGB"):
+        blf.size(font, size)
+        x = w - pad - blf.dimensions(font, text)[0]
+        y = pad + round(size * 0.2)  # imbuf rows run bottom-up; lift by the descent so it sits like the canvas text
+        blf.color(font, 0, 0, 0, 0.8)
+        for dx in range(-ring, ring + 1):
+            for dy in range(-ring, ring + 1):
+                if dx or dy:
+                    blf.position(font, x + dx, y + dy, 0)
+                    blf.draw_buffer(font, text)
+        blf.color(font, 1, 1, 1, 1)
+        blf.position(font, x, y, 0)
+        blf.draw_buffer(font, text)
+    imbuf.write(ib, filepath=path)
+
+
+def render_to(path, stamp=None):
     bpy.context.scene.render.filepath = path
     bpy.ops.render.render(write_still=True)
+    if stamp:
+        burn_stamp(path, stamp)
 
 
 def main():
@@ -1250,12 +1279,12 @@ def main():
     for i in range(args.frames):
         # Same direction as the in-app renderer: positive yaw turns the car clockwise seen from above.
         pivot.rotation_euler.z = -math.radians(float(s["turn"]) + i * args.step)
-        render_to(os.path.join(args.out, f"{args.slug}_{i:03d}.png"))
+        render_to(os.path.join(args.out, f"{args.slug}_{i:03d}.png"), args.stamp)
         print(f"FLATFORM_FRAME {i + 1} {args.frames}", flush=True)
     if args.still is not None and args.still_out:
         pivot.rotation_euler.z = -math.radians(args.still)
         os.makedirs(os.path.dirname(args.still_out), exist_ok=True)
-        render_to(args.still_out)
+        render_to(args.still_out, args.stamp)
         print("FLATFORM_STILL", flush=True)
 
 
