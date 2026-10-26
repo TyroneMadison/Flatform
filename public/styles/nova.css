@@ -116,3 +116,17 @@ html.presenting #view { position: fixed; inset: 0; padding: 0; margin: 0; z-inde
 .shelf-placed { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .shelf-placed li { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--text); font-size: 13px; }
 .viewport.dropping { outline: 2px dashed var(--accent); outline-offset: -6px; }
+
+/* Version history: version chips, the before-and-after wipe, one main action. */
+.hv { display: grid; gap: 14px; max-width: 1000px; }
+.hv-empty { display: grid; gap: 10px; justify-items: start; max-width: 640px; }
+.hv-h { font: 600 20px var(--display); margin: 0; color: var(--text); }
+.hv-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.hv-wipe { position: relative; aspect-ratio: 4 / 3; max-height: 48vh; border-radius: 12px; overflow: hidden; border: 1px solid var(--line-4); background: var(--surface-1); cursor: ew-resize; touch-action: none; }
+.hv-wipe img, .hv-one { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.hv-one { position: static; max-height: 48vh; border-radius: 12px; border: 1px solid var(--line-4); background: var(--surface-1); }
+.hv-wipe:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.hv-line { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--accent); pointer-events: none; }
+.hv-tag { position: absolute; top: 10px; padding: 4px 10px; border-radius: 8px; background: var(--surface-pop); color: var(--text); font: 600 13px var(--sans); border: 1px solid var(--line-4); }
+.hv-l { left: 10px; } .hv-r { right: 10px; }
+.hv-act { display: grid; gap: 6px; justify-items: start; }

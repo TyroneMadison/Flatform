@@ -40,6 +40,7 @@ import { RETARGET, deserializePose, poseBones } from './public/lib/motion.js';
 const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
 import { ENHANCE, enhanceBlock } from './enhance.mjs';
 import { createShares } from './share.mjs';
+import { createRenderHistory } from './render-history.mjs';
 import { planOvernight, morningSummary, awakeGuard, MAX_TRIES } from './overnight.mjs';
 import { runPlugin, pluginStore } from './plugins.mjs';
 import { DEFAULTS as BACKUP_DEFAULTS, checkBackup, runBackup } from './backup.mjs';
@@ -183,6 +184,7 @@ export async function startServer({
   const shares = createShares({ file: path.join(dataDir, 'shares.json'), baseUrl: () => settings?.share?.baseUrl || null });
   const SETTINGS = path.join(dataDir, 'settings.json');
   await mkdir(MODELS, { recursive: true });
+  const history = createRenderHistory({ modelsDir: MODELS });
 
   // Atomic JSON writes, one at a time, so a crash never leaves a half-written file.
   let writing = Promise.resolve();
@@ -1119,7 +1121,12 @@ export async function startServer({
     }
     if (still) m.renders.stills = [...new Set([...(m.renders.stills || []), still[1]])];
     if (sprite || poster || still) await save();
+    if (poster || still) await noteVersion(m, file, still ? 'Picture' : 'Spin video');
   }
+
+  // Version history (render-history.mjs): the render's first picture and the settings that made it.
+  const noteVersion = (m, picture, kind) => history.add(m.id, { picture, pass: m.renders?.at, kind,
+    settings: { scene: m.scene || {}, lighting: settings.lighting, glass: settings.glass } }).catch((e) => console.error(`Version history: ${e.message}`));
 
   // ---- Optional Blender renderer ----
 
@@ -1208,6 +1215,9 @@ export async function startServer({
         ]);
       }
       job.status = 'done';
+      const first = still !== undefined ? path.join(m.renders.outDir, 'stills', stillName(m.slug, looks[0], still))
+        : path.join(m.renders.outDir, 'frames', looks[0], `${m.slug}_000.png`);
+      if (existsSync(first)) await noteVersion(m, first, still !== undefined ? 'Picture' : 'Spin video');
     })().catch((e) => {
       if (job.status === 'running') job.status = 'failed';
       job.error = e.message;
@@ -1649,6 +1659,17 @@ export async function startServer({
         return send(res, 200, { ok: true });
       }
       if (sub === 'retry' && method === 'POST') return send(res, 200, await retry(m));
+      if (sub === 'history' && !extra && method === 'GET') return send(res, 200, await history.list(m.id));
+      if (sub === 'history' && extra && method === 'POST') { // put a version's settings back: the scene, light rig and glass
+        const v = (await history.list(m.id)).find((x) => String(x.n) === extra);
+        if (!v) throw new HttpError(404, 'No such version');
+        m.scene = structuredClone(v.settings.scene || {});
+        await writeAtomic(path.join(MODELS, m.id, 'scene.json'), m.scene);
+        await save();
+        const rig = Object.fromEntries(['lighting', 'glass'].filter((k) => v.settings[k]).map((k) => [k, v.settings[k]]));
+        const s = Object.keys(rig).length ? await saveSettings(rig) : settingsView();
+        return send(res, 200, { model: m, settings: s });
+      }
       if (sub === 'rig' && method === 'POST') return send(res, 202, startRig(m));
       if (sub === 'rig' && method === 'GET') return send(res, 200, rigView(rigJobs.get(id)) ?? null);
       if (sub === 'versions' && method === 'POST') return send(res, 201, await addVersion(req, m));

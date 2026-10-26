@@ -426,6 +426,7 @@ function renderFrame() {
     ['Renders', 'film', target ? `#/render/${target.id}` : '#/library', ['render']],
     ['Spin set', 'retry', target ? `#/spin/${target.id}` : '#/spin', ['spin']],
     ['Finish', 'check', target ? `#/finish/${target.id}` : '#/library', ['finish']],
+    ['History', 'retry', target ? `#/history/${target.id}` : '#/history', ['history']],
     ['Share', 'external', target ? `#/share/${target.id}` : '#/share', ['share']],
     ['Usage', 'eye', '#/usage', ['usage']],
     ['Settings', 'settings', '#/settings', ['settings']],
@@ -450,7 +451,7 @@ function renderFrame() {
 }
 
 // ---- routing ----
-const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings', 'warframe', 'spin', 'preview', 'finish', 'share', 'usage', 'test'];
+const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings', 'warframe', 'spin', 'preview', 'finish', 'share', 'history', 'usage', 'test'];
 export let route = { name: 'drop', id: null };
 let current = null;
 let navToken = 0;
@@ -590,7 +591,7 @@ window.addEventListener('keydown', (e) => {
       if (state.presenting) return;
       const m = (route.id && findModel(route.id)) || focusModel();
       if (!m) return toast('Pick a model first.');
-      go(`#/${{ preview: 'preview', share: 'share' }[action] || 'finish'}/${m.id}`);
+      go(`#/${{ preview: 'preview', share: 'share', history: 'history' }[action] || 'finish'}/${m.id}`);
     },
   });
   await navigate();

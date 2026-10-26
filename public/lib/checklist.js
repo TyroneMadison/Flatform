@@ -32,6 +32,12 @@ export const CHECKLIST = [
     { id: 'shelf-click', text: 'Click a person on the shelf: they stand next to the car at a person height (1.8 m). In your scene lists both; Take out removes one, Ctrl+Z brings it back.', open: 'car' },
     { id: 'shelf-render', text: 'Render the car with Blender: the lamp and the person are in the frames too (mock Blender shows the room thumbnail; the real Blender renders them).', open: 'car' },
   ] },
+  { group: 'Version history', items: [
+    { id: 'history-empty', text: 'Press V on a model that was never rendered: Version history says No renders yet, with one button, Go to Render.', open: 'humanoid' },
+    { id: 'history-save', text: 'Render the sample car (a still is enough), change the place in Compose and render again: press V and both renders are listed as Version 1 and Version 2.', open: 'car' },
+    { id: 'history-compare', text: 'Drag across the picture, drag the slider below it, or use the arrow keys on the picture: the line moves between Before and After. It says what changed (for example Place).', open: 'car' },
+    { id: 'history-restore', text: 'Pick Version 1 and click Use the settings from version 1. Open Compose: the place and camera are back the way they were for that render.', open: 'car' },
+  ] },
   { group: 'Test app', items: [
     { id: 'app-separate', text: 'The title bar says Flatform Test, and the data folder below is "Flatform Test", not your Flatform library.' },
     { id: 'app-mock', text: 'Generate from a sample photo: it finishes in seconds and the Tripo balance stays 9999 (mock, no credits spent).' },
