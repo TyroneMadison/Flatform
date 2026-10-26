@@ -2,6 +2,30 @@
 
 Newest first. Numbering: [VERSIONING.md](VERSIONING.md).
 
+## 1.3 (1.3.0)
+
+- **A joints screen anyone can use.** There is one Add joints button. It tries by itself; if it can't find the
+  arms and legs it opens the placement screen and says why in one sentence. Click the 10 spots shown on a little
+  body map (numbered dots, a pulsing "Click here" ring, bones that grow as you go). Mirror left to right places the
+  other side for you. Rig it lights up at 10 of 10; Undo last and Start over are right there.
+- **Fewer pop-up messages.** The same message no longer stacks up; it refreshes in place, and at most 3 show.
+- **Test rig is always in the Pose card.** For a person it is shown from the start, greyed out with "Opens after
+  your model is rigged" until the model has joints.
+- **Remove part.** Click a stray floating piece, then Remove or Keep. Each removal is saved as a new version, and
+  Ctrl+Z brings it back.
+- **Fill small holes.** New models get their small holes and tiny cracks closed. Big openings, like the neck or a
+  sleeve, are left open.
+- **Part colors.** The model is split into its parts, and each part gets a color role: Primary, Secondary,
+  Tertiary, Accent, Glow or Energy. The first time, every role shows in a bright test color so you can check the
+  guess; click a part to change its role or lock it. One color wheel per role; Glow and Energy have a strength,
+  Energy a pulse. Blender renders use the same parts and colors.
+- **Draw your own Warframe on paper.** The Drawing kit has Download template (a 7 page sheet to print). Draw,
+  take photos of the pages, and drop them in: Flatform reads them, cleans them up and shows a quick check (missing
+  front, arms touching the body, drawing outside the box) before you start. All the views from one sheet go into
+  one model, and the color map page sets the starting part colors.
+- **Drawing tips at upload.** A tips card sits beside the drop zone with Download template, and Flatform tells you
+  when a photo is a template page ("Template detected").
+
 ## 1.2 (1.2.0)
 
 - **Night City you can see the model in.** The glow is turned way down and the signs and lamps are dimmer, so a
