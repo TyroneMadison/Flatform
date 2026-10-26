@@ -1,6 +1,7 @@
 // Flatform front end: shared state, API calls, routing, the window frame and the upload queue.
 // Each screen is a module in views/ with mount(el, params), and optionally update() and unmount().
 import { icon } from './lib/icons.js';
+import { applyTheme } from './lib/theme.js';
 import { PROVIDERS, ENGINES, VIEWS, normalize, presetConfig, matchPreset, PRESETS } from './lib/engines.js';
 import { estimate } from './lib/pricing.js';
 import { isModelFile, importModel } from './lib/importer.js';
@@ -23,6 +24,7 @@ export const state = {
   frames: {}, // composer turntable frame per model, so "Render still" uses the current angle
   lastId: null, // model last opened in a flow screen
   spend: null, // GET /api/spend: totals, daily series, per-model costs, balances and low-balance flags per provider
+  workspace: 'car', // 'car' or 'warframe': stamped on models created or imported from a home screen
 };
 
 export async function api(path, opts = {}) {
@@ -72,13 +74,15 @@ export const sourceType = (file = '') => (/\.png$/i.test(file) ? 'PNG' : 'JPEG')
 // Generation stages, from the provider's job status and progress.
 const STAGE_NAMES = {
   tripo: ['Uploaded to Tripo', 'Task started', 'Building geometry', 'Painting textures', 'Saving GLB to library'],
+  local: ['Sent to your graphics card', 'Waiting for its turn', 'Building the shape', 'Painting textures', 'Saving GLB to library'],
   '3daistudio': ['Sent to 3D AI Studio', 'Waiting for its turn', 'Building geometry', 'Painting textures', 'Saving GLB to library'],
 };
-export const providerOf = (v) => (v?.provider === '3daistudio' ? '3daistudio' : 'tripo');
+export const providerOf = (v) => (v?.provider === '3daistudio' || v?.provider === 'local' ? v.provider : 'tripo');
 export const stagesOf = (v) => STAGE_NAMES[providerOf(v)];
 export function stageOf(v) {
   if (v.status === 'ready') return 5;
   const [done, running] = providerOf(v) === 'tripo' ? [v.tripo_status === 'success', v.tripo_status === 'running']
+    : providerOf(v) === 'local' ? [v.upstream_status === 'success', v.upstream_status === 'running']
     : [v.upstream_status === 'FINISHED', v.upstream_status === 'IN_PROGRESS'];
   if (done) return 4;
   if (running) return (v.progress || 0) < 50 ? 2 : 3;
@@ -94,6 +98,7 @@ export function statusText(m) {
 export const statusClass = (m) => ({ ready: 'ready', failed: 'fail' })[m.status] || 'gen';
 // "Tripo v3.1" or "3D AI Studio · Hitem3D 3.0", for a version (or the model's active one).
 export function engineLabel(v) {
+  if (providerOf(v) === 'local') return 'Local (free) · TRELLIS';
   if (providerOf(v) === 'tripo') return `Tripo ${String(v.options?.model || state.settings?.model || 'v3.1').split('-')[0]}`;
   return `3D AI Studio · ${ENGINES[v.engine]?.label || ''}`;
 }
@@ -172,7 +177,7 @@ async function importModels(files) {
     state.importing = file.name;
     announce(`Importing ${file.name}`);
     refresh();
-    try { last = upsert(await importModel(file)); } catch (e) { toast(e.message); }
+    try { last = upsert(await importModel(file, state.workspace)); } catch (e) { toast(e.message); }
   }
   state.importing = null;
   refresh();
@@ -215,6 +220,7 @@ async function pump() {
         const form = new FormData();
         form.append('name', item.name);
         form.append('setup', JSON.stringify(item.setup));
+        form.append('workspace', state.workspace);
         for (const [view, p] of Object.entries(item.files)) form.append(view, new File([p.file], p.file.name || `${view}.jpg`, { type: p.type }));
         const m = upsert(await api(item.modelId ? `/api/models/${item.modelId}/versions` : '/api/models', { method: 'POST', body: form }));
         state.queue.splice(state.queue.indexOf(item), 1);
@@ -412,6 +418,7 @@ function renderFrame() {
   const target = focusModel();
   const links = [
     ['New', 'plus', '#/drop', ['drop', 'setup', 'generate']],
+    ['Warframe', 'cube', '#/warframe', ['warframe']],
     ['Library', 'library', '#/library', ['library', 'model']],
     ['Scenes', 'scene', target ? `#/compose/${target.id}` : '#/library', ['compose']],
     ['Renders', 'film', target ? `#/render/${target.id}` : '#/library', ['render']],
@@ -435,7 +442,7 @@ function renderFrame() {
 }
 
 // ---- routing ----
-const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings'];
+const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings', 'warframe'];
 export let route = { name: 'drop', id: null };
 let current = null;
 let navToken = 0;
@@ -513,6 +520,52 @@ window.addEventListener('paste', (e) => {
 });
 window.addEventListener('hashchange', navigate);
 
+// ---- Workspaces: a pill under the logo (Warframe, Car, + New workspace), Ctrl+1 / Ctrl+2 to switch ----
+export async function loadWorkspaces() {
+  try { state.workspaces = await api('/api/workspaces'); } catch { state.workspaces = null; }
+  drawWorkspaces();
+}
+export const activeWorkspace = () => state.workspaces?.list.find((w) => w.id === state.workspaces.active) || null;
+function drawWorkspaces() {
+  const el = $('#wsPill');
+  const ws = state.workspaces;
+  if (!el) return;
+  el.hidden = !ws;
+  if (!ws) return;
+  const cur = activeWorkspace();
+  el.innerHTML = `<button class="wsbtn" type="button" id="wsBtn" aria-haspopup="menu" aria-expanded="false" title="Workspace (Ctrl+1, Ctrl+2)"><span class="wsico ${esc(cur?.kind)}" aria-hidden="true"></span><span>${esc(cur?.name || 'Workspace')}</span></button>
+    <div class="wsmenu glass" id="wsMenu" role="menu" hidden>${ws.list.map((w, i) => `<button type="button" role="menuitemradio" aria-checked="${w.id === ws.active}" data-ws="${esc(w.id)}"><span class="wsico ${esc(w.kind)}" aria-hidden="true"></span>${esc(w.name)}${i < 9 ? `<small>Ctrl+${i + 1}</small>` : ''}</button>`).join('')}
+    <button type="button" role="menuitem" data-ws-new>+ New workspace</button></div>`;
+}
+export async function switchWorkspace(id) {
+  if (!state.workspaces || id === state.workspaces.active) return;
+  try {
+    const r = await send('/api/workspaces/active', 'POST', { id });
+    announce('Switching workspace');
+    if (r.restarting) { for (let i = 0; i < 50; i++) { await new Promise((ok) => setTimeout(ok, 200)); try { await api('/api/workspaces'); break; } catch { /* restarting */ } } }
+    location.hash = '#/library';
+    location.reload();
+  } catch (e) { toast(e.message); }
+}
+document.addEventListener('click', async (e) => {
+  if (e.target.closest('#wsBtn')) { const m = $('#wsMenu'); m.hidden = !m.hidden; $('#wsBtn').setAttribute('aria-expanded', String(!m.hidden)); return; }
+  const pick = e.target.closest('[data-ws]');
+  if (pick) return switchWorkspace(pick.dataset.ws);
+  if (e.target.closest('[data-ws-new]')) {
+    const name = prompt('Name the new workspace');
+    if (!name) return;
+    const kind = confirm('Is it for Warframe models? OK for Warframe, Cancel for cars.') ? 'warframe' : 'car';
+    try { state.workspaces = await send('/api/workspaces', 'POST', { name, kind }); drawWorkspaces(); } catch (err) { toast(err.message); }
+    return;
+  }
+  if (!e.target.closest('#wsPill') && $('#wsMenu')) $('#wsMenu').hidden = true;
+});
+window.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || !/^[1-9]$/.test(e.key) || !state.workspaces) return;
+  const w = state.workspaces.list[Number(e.key) - 1];
+  if (w) { e.preventDefault(); switchWorkspace(w.id); }
+});
+
 // Not top-level await: the screens import this module, so it has to finish loading before they can.
 (async () => {
   const [models, settings, blender] = await Promise.all([api('/api/models'), api('/api/settings'), api('/api/blender')]
@@ -520,6 +573,8 @@ window.addEventListener('hashchange', navigate);
   state.models = models || [];
   state.settings = settings;
   state.blender = blender;
+  applyTheme(settings?.theme);
+  await loadWorkspaces();
   await navigate();
   refreshAccount();
   setInterval(() => refreshAccount(), 60000);

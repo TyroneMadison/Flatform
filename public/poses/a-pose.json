@@ -1,0 +1,23 @@
+{
+  "id": "a-pose",
+  "name": "A-pose",
+  "kind": "humanoid",
+  "icon": "🙆",
+  "description": "Arms down at 45°.",
+  "bones": {
+    "upperArm.L": {
+      "rotation": [
+        0,
+        0,
+        -45
+      ]
+    },
+    "upperArm.R": {
+      "rotation": [
+        0,
+        0,
+        45
+      ]
+    }
+  }
+}

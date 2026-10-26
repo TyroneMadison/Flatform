@@ -24,7 +24,9 @@ export function estimate({ engine, mode, options: o }) {
   const lines = [];
   const add = (what, credits) => { if (credits) lines.push([what, credits]); };
   const textured = o.texture !== undefined && o.texture !== 'none';
-  if (engine === 'tripo-direct') {
+  if (engine === 'local-trellis') {
+    // Free: runs on the user's own graphics card. Nothing is added, so the total is 0.
+  } else if (engine === 'tripo-direct') {
     const p = TRIPO_DIRECT;
     add(textured ? 'Textured model' : 'Untextured model', textured ? p.textured : p.untextured);
     if (textured && o.texture_quality === 'detailed') add('HD texture', p.hd);

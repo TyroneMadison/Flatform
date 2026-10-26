@@ -1,0 +1,42 @@
+{
+  "id": "turnaround",
+  "name": "3-view turnaround",
+  "kind": "humanoid",
+  "icon": "🔁",
+  "description": "Front, side and back shots for a TennoGen submission.",
+  "camera": {
+    "turn": 0,
+    "elevation": 5,
+    "lens": 60
+  },
+  "bones": {
+    "upperArm.L": {
+      "rotation": [
+        0,
+        0,
+        -45
+      ]
+    },
+    "upperArm.R": {
+      "rotation": [
+        0,
+        0,
+        45
+      ]
+    }
+  },
+  "shots": [
+    {
+      "name": "front",
+      "turn": 0
+    },
+    {
+      "name": "side",
+      "turn": 90
+    },
+    {
+      "name": "back",
+      "turn": 180
+    }
+  ]
+}

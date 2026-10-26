@@ -12,6 +12,8 @@ Flatform is MIT licensed (see `LICENSE`). It ships these third-party components.
 | [libheif-js](https://github.com/catdad-experiments/libheif-js) | 1.23.5 | **LGPL-3.0** | used by heic-decode |
 | [jpeg-js](https://github.com/jpeg-js/jpeg-js) | 0.4.4 | BSD-3-Clause | used by heic-convert |
 | [pngjs](https://github.com/pngjs/pngjs) | 6.0.0 | MIT | used by heic-convert |
+| [three-gpu-pathtracer](https://github.com/gkjohnson/three-gpu-pathtracer) | 0.0.27 | MIT | path-traced preview in the scene composer |
+| [three-mesh-bvh](https://github.com/gkjohnson/three-mesh-bvh) | 0.9.16 | MIT | used by three-gpu-pathtracer |
 
 ### libheif-js (LGPL-3.0)
 
@@ -22,6 +24,21 @@ Its license texts ship with it in `node_modules/libheif-js/LICENSE` and `node_mo
 You may replace it with a modified version of the library: install it over `node_modules/libheif-js` (in the packaged
 app, inside `resources/app.asar`). The source code is at https://github.com/catdad-experiments/libheif-js and
 https://github.com/strukturag/libheif.
+
+## Studio HDRIs (bundled in `public/img/hdri/`, CC0 1.0)
+
+Seven 1k environment maps from [Poly Haven](https://polyhaven.com), released under
+[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (public domain, no attribution required; credited with thanks).
+
+| File | Source |
+| --- | --- |
+| `studio_small_03.hdr` | https://polyhaven.com/a/studio_small_03 (Sergej Majboroda) |
+| `studio_small_08.hdr` | https://polyhaven.com/a/studio_small_08 (Sergej Majboroda) |
+| `brown_photostudio_02.hdr` | https://polyhaven.com/a/brown_photostudio_02 (Sergej Majboroda) |
+| `kloofendal_48d_partly_cloudy_puresky.hdr` | https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky (Greg Zaal) |
+| `garage.hdr` | https://polyhaven.com/a/garage (Greg Zaal) |
+| `goegap_road.hdr` | https://polyhaven.com/a/goegap_road (Greg Zaal) |
+| `white_studio_02.hdr` | https://polyhaven.com/a/white_studio_02 (Grzegorz Wronkowski) |
 
 ## Fonts (bundled in `public/fonts/`, SIL Open Font License 1.1)
 

@@ -1,0 +1,65 @@
+{
+  "id": "combat-melee",
+  "name": "Combat-ready (melee)",
+  "kind": "humanoid",
+  "icon": "⚔",
+  "description": "Blade low and back, weight forward.",
+  "bones": {
+    "upperArm.R": {
+      "rotation": [
+        20,
+        0,
+        40
+      ]
+    },
+    "lowerArm.R": {
+      "rotation": [
+        -40,
+        0,
+        0
+      ]
+    },
+    "upperArm.L": {
+      "rotation": [
+        -40,
+        0,
+        -50
+      ]
+    },
+    "lowerArm.L": {
+      "rotation": [
+        -60,
+        0,
+        0
+      ]
+    },
+    "spine": {
+      "rotation": [
+        10,
+        20,
+        0
+      ]
+    },
+    "upperLeg.L": {
+      "rotation": [
+        -25,
+        0,
+        0
+      ]
+    },
+    "lowerLeg.L": {
+      "rotation": [
+        30,
+        0,
+        0
+      ]
+    },
+    "upperLeg.R": {
+      "rotation": [
+        15,
+        0,
+        0
+      ]
+    }
+  }
+}

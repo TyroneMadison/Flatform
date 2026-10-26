@@ -1,12 +1,13 @@
 // 07 · Settings: providers and keys, rendering, the output folder, updates and about. Only non-secret values are stored
 // in settings.json; keys go to the OS keychain and never come back to this page: it only learns whether one is saved.
+import { PRESETS as THEMES, normalizeTheme, resolveTheme, applyTheme, contrast, AAA } from '../lib/theme.js';
 import { $, esc, state, api, send, toast, refresh, native, fmt, fmtBalance, saveKey, confirmDialog, arrowRadios, refreshUpdate, refreshSpend, topUp } from '../app.js';
 import { PROVIDERS } from '../lib/engines.js';
 import { icon } from '../lib/icons.js';
 import { PRESETS } from '../lib/studio.js';
 
 const SCENES = Object.entries(PRESETS).map(([k, p]) => [k, k === 'showroom' ? 'Showroom (default)' : k === 'miami' ? 'Miami street at night (your HDRI)' : p.label]);
-const SECTIONS = [['providers', 'Providers'], ['spend', 'Spend'], ['rendering', 'Rendering'], ['output', 'Output folder'], ['about', 'About']];
+const SECTIONS = [['providers', 'Providers'], ['spend', 'Spend'], ['rendering', 'Rendering'], ['output', 'Output folder'], ['appearance', 'Appearance'], ['history', 'History'], ['about', 'About']];
 const RELEASES = 'https://github.com/TyroneMadison/Flatform/releases';
 const results = {}; // provider → { ok, text } from the last Test or key change
 let root;
@@ -74,6 +75,7 @@ async function onClick(e) {
   const s = state.settings;
   const { act, provider } = t.dataset;
   if (act === 'provider') save({ provider: t.dataset.value });
+  if (act === 'local-download') { try { localInfo = await send('/api/local/download', 'POST'); } catch (err) { toast(err.message); } redraw(); loadLocal().then(redraw); }
   if (act === 'test') await test(provider);
   if (act === 'replace') { replacing = provider; redraw(); $(`#key-${provider}`, root)?.focus(); }
   if (act === 'cancel') { replacing = null; redraw(); }
@@ -101,6 +103,20 @@ async function onClick(e) {
       if (file) save({ blenderPath: file });
     } else showField('blenderField');
   }
+  if (act === 'theme') { const theme = { preset: t.dataset.value, custom: {} }; applyTheme(theme); save({ theme }); }
+  if (act === 'theme-reset') { applyTheme(undefined); save({ theme: { preset: 'dark', custom: {} } }); }
+  if (act === 'git-repo') {
+    const dir = native ? await native.pickFolder() : prompt('Project folder (a git repository), full path');
+    if (dir) { await save({ gitRepo: dir.trim() }); loadGit(); }
+  }
+  if (act === 'git-load') loadGit();
+  if (act === 'rollback') {
+    const { sha, mode } = t.dataset;
+    const text = mode === 'revert' ? `Add a new commit that undoes every change after ${sha.slice(0, 7)}. Nothing is deleted.` : `Make a new branch at ${sha.slice(0, 7)} and switch to it. The current branch stays as it is.`;
+    if (!(await confirmDialog({ title: 'Roll back to this version', text, ok: mode === 'revert' ? 'Revert' : 'New branch' }))) return;
+    try { const r = await send('/api/history/rollback', 'POST', { sha, mode }); toast(`Done: ${r.ran.join('; ')}`, 'info'); } catch (err) { toast(err.message); }
+    loadGit();
+  }
   if (act === 'show-library') native?.showItemInFolder(s.libraryDir).catch((err) => toast(err.message));
   if (act === 'check-update' && !checking) {
     checking = true;
@@ -119,6 +135,12 @@ function showField(id) {
 
 async function onChange(e) {
   const t = e.target;
+  if (t.dataset.themeColor) {
+    const cur = normalizeTheme(state.settings.theme);
+    const theme = { ...cur, custom: { ...cur.custom, [t.dataset.themeColor]: t.value } };
+    applyTheme(theme);
+    save({ theme });
+  }
   if (t.name === 'alsoTransparent') save({ alsoTransparent: t.checked });
   if (t.name === 'defaultScene') save({ defaultScene: t.value });
   if (t.name === 'autoCheck') save({ updates: { autoCheck: t.checked } });
@@ -150,6 +172,7 @@ async function onSubmit(e) {
 
 // One card per provider, both built the same way.
 function card(id) {
+  if (PROVIDERS[id].local) return localCard();
   const p = PROVIDERS[id];
   const s = state.settings;
   const source = s.keys?.[id] || 'none';
@@ -171,6 +194,33 @@ function card(id) {
     <div class="ph2"><div class="av" aria-hidden="true">${id === 'tripo' ? 'T' : '3D'}</div><div><b id="pc-${id}">${p.name}</b><p>${sub}</p></div><span class="pill ${pill[0]}">● ${pill[1]}</span></div>
     ${field}
     <div class="res${r ? (r.ok === false ? ' bad' : r.ok ? ' ok' : '') : ''}" id="pc-res-${id}" role="status">${r ? `${r.ok === false ? '✗' : r.ok ? '✓' : ''} ${esc(r.text)}` : `<span>Get a key at <a href="${p.keyUrl}" target="_blank" rel="noopener">${esc(new URL(p.keyUrl).host)}</a>. Test runs the free balance check.</span>`}</div>
+  </div>`;
+}
+
+// The free local engine: no key, just a one-time download and a graphics card.
+let localInfo = null;
+let localTimer = null;
+async function loadLocal() {
+  try { localInfo = await api('/api/local'); } catch (err) { localInfo = { error: err.message }; }
+  clearTimeout(localTimer);
+  if (localInfo?.download?.running) localTimer = setTimeout(() => loadLocal().then(redraw), 1000);
+}
+const gb = (bytes) => `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+function localCard() {
+  const l = localInfo;
+  if (!l) { loadLocal().then(redraw); return '<div class="pc glass"><b>Local (free)</b><p class="fine">Checking…</p></div>'; }
+  const d = l.download || {};
+  const status = l.error ? l.error : d.running ? `Downloading ${esc(d.file || '')} · ${gb(d.done || 0)} of about 3.3 GB`
+    : l.ready ? 'Ready. Generate with Local (free) to use it.' : d.error ? `${d.error}` : 'Not downloaded yet. About 3.3 GB, one time.';
+  return `<div class="pc glass" aria-labelledby="pc-local">
+    <div class="ph2"><div class="av" aria-hidden="true">PC</div><div><b id="pc-local">Local (free)</b><p><span>TRELLIS on your graphics card · $0 per model</span></p></div>
+      <span class="pill ${l.ready ? 'ok' : 'none'}">● ${l.ready ? 'Ready' : 'Not set up'}</span></div>
+    <p class="fine">Graphics card: ${l.gpu?.ok ? `${esc(l.gpu.name)} · ${l.gpu.memoryGB} GB` : esc(l.gpu?.error || 'unknown')}</p>
+    <p class="fine">Detail Boost upscaler: ${l.upscaler ? 'ready' : 'downloads with the engine (64 MB)'}</p>
+    <p class="fine">Saved in <span class="mono">${esc(l.weightsDir || '')}</span></p>
+    ${d.running ? `<progress max="${3.3 * 1024 ** 3}" value="${d.done || 0}" style="width:100%"></progress>` : ''}
+    <div class="kf"><button class="btn sm pri" type="button" data-act="local-download"${d.running || (l.ready && l.upscaler) ? ' disabled' : ''}>${d.error ? 'Try again' : 'Download local engine'}</button></div>
+    <div class="res${d.error ? ' bad' : l.ready ? ' ok' : ''}" role="status">${esc(status)}</div>
   </div>`;
 }
 
@@ -228,6 +278,37 @@ function updateStatus() {
   return u?.checkedAt ? `✓ You're up to date${at}` : 'Not checked yet';
 }
 
+function appearanceHtml() {
+  const th = normalizeTheme(state.settings.theme);
+  const c = resolveTheme(th);
+  const ratio = contrast(c.text, c.bg);
+  return `<div class="card glass"><h2 class="label">Theme</h2>
+    <p class="fine">Changes the app's look only. Models, scenes, materials and renders never change.</p>
+    <div class="chips" role="radiogroup" aria-label="Theme">${Object.entries(THEMES).map(([k, p]) => `<button class="chip" type="button" role="radio" aria-checked="${th.preset === k}" data-act="theme" data-value="${k}"><span class="swatch" style="background:${p.primary}"></span>${esc(p.label)}</button>`).join('')}</div>
+    ${['primary', 'secondary', 'accent'].map((k) => `<div class="field"><span class="flabel">${k[0].toUpperCase() + k.slice(1)}</span><input class="inp" type="color" data-theme-color="${k}" value="${c[k]}" aria-label="${k} color"></div>`).join('')}
+    <p class="fine">Text contrast ${ratio.toFixed(1)}:1${ratio >= AAA ? ' (meets WCAG AAA)' : ''}</p>
+    <button class="btn ghostbtn" type="button" data-act="theme-reset">Reset to Flatform Dark</button>
+  </div>`;
+}
+
+let git = null;
+async function loadGit() {
+  try { git = await api('/api/history/git'); } catch (e) { git = { error: e.message }; }
+  redraw();
+}
+function historyHtml() {
+  const s = state.settings;
+  if (s.gitRepo && !git) setTimeout(loadGit);
+  return `<div class="card glass"><h2 class="label">Version history</h2>
+    <div class="field"><span class="flabel">Project folder</span><div class="inp mono">${s.gitRepo ? esc(s.gitRepo) : '<span class="muted">Not set</span>'}</div>
+      <button class="btn ghostbtn" type="button" data-act="git-repo">${icon('folder')}<span>Choose</span></button></div>
+    <p class="fine">Roll back is always safe: a revert commit or a new branch. Nothing is reset, force pushed or deleted. In Compose, Ctrl+Z and Ctrl+Shift+Z undo and redo scene edits.</p>
+    ${git?.error ? `<p class="form-error">${esc(git.error)}</p>` : ''}
+    ${git?.commits ? `<p class="fine">Branch <b>${esc(git.branch)}</b></p><ul class="histlist">${git.commits.map((c, i) => `<li><span class="mono">${esc(c.short)}</span> ${esc(c.subject)} <small class="muted">${esc(new Date(c.date).toLocaleString())}</small>
+      ${i ? `<button class="btn sm ghostbtn" type="button" data-act="rollback" data-mode="branch" data-sha="${esc(c.sha)}">New branch here</button><button class="btn sm ghostbtn" type="button" data-act="rollback" data-mode="revert" data-sha="${esc(c.sha)}">Revert to this</button>` : '<small>current</small>'}</li>`).join('')}</ul>` : ''}
+  </div>`;
+}
+
 function aboutHtml() {
   const s = state.settings;
   return `<div class="card glass"><h2 class="label">Updates</h2>
@@ -251,7 +332,7 @@ const spent = (x) => `${fmt(x.credits)} <span class="muted">${money(x.usd)}</spa
 
 // Last 30 days as stacked bars, Tripo under 3D AI Studio. Plain SVG; each bar has its day and credits as a tooltip.
 function chart(days) {
-  const ids = Object.keys(PROVIDERS);
+  const ids = Object.keys(PROVIDERS).filter((id) => !PROVIDERS[id].local); // free runs add nothing to the bars
   const colors = { tripo: 'var(--accent)', '3daistudio': 'var(--soft)' };
   const max = Math.max(1, ...days.map((d) => ids.reduce((s, id) => s + d[id], 0)));
   const w = 10;
@@ -290,12 +371,13 @@ function spendHtml() {
     <div class="card glass"><h2 class="label">Last 30 days</h2>${chart(sp.daily)}</div>
     <div class="card glass"><h2 class="label">Cost per model</h2>
       ${rows ? `<table class="spendt"><thead><tr><th>Provider</th><th>Model</th><th>Calls</th><th>Credits</th><th>USD</th></tr></thead><tbody>${rows}</tbody></table>` : '<p class="fine">No paid calls yet.</p>'}</div>
+    ${sp.free?.calls ? `<p class="fine">Local (free): ${fmt(sp.free.calls)} models made on this PC · $0.00</p>` : ''}
     <p class="fine">Credits are what each call costs on the providers' price lists. US dollars are an estimate at ${Object.entries(sp.usdPerCredit).map(([id, r]) => `${PROVIDERS[id].name} $${r}`).join(', ')} per credit. Flatform warns once a session when a balance drops under its alert.</p>`;
 }
 
 export function update() {
   if (!state.settings || !root?.isConnected) return;
-  const html = { providers: providersHtml, spend: spendHtml, rendering: renderingHtml, output: outputHtml, about: aboutHtml }[section]();
+  const html = { providers: providersHtml, spend: spendHtml, rendering: renderingHtml, output: outputHtml, appearance: appearanceHtml, history: historyHtml, about: aboutHtml }[section]();
   const box = $('#settings', root);
   // Keep the page as it is while someone is typing in it.
   const focused = box.contains(document.activeElement) ? document.activeElement : null;

@@ -1,0 +1,58 @@
+{
+  "id": "slide",
+  "name": "Slide",
+  "kind": "humanoid",
+  "icon": "🛝",
+  "description": "Low slide, one leg out.",
+  "bones": {
+    "upperLeg.L": {
+      "rotation": [
+        -100,
+        0,
+        0
+      ]
+    },
+    "lowerLeg.L": {
+      "rotation": [
+        0,
+        0,
+        0
+      ]
+    },
+    "upperLeg.R": {
+      "rotation": [
+        -70,
+        0,
+        0
+      ]
+    },
+    "lowerLeg.R": {
+      "rotation": [
+        120,
+        0,
+        0
+      ]
+    },
+    "spine": {
+      "rotation": [
+        25,
+        0,
+        0
+      ]
+    },
+    "upperArm.L": {
+      "rotation": [
+        40,
+        0,
+        -60
+      ]
+    },
+    "upperArm.R": {
+      "rotation": [
+        -30,
+        0,
+        30
+      ]
+    }
+  }
+}

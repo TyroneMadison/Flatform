@@ -20,11 +20,20 @@ import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { GroundedSkybox } from 'three/addons/objects/GroundedSkybox.js';
 import { HorizontalBlurShader } from 'three/addons/shaders/HorizontalBlurShader.js';
 import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
-import { STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, PLATES, plateUrl, plateThumb, plateCamera } from './pipeline.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
+import { normalizeDecals, decalMaterialParams, decalUrl } from './decals.js';
+import { mergeLook, effectsFor, hdriUrl, lookNeedsRebuild } from './look.js';
+import { Post, PathTraced, TONE } from './post.js';
+import { applyPaint, regroup, pickPiece, listPieces } from './paint.js';
+import { applyMotion } from './rig.js';
+import { mirrorAttributes, depthRange, boneWeights, heat } from './model-tools.js';
+import { samplePath, skyAt, normalizePath } from './camera-path.js';
+import { STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, PLATES, plateUrl, plateThumb, plateCamera, CAR_LENGTH, hfovOf, isCarShape, modelScale, fitDistance, frameOrbit } from './pipeline.js';
 
 RectAreaLightUniformsLib.init();
 
-export const CAR_LENGTH = 4.6;
+export { CAR_LENGTH };
 export const RING = '#ff7a66'; // the accent colour of the app
 export const GOLD = '#f2b56b'; // the showroom's floor ring
 export const CAMERAS = {
@@ -60,8 +69,15 @@ export function defaultScene(settings = {}) {
     backdrop: null, x: 0, y: 0, snap: true, turn: 30, scale: 1, sameSize: true,
     camera: 'front34', lens: 50, matchLighting: true, key: 1.3, fill: 0.3, rim: 1.4,
     reflection: 0.7, shadow: 0.5, autoOrient: true, center: true, flip: false,
+    // Camera view mode. 'car': the preset above (matched to the photo, eye level), unchanged since v0.4. 'free': an
+    // orbit camera, kept in orbit = { position, target } so renders use it too. fit: 'all' after "Frame all" in car view.
+    view: 'car', orbit: null, fit: 'footprint',
+    // v0.5: the scene look (look.js: background, HDRI, lights, AO, tone mapping, effects) and the paint project
+    // (tenno.js: pieces, colours, materials). null = defaults = exactly the v0.4 look.
+    look: null, paint: null,
   };
 }
+export const VIEWS = { car: 'Car view', free: 'Free roam' };
 export const lookOf = (preset) => (preset === 'transparent' || preset === 'showroom' ? preset : 'studio');
 // Share of the frame width the car's footprint diagonal spans (the widest it can look at any turn).
 const FILL = { wide: 0.7, square: 0.84 };
@@ -365,6 +381,26 @@ class ContactShadow {
   }
 }
 
+// A vertical two-colour gradient as a background texture (cached by its colours).
+const gradients = {};
+function gradientTexture(top, bottom) {
+  const key = `${top}:${bottom}`;
+  if (!gradients[key]) {
+    const c = document.createElement('canvas');
+    Object.assign(c, { width: 4, height: 256 });
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, top);
+    grad.addColorStop(1, bottom);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 4, 256);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    gradients[key] = tex;
+  }
+  return gradients[key];
+}
+
 function disposeTree(obj) {
   obj.traverse((o) => {
     o.geometry?.dispose();
@@ -392,6 +428,7 @@ export class Studio {
     this.lights.key.position.set(-6, 8, 7);
     this.lights.fill.position.set(8, 3, 6);
     this.lights.rim.position.set(1, 6, -10);
+    this.baseRig = Object.fromEntries(Object.entries(this.lights).map(([k, l]) => [k, { color: l.color.getHex(), position: l.position.toArray() }]));
     const key = this.lights.key;
     key.castShadow = true;
     key.shadow.mapSize.set(4096, 4096);
@@ -405,6 +442,9 @@ export class Studio {
     this.envs = {};
     this.builds = 0; // a newer preset wins over one that is still loading its HDRI
     this.state = defaultScene();
+    this.pieceMats = new Map(); // piece key → its MeshPhysicalMaterial (paint.js)
+    this.hdris = {}; // loaded HDRIs by file
+    this.ptDirty = true; // the path tracer must rebuild its scene
     this.frame = 0;
     this.width = canvas.width;
     this.height = canvas.height;
@@ -423,6 +463,7 @@ export class Studio {
     draco.dispose();
     if (this.model) { this.pivot.remove(this.model); disposeTree(this.model); }
     this.model = gltf.scene;
+    this.mirrorKey = "";
     this.model.traverse((o) => {
       if (!o.isMesh) return;
       o.layers.enable(1); // seen by the contact shadow camera
@@ -431,10 +472,29 @@ export class Studio {
       o.userData.material = o.material;
     });
     this.pivot.add(this.model);
+    this.pieceMats.clear();
     this.applyModel();
-    this.applyGlass();
+    this.applyPaint();
+    this.applyDecals();
     this.applyCamera();
+    this.ptDirty = true;
     return this.model;
+  }
+
+  // Pieces, colours and materials (state.paint, see paint.js). Starts from the glass pass so a reverted piece
+  // goes back to its original or tinted-glass material.
+  applyPaint() {
+    if (!this.model) return;
+    this.applyGlass();
+    regroup(this.model, this.state.paint);
+    applyPaint(this.model, this.state.paint, this.pieceMats);
+    this.ptDirty = true;
+  }
+  pieces() { return this.model ? listPieces(this.model) : []; }
+  // The piece under a canvas point (CSS px), or null.
+  pick(x, y) {
+    if (!this.model) return null;
+    return pickPiece(this.model, this.camera, (x / this.width) * 2 - 1, -(y / this.height) * 2 + 1);
   }
 
   // The Render step's light rig and glass ({ lighting, glass } as saved in settings). Missing parts keep defaults.
@@ -443,7 +503,7 @@ export class Studio {
     const glassChanged = JSON.stringify(next.glass) !== JSON.stringify(this.rig.glass);
     this.rig = next;
     this.applyLights();
-    if (glassChanged) this.applyGlass();
+    if (glassChanged) this.applyPaint();
   }
 
   applyGlass() {
@@ -471,18 +531,232 @@ export class Studio {
   async setState(next) {
     const prev = this.state;
     this.state = { ...prev, ...next };
-    if (!this.built || prev.preset !== this.state.preset || prev.backdrop !== this.state.backdrop || Boolean(prev.modeled) !== Boolean(this.state.modeled)) await this.buildPreset();
+    const lookRebuild = lookNeedsRebuild(prev.look, this.state.look);
+    if (!this.built || prev.preset !== this.state.preset || prev.backdrop !== this.state.backdrop || Boolean(prev.modeled) !== Boolean(this.state.modeled) || lookRebuild) await this.buildPreset();
     this.applyModel();
     this.applyLights();
     this.applyCamera();
+    if (JSON.stringify(prev.paint) !== JSON.stringify(this.state.paint)) this.applyPaint();
+    this.applyDecals();
+    await this.applyLook();
   }
+
+  // Decals (decals.js): projected onto every mesh they touch, so they wrap over curves. They live in a group beside
+  // the model (same transform) so piece picking and painting never see them; exportGlb takes the group too.
+  applyDecals(force = false) {
+    const list = this.model ? normalizeDecals(this.state.decals).filter((d) => d.visible) : [];
+    const m0 = this.model;
+    const key = JSON.stringify([list, this.mirrorKey, m0?.uuid, m0?.position, m0?.quaternion, m0?.scale]);
+    if (!force && key === this.decalKey) return;
+    this.decalKey = key;
+    if (this.decals) { this.decals.parent?.remove(this.decals); this.decals.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } }); this.decals = null; }
+    if (!list.length) { this.ptDirty = true; return; }
+    const m = this.model;
+    const g = this.decals = new THREE.Group();
+    g.name = 'Decals';
+    g.position.copy(m.position); g.quaternion.copy(m.quaternion); g.scale.copy(m.scale);
+    m.parent.add(g);
+    m.updateWorldMatrix(true, true);
+    g.updateMatrixWorld(true);
+    const toLocal = g.matrixWorld.clone().invert();
+    const targets = [];
+    m.traverse((o) => { if (o.isMesh && !o.isSkinnedMesh) targets.push(o); });
+    this.decalTex ||= new Map();
+    const worldScale = m.getWorldScale(new THREE.Vector3()).x || 1;
+    for (const d of list) {
+      let tex = this.decalTex.get(d.file);
+      if (!tex) {
+        tex = new THREE.TextureLoader().load(decalUrl(d.file), () => { this.ptDirty = true; });
+        tex.colorSpace = THREE.SRGBColorSpace;
+        this.decalTex.set(d.file, tex);
+      }
+      const normal = new THREE.Vector3(...d.normal).transformDirection(m.matrixWorld);
+      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+      q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), THREE.MathUtils.degToRad(d.rotation)));
+      const pos = m.localToWorld(new THREE.Vector3(...d.point))
+        .add(new THREE.Vector3(1, 0, 0).applyQuaternion(q).multiplyScalar(d.offsetX * worldScale))
+        .add(new THREE.Vector3(0, 1, 0).applyQuaternion(q).multiplyScalar(d.offsetY * worldScale));
+      const size = new THREE.Vector3(d.size, d.size / d.aspect, d.depth).multiplyScalar(worldScale);
+      const reach = new THREE.Box3().setFromCenterAndSize(pos, new THREE.Vector3().setScalar(size.length()));
+      const mat = new THREE.MeshPhysicalMaterial({ map: tex, ...decalMaterialParams(d) });
+      mat.name = `Decal_${d.name.replace(/[^\w-]+/g, '_')}`;
+      for (const t of targets) {
+        if (!new THREE.Box3().setFromObject(t).intersectsBox(reach)) continue;
+        const geo = new DecalGeometry(t, pos, new THREE.Euler().setFromQuaternion(q), size);
+        if (!geo.attributes.position.count) { geo.dispose(); continue; }
+        geo.applyMatrix4(toLocal);
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.name = `Decal ${d.name}`;
+        mesh.userData.decal = d.id;
+        mesh.raycast = () => {};
+        g.add(mesh);
+      }
+    }
+    this.ptDirty = true;
+  }
+
+  // The model surface under a canvas point, in the model's own space: { point, normal }, for placing a decal.
+  pickSurface(x, y) {
+    if (!this.model) return null;
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2((x / this.width) * 2 - 1, -(y / this.height) * 2 + 1), this.camera);
+    const hit = ray.intersectObject(this.model, true)[0];
+    if (!hit) return null;
+    const n = (hit.face?.normal || new THREE.Vector3(0, 0, 1)).clone().transformDirection(hit.object.matrixWorld);
+    const inv = new THREE.Matrix4().copy(this.model.matrixWorld).invert();
+    return { point: this.model.worldToLocal(hit.point.clone()).toArray(), normal: n.transformDirection(inv).toArray() };
+  }
+
+  // The look (look.js): background, HDRI, light preset, tone mapping, effects. Runs after the preset and the
+  // scene's own lights, so with the default look nothing here changes a thing.
+  async applyLook() {
+    const build = this.builds;
+    const look = this.look = mergeLook(this.state.look);
+    const r = this.renderer;
+    r.toneMapping = TONE[look.tone] ?? THREE.NeutralToneMapping;
+    r.toneMappingExposure = look.exposure;
+    // Background.
+    const bg = look.background;
+    if (bg.kind === 'solid') this.scene.background = new THREE.Color(bg.color);
+    else if (bg.kind === 'gradient') this.scene.background = gradientTexture(bg.color, bg.color2);
+    else if (bg.kind === 'image' && bg.image) {
+      try {
+        const tex = await new THREE.TextureLoader().loadAsync(`/backdrops/${encodeURIComponent(bg.image)}`);
+        if (build !== this.builds) { tex.dispose(); return; }
+        tex.colorSpace = THREE.SRGBColorSpace;
+        this.backdropTexture?.dispose();
+        this.backdropTexture = tex;
+        this.scene.background = tex;
+        this.coverBackground();
+      } catch { this.message = 'Could not load that background image'; }
+    }
+    // HDRI environment (and background).
+    const h = look.hdri;
+    this.lookHdri = { ...h };
+    this.skyFile = null;
+    this.dimBase = undefined;
+    if (h.file) {
+      try {
+        const { env, tex } = await this.hdri(h.file);
+        if (build !== this.builds) return;
+        this.scene.environment = env;
+        this.scene.environmentRotation.set(0, THREE.MathUtils.degToRad(h.rotation), 0);
+        this.scene.environmentIntensity *= h.intensity;
+        if (h.background) {
+          this.scene.background = tex;
+          this.scene.backgroundRotation.set(0, THREE.MathUtils.degToRad(h.rotation), 0);
+          this.scene.backgroundBlurriness = h.blur;
+          this.scene.backgroundIntensity = h.intensity;
+        }
+      } catch { this.message = 'Could not load that HDRI'; }
+    } else { this.scene.environmentRotation.set(0, 0, 0); this.scene.backgroundBlurriness = 0; this.scene.backgroundIntensity = 1; }
+    this.applyRig(look.lights);
+    this.applyEffects();
+  }
+
+  async hdri(file) {
+    if (!this.hdris[file]) {
+      const url = hdriUrl(file);
+      const tex = /\.exr$/i.test(url) ? await new EXRLoader().loadAsync(url) : await new HDRLoader().loadAsync(url);
+      tex.mapping = THREE.EquirectangularReflectionMapping;
+      this.hdris[file] = { tex, env: this.pmrem.fromEquirectangular(tex).texture };
+    }
+    return this.hdris[file];
+  }
+
+  // A light preset's key/fill/rim (on, intensity, colour, azimuth, elevation, shadows, softness). 'match' = the
+  // scene's own rig as applyLights set it, with the base colours and the rim's place restored.
+  applyRig(lights) {
+    const L = this.lights;
+    if (lights.preset === 'match') {
+      for (const [k, l] of Object.entries(L)) { l.visible = true; l.color.setHex(this.baseRig[k].color); }
+      L.rim.position.fromArray(this.baseRig.rim.position);
+      this.applyLights(); // key colour and the key/fill places come from the scene and the Render step's rig
+      L.key.castShadow = true;
+      L.key.shadow.radius = 3;
+      return;
+    }
+    for (const k of ['key', 'fill', 'rim']) {
+      const c = lights[k];
+      const az = THREE.MathUtils.degToRad(c.azimuth);
+      const el = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(c.elevation, 1, 89));
+      L[k].visible = c.on;
+      L[k].intensity = c.intensity;
+      L[k].color.set(c.color);
+      L[k].position.set(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)).multiplyScalar(k === 'key' ? 12 : 9);
+    }
+    L.key.castShadow = lights.shadows;
+    L.key.shadow.radius = 1 + lights.softness * 6;
+  }
+
+  // Realtime effects for the look at the current quality (look.js effectsFor): composer passes, path tracing.
+  applyEffects() {
+    const look = this.look || mergeLook(this.state.look);
+    const fx = this.fx = effectsFor(look);
+    if (fx.composer) {
+      this.post ||= new Post(this.renderer, this.scene, this.camera);
+      this.post.configure(look, fx, this.width, this.height, this.renderer.getPixelRatio());
+    } else if (this.post) { this.post.dispose(); this.post = null; }
+    this.tracing = fx.pathTraced;
+    if (this.tracing) {
+      this.pt ||= new PathTraced(this.renderer);
+      if (this.ptDirty) {
+        this.ptDirty = false;
+        this.ptBusy = true;
+        this.ptReady = this.pt.setScene(this.scene, this.camera).then(() => { this.ptBusy = false; }, (e) => { this.message = `Path tracing is not available here: ${e.message}`; this.tracing = false; this.ptBusy = false; });
+      } else this.pt.cameraMoved();
+    } else if (this.pt) { this.pt.dispose(); this.pt = null; this.ptDirty = true; }
+  }
+  // Progress of the path-traced preview: samples done (0 when not tracing).
+  get samples() { return this.tracing ? this.pt?.samples || 0 : 0; }
 
   setFrame(i) {
     this.frame = i;
     this.applyYaw();
+    this.applyPathFrame();
   }
 
-  yaw() { return this.state.turn + this.frame * STEP; }
+  // Camera move (camera-path.js): on a turntable frame the camera follows the saved path. t runs 0..1 over
+  // the full turn. Without a path this does nothing, so plain turntables render as before.
+  pathT() { return (this.frame || 0) / (360 / STEP); }
+  applyPathFrame() {
+    const p = this.state.cameraPath;
+    if (!p?.on || !normalizePath(p).on) return;
+    const c = samplePath(p, this.pathT());
+    this.applyCamera();
+    this.camera.position.set(...c.position);
+    this.target = new THREE.Vector3(...c.target);
+    this.camera.lookAt(this.target);
+    this.camera.near = Math.min(this.camera.near, 0.05);
+    this.camera.far = Math.max(this.camera.far, 400);
+    this.camera.updateProjectionMatrix();
+    this.camera.updateMatrixWorld();
+  }
+  // Sky playlist for frame t: turns the environment and switches HDRIs with a short dip to dark. Async because a
+  // new HDRI may have to load; the render loop awaits it before drawing the frame.
+  async applySkyFrame(t = this.pathT()) {
+    const sky = this.state.sky;
+    const h = this.lookHdri;
+    if (!sky?.on || !h) return;
+    const k = skyAt(sky, t);
+    const file = k.file || h.file;
+    if (!file) return;
+    if (file !== (this.skyFile || h.file)) {
+      try {
+        const { env, tex } = await this.hdri(file);
+        this.scene.environment = env;
+        if (h.background) this.scene.background = tex;
+        this.skyFile = file;
+      } catch { this.message = 'Could not load that HDRI'; }
+    }
+    const rot = THREE.MathUtils.degToRad((h.rotation || 0) + k.rotation);
+    this.scene.environmentRotation.set(0, rot, 0);
+    if (h.background) { this.scene.backgroundRotation.set(0, rot, 0); this.scene.backgroundIntensity = (h.intensity ?? 1) * Math.max(0.02, k.dim); }
+    this.dimBase ??= this.scene.environmentIntensity;
+    this.scene.environmentIntensity = this.dimBase * Math.max(0.02, k.dim);
+  }
+
+  yaw() { return this.state.turn + (this.state.cameraPath?.on && this.state.cameraPath.spin === false ? 0 : this.frame * STEP); }
   applyYaw() { this.pivot.rotation.y = -THREE.MathUtils.degToRad(this.yaw()); }
 
   // Normalise the car: orient, scale to the standard length, centre, put the tyres on the floor.
@@ -501,7 +775,8 @@ export class Studio {
     if (s.autoOrient && measure().x > size.z) m.rotation.y = -Math.PI / 2; // scans lie along X, nose on +X: turn it to +Z
     if (s.flip) m.rotation.y += Math.PI; // a scan can't tell its nose from its tail
     measure();
-    m.scale.setScalar((CAR_LENGTH / Math.max(size.x, size.z, 1e-6)) * (s.sameSize ? 1 : s.scale));
+    this.carLike = isCarShape(size); // tall models (humanoids) are never size-locked, see pipeline.js modelScale
+    m.scale.setScalar(modelScale(size, s));
     measure();
     const c = box.getCenter(new THREE.Vector3());
     if (s.center) { m.position.x -= c.x; m.position.z -= c.z; }
@@ -510,6 +785,117 @@ export class Studio {
     this.applyYaw();
     this.carHeight = size.y;
     this.carSize = size.clone();
+    if (s.motion) applyMotion(this, s.motion, this.clipTime ?? null); // motion.js: stance, pose, clip frame
+    this.applyMirror();
+  }
+
+  // Mirror tool (model-tools.js): keep one half of every mesh, mirror it across the axis through the mesh's
+  // centre, seam welded. The original geometry is kept, so turning it off (or another axis) restores it.
+  applyMirror() {
+    const mi = this.state.mirror;
+    const key = mi?.axis ? `${mi.axis}:${mi.keep || 1}` : '';
+    if (!this.model || this.mirrorKey === key) return;
+    this.mirrorKey = key;
+    this.model.traverse((o) => {
+      if (!o.isMesh || o.isSkinnedMesh) return;
+      if (!o.userData.origGeometry) o.userData.origGeometry = o.geometry;
+      const orig = o.userData.origGeometry;
+      if (o.geometry !== orig) o.geometry.dispose();
+      if (!key) { o.geometry = orig; return; }
+      const g0 = orig.index ? orig.toNonIndexed() : orig;
+      g0.computeBoundingBox();
+      const plane = (g0.boundingBox.min[mi.axis] + g0.boundingBox.max[mi.axis]) / 2;
+      const attrs = {};
+      for (const [n, at] of Object.entries(g0.attributes)) if (!at.isInterleavedBufferAttribute) attrs[n] = { array: at.array, itemSize: at.itemSize };
+      const out = mirrorAttributes(attrs, mi.axis, { keep: mi.keep || 1, plane, tol: (g0.boundingBox.max[mi.axis] - g0.boundingBox.min[mi.axis]) * 0.002 });
+      const g = new THREE.BufferGeometry();
+      for (const [n, a] of Object.entries(out)) g.setAttribute(n, new THREE.BufferAttribute(a.array, a.itemSize));
+      if (!out.normal) g.computeVertexNormals();
+      o.geometry = g;
+    });
+    this.ptDirty = true;
+  }
+
+  // Click-to-measure: the model surface point under a canvas point (CSS px), in scene space, or null.
+  pickPoint(x, y) {
+    if (!this.model) return null;
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2((x / this.width) * 2 - 1, -(y / this.height) * 2 + 1), this.camera);
+    const hit = ray.intersectObject(this.model, true)[0];
+    return hit ? hit.point.toArray() : null;
+  }
+  // The measure line between two points (null clears it). Compose only; hidden in renders by the caller.
+  setMeasure(a, b) {
+    if (this.measureLine) { this.scene.remove(this.measureLine); this.measureLine.geometry.dispose(); this.measureLine.material.dispose(); this.measureLine = null; }
+    if (!a) return;
+    const pts = [new THREE.Vector3(...a), new THREE.Vector3(...(b || a))];
+    const mat = new THREE.LineBasicMaterial({ color: 0xff7a66, depthTest: false });
+    this.measureLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat);
+    this.measureLine.renderOrder = 999;
+    this.scene.add(this.measureLine);
+  }
+  // A scene point in canvas CSS px (for the measure label).
+  toScreen(p) {
+    const v = new THREE.Vector3(...p).project(this.camera);
+    return [(v.x + 1) / 2 * this.width, (1 - v.y) / 2 * this.height];
+  }
+
+  // Rigging preview: the bone names of the first skinned mesh, and a heat view of one bone's weights.
+  bones() {
+    let sk = null;
+    this.model?.traverse((o) => { if (!sk && o.isSkinnedMesh) sk = o; });
+    return sk ? sk.skeleton.bones.map((b) => b.name) : [];
+  }
+  showWeights(boneName) {
+    this.model?.traverse((o) => {
+      if (!o.isSkinnedMesh) return;
+      if (o.userData.weightMat) { o.material.dispose(); o.material = o.userData.weightMat; delete o.userData.weightMat; }
+      if (boneName == null) return;
+      const bi = o.skeleton.bones.findIndex((b) => b.name === boneName);
+      const g = o.geometry;
+      const w = boneWeights(g.attributes.skinIndex.array, g.attributes.skinWeight.array, bi);
+      const col = new Float32Array(w.length * 3);
+      for (let i = 0; i < w.length; i++) col.set(heat(w[i]), i * 3);
+      g.setAttribute('weightColor', new THREE.BufferAttribute(col, 3));
+      g.setAttribute('color', g.attributes.weightColor);
+      o.userData.weightMat = o.material;
+      o.material = new THREE.MeshBasicMaterial({ vertexColors: true });
+    });
+  }
+
+  // Animation preview: show the clip at time t (seconds), or null for the still pose.
+  setClipTime(t) { this.clipTime = t; this.applyModel(); this.ptDirty = true; }
+
+  // Reference grid (Compose only, never in renders): floor and back grid, scale silhouettes. Returns the model size in m.
+  modelSize() {
+    if (!this.model) return null;
+    this.pivot.updateMatrixWorld(true);
+    const size = new THREE.Box3().setFromObject(this.model).getSize(new THREE.Vector3());
+    return { x: size.x, y: size.y, z: size.z };
+  }
+  setGrid(on, { cell = 1, divisions = 10, refs = [] } = {}) {
+    if (this.refGrid) { this.scene.remove(this.refGrid); this.refGrid.traverse((o) => { o.geometry?.dispose(); o.material?.dispose?.(); }); this.refGrid = null; }
+    if (on) {
+      const g = new THREE.Group();
+      g.name = 'referenceGrid';
+      const size = cell * divisions;
+      const floor = new THREE.GridHelper(size, divisions, 0xff7a66, 0x555555);
+      floor.position.y = 0.001;
+      const back = new THREE.GridHelper(size, divisions, 0xff7a66, 0x555555);
+      back.rotation.x = Math.PI / 2;
+      back.position.set(0, size / 2, -size / 2);
+      g.add(floor, back);
+      let x = -size / 2 + 0.6;
+      for (const r of refs) {
+        const box = new THREE.Mesh(new THREE.BoxGeometry(r.width, r.height, r.depth), new THREE.MeshBasicMaterial({ color: 0x9fd3ff, wireframe: true, transparent: true, opacity: 0.6 }));
+        box.position.set(x + r.width / 2, r.height / 2, -size / 4);
+        x += r.width + 0.4;
+        g.add(box);
+      }
+      this.refGrid = g;
+      this.scene.add(g);
+    }
+    this.ptDirty = true;
   }
 
   applyLights() {
@@ -537,36 +923,28 @@ export class Studio {
   // Frames the car for the look (4:3 studio or 1:1 transparent) and fits that frame inside the canvas.
   // The camera is placed so the lens changes perspective, not the size of the car in the frame.
   applyCamera() {
-    if (this.freeCamera) { // Review: OrbitControls owns the camera
-      this.camera.aspect = this.width / this.height;
-      this.camera.updateProjectionMatrix();
-      this.frameRect = { x: 0, y: 0, width: this.width, height: this.height };
-      return;
-    }
     const s = this.state;
+    if (this.tracing) this.pt?.cameraMoved();
+    if (s.view === 'free') return this.applyFreeCamera();
+    if (this.controls) this.controls.enabled = false;
     if (plateOf(s)) return this.applyPlateCamera(plateOf(s).cam);
     const preset = CAMERAS[s.camera] || CAMERAS.front34;
     const aspect = aspectOf(s.preset);
-    const hfov = 2 * Math.atan(17.5 / s.lens); // 35 mm film gauge
+    const hfov = hfovOf(s.lens);
     // Metres visible across the frame at the car: the footprint diagonal over the fill share, so a turning car
     // never leaves the frame and fills the same share of it whatever its proportions.
     const size = this.carSize || new THREE.Vector3(1.9, 1.3, CAR_LENGTH);
     const width = Math.hypot(size.x, size.z) / (aspect > 1 ? FILL.wide : FILL.square);
-    const distance = width / 2 / Math.tan(hfov / 2);
+    let distance = width / 2 / Math.tan(hfov / 2);
     const target = new THREE.Vector3(0, size.y / 2 + (aspect > 1 ? 0.06 * width : 0), 0); // 4:3 looks keep some floor
+    const sphere = s.fit === 'all' && this.sphere();
+    if (sphere) { distance = Math.max(distance, fitDistance(sphere.radius, hfov, aspect)); target.copy(sphere.center); }
     const el = THREE.MathUtils.degToRad(preset.elevation);
-    this.camera.position.set(0, target.y + distance * Math.sin(el), distance * Math.cos(el));
+    this.camera.position.set(target.x, target.y + distance * Math.sin(el), target.z + distance * Math.cos(el));
     this.camera.lookAt(target);
-    const view = this.width / this.height;
-    const tanV = Math.tan(hfov / 2) / aspect; // vertical half-angle of the look
-    this.camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(view >= aspect ? tanV : (tanV * aspect) / view));
-    this.camera.aspect = view;
-    this.camera.near = 0.1;
-    this.camera.far = distance * 6;
-    this.camera.updateProjectionMatrix();
-    this.frameRect = view >= aspect
-      ? { x: (this.width - this.height * aspect) / 2, y: 0, width: this.height * aspect, height: this.height }
-      : { x: 0, y: (this.height - this.width / aspect) / 2, width: this.width, height: this.width / aspect };
+    this.target = target;
+    const dr = depthRange(distance, sphere ? sphere.radius : Math.hypot(size.x, size.y, size.z) / 2);
+    this.fitFrame(Math.tan(hfov / 2) / aspect, aspect, dr.near, Math.max(dr.far, distance * 6));
   }
 
   // A photo scene: the camera the photo was taken with (pipeline.js plateCamera), fitted inside the canvas like
@@ -574,19 +952,103 @@ export class Studio {
   applyPlateCamera(cal) {
     const aspect = 4 / 3;
     const cam = plateCamera(cal, aspect);
+    const target = new THREE.Vector3(...cam.target);
     this.camera.position.set(...cam.position);
-    this.camera.lookAt(...cam.target);
-    const view = this.width / this.height;
+    this.camera.lookAt(target);
+    this.target = target;
     const tanV = Math.tan(THREE.MathUtils.degToRad(cam.vfov) / 2);
+    this.fitFrame(tanV, aspect, 0.1, 200);
+    if (this.state.fit === 'all' && this.model) {
+      // "Frame all": the photo's camera aims at the floor, not the model, so pull back along its own line of
+      // sight until every corner of the model projects inside the frame (at most 10× the photo's distance).
+      for (let k = 0; k < 40 && !this.framesModel(0.92); k++) this.camera.position.sub(target).multiplyScalar(1.06).add(target);
+      this.camera.updateMatrixWorld();
+    }
+    this.coverBackground();
+  }
+
+  // Whether the model's whole bounding box projects inside the look's frame (ndc ±limit).
+  framesModel(limit = 1) {
+    if (!this.model) return true;
+    this.camera.updateMatrixWorld();
+    const box = new THREE.Box3().setFromObject(this.model);
+    const f = this.frameRect;
+    const sx = this.width / f.width; // the frame is letterboxed inside the canvas; ndc is canvas-wide
+    const sy = this.height / f.height;
+    for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) {
+      const p = new THREE.Vector3(x, y, z).project(this.camera);
+      if (p.z > 1 || Math.abs(p.x * sx) > limit || Math.abs(p.y * sy) > limit) return false;
+    }
+    return true;
+  }
+
+  // Free roam: the orbit camera (state.orbit), through the look's frame so what sits inside the safe area renders.
+  applyFreeCamera() {
+    const s = this.state;
+    const aspect = plateOf(s) ? 4 / 3 : aspectOf(s.preset);
+    if (!s.orbit) { // first time: start exactly where the car view camera is
+      s.view = 'car';
+      this.applyCamera();
+      s.view = 'free';
+      s.orbit = { position: this.camera.position.toArray(), target: this.target.toArray() };
+    }
+    const target = new THREE.Vector3(...s.orbit.target);
+    this.camera.position.set(...s.orbit.position);
+    this.camera.lookAt(target);
+    this.target = target;
+    if (this.controls) { this.controls.target.copy(target); this.controls.enabled = true; }
+    const sp = this.sphere();
+    const dr = sp ? depthRange(this.camera.position.distanceTo(sp.center), sp.radius) : { near: 0.05, far: 2000 };
+    this.fitFrame(Math.tan(hfovOf(s.lens) / 2) / aspect, aspect, Math.min(dr.near, 0.05), Math.max(dr.far, 400));
+    this.coverBackground();
+  }
+
+  // The look's frame (its aspect) inside the canvas: fov from the frame's vertical half-angle tangent, letterboxed.
+  fitFrame(tanV, aspect, near, far) {
+    const view = this.width / this.height;
     this.camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(view >= aspect ? tanV : (tanV * aspect) / view));
     this.camera.aspect = view;
-    this.camera.near = 0.1;
-    this.camera.far = 200;
+    this.camera.near = near;
+    this.camera.far = far;
     this.camera.updateProjectionMatrix();
     this.frameRect = view >= aspect
       ? { x: (this.width - this.height * aspect) / 2, y: 0, width: this.height * aspect, height: this.height }
       : { x: 0, y: (this.height - this.width / aspect) / 2, width: this.width, height: this.width / aspect };
-    this.coverBackground();
+  }
+
+  // The model's bounding sphere in scene space (rotation-proof, so a turning car stays framed), or null.
+  sphere() {
+    if (!this.model) return null;
+    this.pivot.updateMatrixWorld(true);
+    return new THREE.Box3().setFromObject(this.model).getBoundingSphere(new THREE.Sphere());
+  }
+
+  // Free roam in the composer: OrbitControls own the camera between pointer events (drag orbits, wheel zooms,
+  // right or Shift drag pans). Every move is copied into state.orbit; onChange(orbit, settled) redraws and saves.
+  enableOrbit(onChange) {
+    const c = this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    Object.assign(c, { enabled: false, minDistance: 0.2, maxDistance: 400, screenSpacePanning: true });
+    c.addEventListener('change', () => {
+      this.state.orbit = { position: this.camera.position.toArray(), target: c.target.toArray() };
+      onChange(this.state.orbit, false);
+    });
+    c.addEventListener('end', () => onChange(this.state.orbit, true));
+    this.applyCamera(); // the constructor's update() aimed the camera at the origin
+  }
+
+  // "Frame all": the whole model in view with a little padding. Free roam moves the orbit camera back along its
+  // own line of sight; car view keeps the preset's angle and photo camera but pulls back until the model fits.
+  // Returns the scene fields that changed, for saving.
+  frameAll() {
+    const sphere = this.sphere();
+    if (!sphere) return null;
+    const s = this.state;
+    if (s.view === 'free') {
+      if (!s.orbit) this.applyFreeCamera();
+      s.orbit = frameOrbit({ center: sphere.center.toArray(), radius: sphere.radius }, s.orbit.position, hfovOf(s.lens), plateOf(s) ? 4 / 3 : aspectOf(s.preset));
+    } else s.fit = 'all';
+    this.applyCamera();
+    return s.view === 'free' ? { orbit: s.orbit } : { fit: s.fit };
   }
 
   resize(width, height, pixelRatio = 1) {
@@ -601,6 +1063,7 @@ export class Studio {
       this.floor.material.uniforms.texel.value.set(1 / w, 1 / h);
     }
     this.applyCamera();
+    if (this.post || this.tracing) this.applyEffects();
   }
 
   clearStage() {
@@ -887,10 +1350,17 @@ export class Studio {
   render() {
     if (this.model) this.shadow.update(this.renderer, this.scene, this.state.shadow);
     this.shadow.plane.visible = Boolean(this.model);
-    this.renderer.render(this.scene, this.camera);
+    if (this.tracing && this.pt?.tracer && !this.ptDirty && !this.ptBusy) { if (this.pt.renderSample() || this.pt.done) return; }
+    if (this.post?.composer) this.post.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 
   dispose() {
+    this.controls?.dispose();
+    this.post?.dispose();
+    this.pt?.dispose();
+    for (const h of Object.values(this.hdris)) { h.tex.dispose(); h.env.dispose(); }
+    for (const m of this.pieceMats.values()) m.dispose();
     this.clearStage();
     if (this.model) disposeTree(this.model);
     for (const t of Object.values(this.envs)) t.dispose();

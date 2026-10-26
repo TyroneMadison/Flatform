@@ -1,0 +1,12 @@
+{
+  "id": "three-quarter-hero",
+  "name": "Three-quarter hero",
+  "kind": "car",
+  "icon": "⭐",
+  "description": "The classic front three-quarter, low and wide.",
+  "camera": {
+    "turn": 35,
+    "elevation": 3,
+    "lens": 30
+  }
+}

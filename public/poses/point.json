@@ -1,0 +1,37 @@
+{
+  "id": "point",
+  "name": "Point",
+  "kind": "humanoid",
+  "icon": "👉",
+  "description": "Right arm straight ahead.",
+  "bones": {
+    "upperArm.R": {
+      "rotation": [
+        -90,
+        0,
+        0
+      ]
+    },
+    "lowerArm.R": {
+      "rotation": [
+        0,
+        0,
+        0
+      ]
+    },
+    "upperArm.L": {
+      "rotation": [
+        0,
+        0,
+        -70
+      ]
+    },
+    "head": {
+      "rotation": [
+        0,
+        -10,
+        0
+      ]
+    }
+  }
+}

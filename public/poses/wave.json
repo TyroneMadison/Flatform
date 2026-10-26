@@ -1,0 +1,37 @@
+{
+  "id": "wave",
+  "name": "Wave",
+  "kind": "humanoid",
+  "icon": "👋",
+  "description": "Right hand up and open.",
+  "bones": {
+    "upperArm.R": {
+      "rotation": [
+        -150,
+        0,
+        30
+      ]
+    },
+    "lowerArm.R": {
+      "rotation": [
+        -30,
+        0,
+        0
+      ]
+    },
+    "hand.R": {
+      "rotation": [
+        0,
+        0,
+        20
+      ]
+    },
+    "upperArm.L": {
+      "rotation": [
+        0,
+        0,
+        -70
+      ]
+    }
+  }
+}

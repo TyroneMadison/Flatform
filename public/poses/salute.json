@@ -1,0 +1,37 @@
+{
+  "id": "salute",
+  "name": "Salute",
+  "kind": "humanoid",
+  "icon": "🫡",
+  "description": "Right hand to the brow.",
+  "bones": {
+    "upperArm.R": {
+      "rotation": [
+        -110,
+        0,
+        70
+      ]
+    },
+    "lowerArm.R": {
+      "rotation": [
+        -130,
+        0,
+        0
+      ]
+    },
+    "upperArm.L": {
+      "rotation": [
+        0,
+        0,
+        -75
+      ]
+    },
+    "chest": {
+      "rotation": [
+        -5,
+        0,
+        0
+      ]
+    }
+  }
+}

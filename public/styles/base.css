@@ -208,3 +208,37 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16
 .sm-neon { position: absolute; left: 0; right: 0; bottom: 0; height: 37%; background: radial-gradient(ellipse 20% 50% at 20% 0, rgba(255, 60, 200, .35), transparent), radial-gradient(ellipse 20% 50% at 80% 0, rgba(0, 220, 255, .3), transparent); }
 .s-hdri { background: linear-gradient(#5c6a7d, #a7a097 55%, #585048 56%, #2b2723); }
 .up { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .45); color: #fff; }
+
+/* Workspaces pill (rail), reference grid readout, TennoGen compare, theme swatches, export video */
+.wspill { position: relative; margin: 6px 0 10px; }
+.wsbtn { display: flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--line-3, #333); background: transparent; color: var(--text); font-size: 11px; cursor: pointer; }
+.wsico { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+.wsico.warframe { background: #c9a35a; }
+.wsmenu { position: absolute; z-index: 30; left: 0; top: 100%; min-width: 180px; padding: 6px; display: grid; gap: 2px; }
+.wsmenu button { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: transparent; border: 0; color: var(--text); text-align: left; cursor: pointer; border-radius: 6px; }
+.wsmenu button:hover, .wsmenu button[aria-checked="true"] { background: var(--tint, rgba(255, 255, 255, .06)); }
+.wsmenu small { margin-left: auto; color: var(--muted); }
+.hud.dims { left: 12px; bottom: 44px; }
+.checklist ul, .histlist { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 4px; font-size: 12px; }
+.checklist .ok { color: var(--ok, #6c6); } .checklist .bad { color: var(--bad, #f66); }
+.histlist li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.exportvideo { margin-top: 12px; padding: 14px; display: grid; gap: 8px; }
+.batchlist { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; font-size: 12px; }
+.batchlist li { display: flex; gap: 8px; align-items: center; }
+
+/* Sadie half: Tools group, big plain buttons (redesign mock-up) */
+.btn.big { font-size: 17px; font-weight: 700; padding: 14px 20px; min-height: 54px; border-radius: 14px; }
+.chips.big .chip { font-size: 15px; padding: 10px 14px; min-height: 44px; }
+.hud.measure { position: absolute; transform: translate(-50%, -140%); background: var(--accent, #ff7a66); color: #fff; font-weight: 700; padding: 4px 10px; border-radius: 10px; pointer-events: none; }
+.warnbox { border: 2px solid #f2b56b; border-radius: 12px; padding: 8px 12px; margin: 6px 0; }
+.warnbox p { margin: 2px 0; }
+.chipset { display: inline-flex; gap: 2px; margin: 0 6px 6px 0; }
+.chip.sm { padding: 4px 8px; min-height: 0; }
+.skyrow { display: grid; grid-template-columns: 1fr 64px auto auto; gap: 6px; align-items: center; margin: 4px 0; }
+label.check { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; cursor: pointer; }
+label.check input[type="range"] { flex: 1 1 100%; }
+.lightgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 8px 0; }
+.lightcard { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid var(--line, #333); border-radius: 10px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; text-align: left; }
+.lightcard[aria-checked="true"] { border-color: var(--accent, #e8735a); box-shadow: 0 0 0 1px var(--accent, #e8735a); }
+.lightcard img, .lightcard .ph { width: 100%; aspect-ratio: 4 / 3; border-radius: 6px; object-fit: cover; background: #222; display: block; }

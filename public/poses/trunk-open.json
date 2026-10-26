@@ -1,0 +1,19 @@
+{
+  "id": "trunk-open",
+  "name": "Trunk open",
+  "kind": "car",
+  "icon": "🧳",
+  "description": "Trunk lid raised.",
+  "parts": {
+    "trunk": {
+      "rotation": [
+        60,
+        0,
+        0
+      ]
+    }
+  },
+  "requires": [
+    "trunk"
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "crouch",
+  "name": "Crouch",
+  "kind": "humanoid",
+  "icon": "🧎",
+  "description": "Knees bent, low to the ground.",
+  "bones": {
+    "upperLeg.L": {
+      "rotation": [
+        -85,
+        0,
+        0
+      ]
+    },
+    "lowerLeg.L": {
+      "rotation": [
+        110,
+        0,
+        0
+      ]
+    },
+    "upperLeg.R": {
+      "rotation": [
+        -85,
+        0,
+        0
+      ]
+    },
+    "lowerLeg.R": {
+      "rotation": [
+        110,
+        0,
+        0
+      ]
+    },
+    "spine": {
+      "rotation": [
+        20,
+        0,
+        0
+      ]
+    },
+    "upperArm.L": {
+      "rotation": [
+        20,
+        0,
+        -50
+      ]
+    },
+    "upperArm.R": {
+      "rotation": [
+        20,
+        0,
+        50
+      ]
+    }
+  }
+}

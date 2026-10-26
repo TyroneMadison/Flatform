@@ -19,6 +19,7 @@ import os
 import sys
 
 import bpy
+from bpy_extras.object_utils import world_to_camera_view
 from mathutils import Vector
 
 CAR_LENGTH = 4.6
@@ -37,7 +38,28 @@ CAMERAS = {  # elevation in degrees, as in studio.js
 DEFAULTS = {
     "x": 0.0, "y": 0.0, "snap": True, "turn": 30.0, "scale": 1.0, "sameSize": True, "camera": "front34",
     "lens": 50.0, "autoOrient": True, "center": True, "flip": False, "reflection": 0.7,
+    # Camera view mode (studio.js): "car" = the preset camera, "free" = the orbit camera saved in `orbit`
+    # ({"position": [x, y, z], "target": [x, y, z]} in Flatform's Y-up metres). fit "all" = "Frame all" in car view.
+    "view": "car", "orbit": None, "fit": "footprint",
 }
+
+
+def is_car_shape(size):
+    """pipeline.js isCarShape: a car is longer than tall; anything clearly taller is not size-locked."""
+    return size.z <= 1.15 * max(size.x, size.y)  # Blender is Z-up: size.z is the height
+
+
+def model_scale(size, s):
+    """pipeline.js modelScale: cars by length (locked with sameSize), others by their largest side."""
+    car = is_car_shape(size)
+    fit = CAR_LENGTH / max(max(size.x, size.y) if car else max(size.x, size.y, size.z), 1e-6)
+    return fit * (1 if car and s["sameSize"] else s["scale"])
+
+
+def fit_distance(radius, hfov, aspect, pad=1.1):
+    """pipeline.js fitDistance: how far back a sphere of `radius` fits a frame of horizontal fov `hfov` (radians)."""
+    half = math.atan(min(math.tan(hfov / 2), math.tan(hfov / 2) / aspect))
+    return max(radius, 1e-6) * pad / math.sin(half)
 
 
 def parse_args():
@@ -56,6 +78,10 @@ def parse_args():
     p.add_argument("--still", type=float)
     p.add_argument("--still-out")
     p.add_argument("--samples", type=int, default=128)
+    # The scene look (public/lib/look.js blenderLook): engine, tone mapping, exposure, background, hdri, lights.
+    p.add_argument("--scenelook")
+    # Painted pieces (public/lib/tenno.js blenderMaterial per piece key) and face groups, written by the server.
+    p.add_argument("--materials")
     return p.parse_args(argv)
 
 
@@ -311,7 +337,7 @@ def import_car(path, s):
         model.rotation_euler.z += math.pi
     lo, hi = bounds()
     size = hi - lo
-    model.scale = [CAR_LENGTH / max(size.x, size.y, 1e-6) * (1 if s["sameSize"] else s["scale"])] * 3
+    model.scale = [model_scale(size, s)] * 3
     lo, hi = bounds()
     center = (lo + hi) / 2
     if s["center"]:
@@ -320,11 +346,177 @@ def import_car(path, s):
     if s["snap"]:
         model.location.z -= lo.z
     pivot.location = (s["x"], 0, 0 if s["snap"] else s["y"])
-    return pivot, meshes, hi - lo
+    lo, hi = bounds()  # the bounding sphere and box corners in scene space, for "Frame all"
+    corners = [Vector((x, y, z)) for x in (lo.x, hi.x) for y in (lo.y, hi.y) for z in (lo.z, hi.z)]
+    return pivot, meshes, hi - lo, ((lo + hi) / 2, (hi - lo).length / 2, corners)
 
 
 def hex_linear(h):
     return srgb_to_linear(tuple(int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)))
+
+
+def piece_key(index, name, group=None):
+    """paint.js pieceKey: '<name>#<meshIndex>' or '<name>#<meshIndex>@<group>'."""
+    return f"{name or 'mesh'}#{index}" + ("" if group is None else f"@{group}")
+
+
+def mesh_key(meshes, obj):
+    """The key paint.js gave this mesh: by its glTF name (Blender may add .001), else by import order."""
+    base = obj.name.rsplit(".", 1)[0] if obj.name[-4:-3] == "." and obj.name[-3:].isdigit() else obj.name
+    return piece_key(meshes.index(obj), base)
+
+
+def group_faces(labels):
+    """infer.js groupFaces order: labels by face count, biggest first (ties keep first appearance)."""
+    counts = {}
+    for lab in labels:
+        counts[lab] = counts.get(lab, 0) + 1
+    order = sorted(counts, key=lambda lab: -counts[lab])
+    return order
+
+
+def principled_from(spec, source=None):
+    """A Principled BSDF material from tenno.js blenderMaterial, with Subsurface Weight / Radius (the subsurface_color
+    tints the radius: Blender 4.x scatters the base colour). source: the imported material whose textures to keep."""
+    mat = bpy.data.materials.new(spec.get("name", "piece"))
+    mat.use_nodes = True
+    nt = mat.node_tree
+    bsdf = nt.nodes["Principled BSDF"]
+    inputs = bsdf.inputs
+    inputs["Base Color"].default_value = (*hex_linear(spec["base_color"]), 1)
+    inputs["Metallic"].default_value = spec["metallic"]
+    inputs["Roughness"].default_value = spec["roughness"]
+    inputs["Coat Weight"].default_value = spec["coat_weight"]
+    inputs["Coat Roughness"].default_value = spec["coat_roughness"]
+    inputs["Sheen Weight"].default_value = spec["sheen_weight"]
+    inputs["Sheen Roughness"].default_value = spec["sheen_roughness"]
+    inputs["Sheen Tint"].default_value = (*hex_linear(spec["sheen_tint"]), 1)
+    inputs["Transmission Weight"].default_value = spec["transmission_weight"]
+    inputs["IOR"].default_value = spec["ior"]
+    inputs["Emission Color"].default_value = (*hex_linear(spec["emission_color"]), 1)
+    inputs["Emission Strength"].default_value = spec["emission_strength"]
+    inputs["Alpha"].default_value = spec["alpha"]
+    inputs["Subsurface Weight"].default_value = spec["subsurface_weight"]
+    tint = hex_linear(spec["subsurface_color"])
+    inputs["Subsurface Radius"].default_value = tuple(r * (0.5 + t) for r, t in zip(spec["subsurface_radius"], tint))
+    inputs["Subsurface Scale"].default_value = 1.0
+    if spec["transmission_weight"] > 0:
+        mat.blend_method = "BLEND"
+    if spec.get("textured") and source and source.use_nodes:
+        src = next((n for n in source.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+        if src is not None and src.inputs["Base Color"].links:
+            img = src.inputs["Base Color"].links[0].from_node
+            if img.type == "TEX_IMAGE":
+                tex = nt.nodes.new("ShaderNodeTexImage")
+                tex.image = img.image
+                if spec.get("slot"):  # a tint multiplies the diffuse, as in paint.js
+                    mix = nt.nodes.new("ShaderNodeMix")
+                    mix.data_type = "RGBA"
+                    mix.blend_type = "MULTIPLY"
+                    mix.inputs["Factor"].default_value = 1.0
+                    nt.links.new(tex.outputs["Color"], mix.inputs["A"])
+                    mix.inputs["B"].default_value = (*hex_linear(spec["base_color"]), 1)
+                    nt.links.new(mix.outputs["Result"], inputs["Base Color"])
+                else:
+                    nt.links.new(tex.outputs["Color"], inputs["Base Color"])
+    return mat
+
+
+def apply_materials(meshes, spec):
+    """Painted pieces: a Principled material per piece key, face groups split by label (infer.js groupFaces)."""
+    materials = spec.get("materials", {})
+    groups = spec.get("groups", {})
+    for obj in meshes:
+        key = mesh_key(meshes, obj)
+        mesh = obj.data
+        g = groups.get(key)
+        if g and len(mesh.polygons) * 1 >= 1:
+            raw = __import__("base64").b64decode(g["labels"])
+            labels = [None if b == 255 else g["names"][b] for b in raw]
+            if len(labels) == len(mesh.polygons):
+                order = group_faces(labels)
+                base = obj.material_slots[0].material if obj.material_slots else None
+                mesh.materials.clear()
+                for gi, lab in enumerate(order):
+                    piece = materials.get(piece_key(meshes.index(obj), key.split("#")[0], gi))
+                    mesh.materials.append(principled_from({**piece, "name": lab or "unlabelled"}, base) if piece else base)
+                index_of = {lab: i for i, lab in enumerate(order)}
+                for poly, lab in zip(mesh.polygons, labels):
+                    poly.material_index = index_of[lab]
+                continue
+        single = materials.get(key)
+        if single and obj.material_slots:
+            for slot in obj.material_slots:
+                slot.material = principled_from({**single, "name": key}, slot.material)
+        for gi, slot in enumerate(obj.material_slots):
+            piece = materials.get(piece_key(meshes.index(obj), key.split("#")[0], gi))
+            if piece and len(obj.material_slots) > 1:
+                slot.material = principled_from({**piece, "name": f"{key}@{gi}"}, slot.material)
+
+
+def apply_look(look, meshes):
+    """The scene look: engine, tone mapping and exposure, background, HDRI, light preset. None = untouched."""
+    if not look:
+        return
+    scene = bpy.context.scene
+    scene.render.engine = look.get("engine", "CYCLES")
+    try:
+        scene.view_settings.view_transform = look.get("tone", "Khronos PBR Neutral")
+    except TypeError:
+        pass
+    scene.view_settings.exposure = math.log2(max(look.get("exposure", 1.0), 1e-3))
+    world = scene.world
+    nt = world.node_tree
+    bg_node = nt.nodes["Background"]
+    out = next(n for n in nt.nodes if n.type == "OUTPUT_WORLD")
+    background = look.get("background") or {}
+    if background.get("kind") in ("solid", "gradient") and not scene.render.film_transparent:
+        bg_node.inputs["Color"].default_value = (*hex_linear(background["color"]), 1)
+        bg_node.inputs["Strength"].default_value = 1.0
+    hdri = look.get("hdri")
+    if hdri and hdri.get("path") and os.path.exists(hdri["path"]):
+        env = nt.nodes.new("ShaderNodeTexEnvironment")
+        env.image = bpy.data.images.load(hdri["path"])
+        mapping = nt.nodes.new("ShaderNodeMapping")
+        mapping.inputs["Rotation"].default_value = (0, 0, math.radians(hdri.get("rotation", 0)))
+        coord = nt.nodes.new("ShaderNodeTexCoord")
+        nt.links.new(coord.outputs["Generated"], mapping.inputs["Vector"])
+        nt.links.new(mapping.outputs["Vector"], env.inputs["Vector"])
+        lit = nt.nodes.new("ShaderNodeBackground")
+        lit.inputs["Strength"].default_value = hdri.get("intensity", 1.0)
+        nt.links.new(env.outputs["Color"], lit.inputs["Color"])
+        if hdri.get("background"):
+            nt.links.new(lit.outputs["Background"], out.inputs["Surface"])
+        else:  # the HDRI lights and reflects; the camera still sees the scene's own background
+            mix = nt.nodes.new("ShaderNodeMixShader")
+            path = nt.nodes.new("ShaderNodeLightPath")
+            nt.links.new(path.outputs["Is Camera Ray"], mix.inputs["Fac"])
+            nt.links.new(lit.outputs["Background"], mix.inputs[1])
+            nt.links.new(bg_node.outputs["Background"], mix.inputs[2])
+            nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
+    lights = look.get("lights")
+    if lights:
+        objs = scene.objects
+        for name in ("key", "fill", "rim"):
+            cfg = lights[name]
+            light_obj = objs.get(name)
+            if light_obj is None:
+                continue
+            light_obj.hide_render = not cfg["on"]
+            light_obj.data.energy = 2.2 * cfg["intensity"]
+            light_obj.data.color = hex_linear(cfg["color"])
+            az, el = math.radians(cfg["azimuth"]), math.radians(min(89.0, max(1.0, cfg["elevation"])))
+            dist = 12 if name == "key" else 9
+            aim(light_obj, (math.sin(az) * math.cos(el) * dist, -math.cos(az) * math.cos(el) * dist, math.sin(el) * dist))
+        key = objs.get("key")
+        if key is not None:
+            key.data.use_shadow = lights.get("shadows", True)
+            if key.data.type == "SUN":
+                key.data.angle = math.radians(0.5 + 8 * lights.get("softness", 0.5))
+    if scene.render.engine == "BLENDER_EEVEE_NEXT":
+        ao = look.get("ao") or {}
+        scene.eevee.use_gtao = bool(ao.get("on"))
+        scene.eevee.use_raytracing = True
 
 
 def build_plate(plate):
@@ -356,38 +548,61 @@ def plate_lighting(lighting, sun):
     return out
 
 
-def plate_camera(cam, aspect):
-    """The camera pipeline.js plateCamera solved for the photo; Flatform's Y-up (x, y, z) is Blender's (x, -z, y)."""
+def aim_camera(data, location, target):
+    obj = bpy.data.objects.new("camera", data)
+    bpy.context.scene.collection.objects.link(obj)
+    obj.location = location
+    obj.rotation_euler = (Vector(target) - Vector(location)).to_track_quat("-Z", "Y").to_euler()
+    bpy.context.scene.camera = obj
+    return obj
+
+
+def plate_camera(cam, aspect, s, sphere):
+    """The camera pipeline.js plateCamera solved for the photo; Flatform's Y-up (x, y, z) is Blender's (x, -z, y).
+    "Frame all" pulls back along the photo's own view until the whole model fits (studio.js applyPlateCamera)."""
     (px, py, pz), (tx, ty, tz) = cam["position"], cam["target"]
     data = bpy.data.cameras.new("camera")
     data.sensor_fit = "HORIZONTAL"
     data.angle = 2 * math.atan(math.tan(math.radians(cam["vfov"]) / 2) * aspect)
-    obj = bpy.data.objects.new("camera", data)
-    bpy.context.scene.collection.objects.link(obj)
-    obj.location = (px, -pz, py)
-    obj.rotation_euler = (Vector((tx, -tz, ty)) - obj.location).to_track_quat("-Z", "Y").to_euler()
-    bpy.context.scene.camera = obj
+    location, target = Vector((px, -pz, py)), Vector((tx, -tz, ty))
+    cam_obj = aim_camera(data, location, target)
+    if s["fit"] == "all":  # the photo's camera aims at the floor: pull back along its view until every corner fits
+        scene = bpy.context.scene
+        for _ in range(40):
+            bpy.context.view_layer.update()
+            seen = [world_to_camera_view(scene, cam_obj, c) for c in sphere[2]]
+            if all(0.04 <= v.x <= 0.96 and 0.04 <= v.y <= 0.96 and v.z > 0 for v in seen):
+                break
+            cam_obj.location = target + (cam_obj.location - target) * 1.06
 
 
-def place_camera(s, look, size):
+def lens_camera(lens):
+    data = bpy.data.cameras.new("camera")
+    data.sensor_fit = "HORIZONTAL"
+    data.sensor_width = 35
+    data.lens = float(lens)
+    return data
+
+
+def free_camera(s):
+    """Free roam: the orbit camera saved by the composer, with the lens slider's field of view."""
+    (px, py, pz), (tx, ty, tz) = s["orbit"]["position"], s["orbit"]["target"]
+    aim_camera(lens_camera(s["lens"]), (px, -pz, py), (tx, -tz, ty))
+
+
+def place_camera(s, look, size, sphere):
     """Fitted to the car's footprint like studio.js applyCamera; size is the normalised car (x, y, z = height)."""
     aspect = 1.0 if look == "transparent" else 4 / 3
     lens = float(s["lens"])
     hfov = 2 * math.atan(17.5 / lens)  # 35 mm film gauge, like studio.js
     width = math.hypot(size.x, size.y) / (FILL["wide"] if aspect > 1 else FILL["square"])
     distance = width / 2 / math.tan(hfov / 2)
-    target_z = size.z / 2 + (0.06 * width if aspect > 1 else 0)
+    target = Vector((0, 0, size.z / 2 + (0.06 * width if aspect > 1 else 0)))
+    if s["fit"] == "all":  # "Frame all": the whole model, from the preset's angle
+        distance = max(distance, fit_distance(sphere[1], hfov, aspect))
+        target = sphere[0]
     el = math.radians(CAMERAS.get(s["camera"], 13.0))
-    cam_data = bpy.data.cameras.new("camera")
-    cam_data.sensor_fit = "HORIZONTAL"
-    cam_data.sensor_width = 35
-    cam_data.lens = lens
-    cam = bpy.data.objects.new("camera", cam_data)
-    bpy.context.scene.collection.objects.link(cam)
-    cam.location = (0, -distance * math.cos(el), target_z + distance * math.sin(el))
-    direction = Vector((0, 0, target_z)) - cam.location
-    cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
-    bpy.context.scene.camera = cam
+    aim_camera(lens_camera(lens), (target.x, target.y - distance * math.cos(el), target.z + distance * math.sin(el)), target)
 
 
 def setup_render(width, height, look, samples):
@@ -453,13 +668,19 @@ def main():
     else:
         build_ring_studio(float(s["reflection"]))
     apply_rig(lighting)
-    pivot, meshes, size = import_car(args.glb, s)
+    pivot, meshes, size, sphere = import_car(args.glb, s)
     apply_glass(meshes, glass)
-    if plate:
-        plate_camera(plate["camera"], width / height)
-    else:
-        place_camera(s, args.look, size)
+    if args.materials and os.path.exists(args.materials):
+        with open(args.materials, encoding="utf-8") as f:
+            apply_materials(meshes, json.load(f))
     setup_render(width, height, "transparent" if photo else args.look, args.samples)
+    apply_look(json.loads(args.scenelook) if args.scenelook else None, meshes)
+    if s["view"] == "free" and s["orbit"]:
+        free_camera(s)
+    elif plate:
+        plate_camera(plate["camera"], width / height, s, sphere)
+    else:
+        place_camera(s, args.look, size, sphere)
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.frames):
         # Same direction as the in-app renderer: positive yaw turns the car clockwise seen from above.

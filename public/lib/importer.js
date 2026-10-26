@@ -54,13 +54,14 @@ export async function previewOf(glb) {
 }
 
 // Converts, previews and saves a dropped model; returns the new library entry.
-export async function importModel(file) {
+export async function importModel(file, workspace = 'car') {
   if (file.size > MAX_MODEL) throw new Error(`${file.name}: too large (max 300 MB)`);
   const glb = await toGlb(file);
   const form = new FormData();
   form.append('name', file.name.replace(/\.[^.]+$/, '') || 'Untitled');
   form.append('glb', new File([glb], 'model.glb', { type: 'model/gltf-binary' }));
   form.append('fileName', file.name);
+  form.append('workspace', workspace);
   if (extOf(file.name) !== '.glb') form.append('original', file, file.name); // a GLB is already the 'glb' part
   const preview = await previewOf(glb);
   if (preview) form.append('preview', new File([preview], 'preview.png', { type: 'image/png' }));

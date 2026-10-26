@@ -1,0 +1,19 @@
+{
+  "id": "doors-scissor",
+  "name": "Doors open (scissor)",
+  "kind": "car",
+  "icon": "✂",
+  "description": "Scissor doors raised.",
+  "parts": {
+    "door.scissor": {
+      "rotation": [
+        0,
+        0,
+        75
+      ]
+    }
+  },
+  "requires": [
+    "door.scissor"
+  ]
+}

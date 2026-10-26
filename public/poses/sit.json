@@ -1,0 +1,58 @@
+{
+  "id": "sit",
+  "name": "Sit / rest",
+  "kind": "humanoid",
+  "icon": "🪑",
+  "description": "Seated, legs forward.",
+  "bones": {
+    "upperLeg.L": {
+      "rotation": [
+        -90,
+        0,
+        -5
+      ]
+    },
+    "lowerLeg.L": {
+      "rotation": [
+        90,
+        0,
+        0
+      ]
+    },
+    "upperLeg.R": {
+      "rotation": [
+        -90,
+        0,
+        5
+      ]
+    },
+    "lowerLeg.R": {
+      "rotation": [
+        90,
+        0,
+        0
+      ]
+    },
+    "upperArm.L": {
+      "rotation": [
+        15,
+        0,
+        -60
+      ]
+    },
+    "upperArm.R": {
+      "rotation": [
+        15,
+        0,
+        60
+      ]
+    },
+    "spine": {
+      "rotation": [
+        5,
+        0,
+        0
+      ]
+    }
+  }
+}

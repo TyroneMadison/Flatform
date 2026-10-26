@@ -5,7 +5,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, renameSync } from 'node:fs';
 import path from 'node:path';
 
-export const KEY_ENV = { tripo: 'TRIPO_API_KEY', '3daistudio': 'THREE_D_AI_STUDIO_KEY' };
+export const KEY_ENV = { tripo: 'TRIPO_API_KEY', '3daistudio': 'THREE_D_AI_STUDIO_KEY', anthropic: 'ANTHROPIC_API_KEY' }; // anthropic: the car material inference's vision model
 const LEGACY = { tripo: 'tripo-key.bin' }; // where v0.3 and earlier kept the Tripo key
 
 /**

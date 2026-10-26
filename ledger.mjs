@@ -4,7 +4,8 @@ import { appendFile } from 'node:fs/promises';
 import { estimate } from './public/lib/pricing.js';
 import { presetConfig } from './public/lib/engines.js';
 
-export const SERVICES = ['tripo', '3daistudio'];
+export const SERVICES = ['tripo', '3daistudio']; // the paid ones, with balances and alerts
+export const LOCAL = 'local'; // the free local engine: logged at 0 credits, $0, so the ledger shows every generation
 // ponytail: USD per credit is guessed from the providers' top-up packs (about 100 credits per US dollar for both);
 // neither API reports it. Fix here if a pack price changes.
 export const USD_PER_CREDIT = { tripo: 0.01, '3daistudio': 0.01 };
@@ -32,7 +33,7 @@ export const append = (file, e) => appendFile(file, JSON.stringify(e) + '\n');
 export function parse(text) {
   const out = [];
   for (const line of String(text).split('\n')) {
-    try { const e = JSON.parse(line); if (e && SERVICES.includes(e.service) && !Number.isNaN(Date.parse(e.ts))) out.push(e); } catch { /* skip */ }
+    try { const e = JSON.parse(line); if (e && (SERVICES.includes(e.service) || e.service === LOCAL) && !Number.isNaN(Date.parse(e.ts))) out.push(e); } catch { /* skip */ }
   }
   return out;
 }
@@ -69,7 +70,7 @@ export function daily(entries, now = new Date(), days = 30) {
   const byDay = new Map(rows.map((r) => [r.day, r]));
   for (const e of entries) {
     const r = byDay.get(dayKey(new Date(e.ts)));
-    if (!r) continue;
+    if (!r || !SERVICES.includes(e.service)) continue;
     r[e.service] = round(r[e.service] + (num(e.credits) || 0));
     r.usd = round(r.usd + (num(e.usd) || 0));
   }
@@ -110,5 +111,6 @@ export function summary(entries, { now = new Date(), balances = {}, thresholds =
     const perDay = burn(entries, s, now);
     services[s] = { ...t[s], balance, threshold, burn: perDay, daysLeft: daysLeft(balance, perDay), low: isLow(balance, threshold) };
   }
-  return { services, daily: daily(entries, now), models: perModel(entries), usdPerCredit: USD_PER_CREDIT };
+  const local = entries.filter((e) => e.service === LOCAL);
+  return { services, free: { calls: local.length, usd: 0 }, daily: daily(entries, now), models: perModel(entries), usdPerCredit: USD_PER_CREDIT };
 }

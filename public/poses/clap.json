@@ -1,0 +1,37 @@
+{
+  "id": "clap",
+  "name": "Clap",
+  "kind": "humanoid",
+  "icon": "👏",
+  "description": "Hands together in front.",
+  "bones": {
+    "upperArm.L": {
+      "rotation": [
+        -50,
+        40,
+        -20
+      ]
+    },
+    "lowerArm.L": {
+      "rotation": [
+        -80,
+        0,
+        0
+      ]
+    },
+    "upperArm.R": {
+      "rotation": [
+        -50,
+        -40,
+        20
+      ]
+    },
+    "lowerArm.R": {
+      "rotation": [
+        -80,
+        0,
+        0
+      ]
+    }
+  }
+}

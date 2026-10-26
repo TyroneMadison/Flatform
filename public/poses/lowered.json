@@ -1,0 +1,10 @@
+{
+  "id": "lowered",
+  "name": "Lowered / slammed",
+  "kind": "car",
+  "icon": "⬇",
+  "description": "Body dropped on its wheels.",
+  "body": {
+    "lift": -0.07
+  }
+}

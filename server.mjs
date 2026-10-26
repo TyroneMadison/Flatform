@@ -1,7 +1,7 @@
 // Flatform server: photos → 3D model (Tripo direct or 3D AI Studio) → local library → scene → turntable renders →
 // handoff folder. Used two ways: `npm run web` (keys from .env) or embedded by the Electron app (main.mjs).
 import http from 'node:http';
-import { readFile, writeFile, rename, mkdir, rm, copyFile, stat } from 'node:fs/promises';
+import { readFile, writeFile, rename, mkdir, rm, copyFile, stat, open } from 'node:fs/promises';
 import { createReadStream, createWriteStream, existsSync, statSync, readFileSync, readdirSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -11,16 +11,37 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, PLATES, plateCamera } from './public/lib/pipeline.js';
-import { PROVIDERS, VIEWS, normalize, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
+import { PROVIDERS, VIEWS, DEFAULT_PROVIDER, normalize, baseSetup, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
 import { estimate } from './public/lib/pricing.js';
+import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
+import { resolveColors, deserializeMaterial, blenderMaterial } from './public/lib/tenno.js';
+import { inferRegions, checkAnthropicKey } from './inference.mjs';
+import { createQueue } from './batch.mjs';
+import { createWorkspaces } from './workspaces.mjs';
+import { rollbackCommand, isSafe } from './public/lib/history.js';
+import { normalizeTheme } from './public/lib/theme.js';
+import { execFile } from 'node:child_process';
+import { findFfmpeg, encodeVideo } from './video.mjs';
+import { RESOLUTIONS, FORMATS as VIDEO_FORMATS, QUALITIES as VIDEO_QUALITIES, extensionFor } from './public/lib/turntable.js';
 import { threeDAIStudio, createLimiter, THREE_D_AI_BASE, HIGH } from './providers.mjs';
 import { createKeyStore } from './keys.mjs';
 import { createUpdater, parseVersion, updateOptions } from './updates.mjs';
-import { SERVICES, CONVERT_CREDITS, entry, append, parse, summary, defaultThresholds } from './ledger.mjs';
+import { SERVICES, LOCAL, CONVERT_CREDITS, entry, append, parse, summary, defaultThresholds } from './ledger.mjs';
+import { check as checkTennogen, fixPlan, CONTENT_TYPES, EXPORT_MODES } from './public/lib/tennogen.js';
+import { pngSize, resizePng } from './png.mjs';
+import { createTextureLibrary } from './textures.mjs';
+import { decalKind, DECAL_FILE } from './public/lib/decals.js';
+import { normalizeTemplate } from './public/lib/templates.js';
+import { localEngine as createLocalEngine, downloadWeights, weightsReady, checkCuda, UPSCALER_FILES } from './local.mjs';
+import { loadPoses } from './public/lib/poses.js';
+const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
 const THREE = path.join(ROOT, 'node_modules', 'three');
+// Path tracer modules served to the page like three's addons (their src/ ships inside the app).
+const VENDOR = { 'three-mesh-bvh': path.join(ROOT, 'node_modules', 'three-mesh-bvh', 'src'), 'three-gpu-pathtracer': path.join(ROOT, 'node_modules', 'three-gpu-pathtracer', 'src') };
+const MAX_INFER = 4 * 1024 * 1024; // a 256 px PNG of the photo plus its cluster statistics
 const VERSION = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 // The app page may only run its own files (and its inline import map). WebAssembly is for the Draco/Meshopt decoders.
 // GLTFLoader fetches a GLB's embedded textures from blob: URLs (and a .gltf's data: URIs), hence connect-src blob: data:.
@@ -101,6 +122,9 @@ export function blenderCandidates(platform = process.platform, env = process.env
   ];
 }
 
+// git with an argv list (no shell), in the project folder from Settings.
+const git = (cwd, args) => new Promise((ok, fail) => execFile('git', args, { cwd, timeout: 30000, maxBuffer: 4 << 20 }, (e, out, err) => (e ? fail(new HttpError(500, (err || e.message).trim().split('\n')[0])) : ok(out))));
+
 /**
  * Starts the app server on 127.0.0.1.
  * keyStore: keys.mjs createKeyStore() — get/source/set/remove(provider). Keys never reach the page.
@@ -121,12 +145,20 @@ export async function startServer({
   // three.js addons (loaders, controls, decoders). electron-builder drops every dependency's examples/ folder,
   // so the packaged app ships this one as a resource file too.
   threeAddons = path.join(THREE, 'examples', 'jsm'),
+  hdriDir = path.join(PUBLIC, 'img', 'hdri'), // built-in HDRIs for Blender (a resource file in the packaged app)
   updateUrl,
   updateDelayMs,
+  workspaces = null, // workspaces.mjs; startApp() passes it, tests may leave it out
+  onWorkspaceSwitch = null, // called after the active workspace changes; startApp() restarts on the new folder
+  localEngine = null, // tests pass a mock; otherwise local.mjs starts TRELLIS on the first local generation
+  weightsFetch = globalThis.fetch, // the weight downloader's network (tests mock it)
+  textureFetch = globalThis.fetch, // the texture library's network: ambientCG and Poly Haven (tests mock it)
+  cudaCheck = checkCuda,
   onLowBalance, // (service, { balance, threshold }) when GET /api/spend finds a balance under its alert (main.mjs notifies)
 }) {
   const MODELS = path.join(dataDir, 'models');
   const BACKDROPS = path.join(dataDir, 'backdrops');
+  const DECALS = path.join(dataDir, 'decals'); // decal images, named by their SHA-1 so the same file is stored once
   const LIB = path.join(dataDir, 'library.json');
   const SETTINGS = path.join(dataDir, 'settings.json');
   await mkdir(MODELS, { recursive: true });
@@ -143,11 +175,14 @@ export async function startServer({
   }
 
   const defaults = {
-    region: 'global', model, texture: true, pbr: true, provider: 'tripo', setups: {},
-    renderer: 'three', blenderPath: '', outputRoot: '', defaultScene: 'showroom', alsoTransparent: true, backdrops: {},
+    region: 'global', model, texture: true, pbr: true, provider: DEFAULT_PROVIDER, setups: {},
+    localEngine: { weightsDir: '', python: '' }, // '' = <data folder>/local-engine/weights and "python" on PATH
+    renderer: 'three', blenderPath: '', ffmpegPath: '', outputRoot: '', defaultScene: 'showroom', alsoTransparent: true, backdrops: {},
     lighting: DEFAULT_LIGHTING, glass: DEFAULT_GLASS,
+    studioPresets: {}, // the user's saved scene looks (look.js), by name; the shipped ones live in the page
     updates: { autoCheck: true, skippedVersion: null },
     spend: { thresholds: defaultThresholds() }, // low-balance alert per provider, in credits
+    tennogenCheck: 'warn', // before an export of a Warframe model with a texture folder: warn, block or off
   };
   const settings = { ...defaults, ...(existsSync(SETTINGS) ? JSON.parse(await readFile(SETTINGS, 'utf8')) : {}) };
   if (settings.defaultScene === 'gold') settings.defaultScene = 'ring';
@@ -315,13 +350,16 @@ export async function startServer({
     }
     let setup;
     try { setup = normalize(JSON.parse(String(form.get('setup')))); } catch { throw new HttpError(400, 'Unknown provider or engine'); }
+    // path=base (Generate Spin Set, thumbnails): always the free local Detail Boost setup, whatever was sent.
+    if (form.get('path') === 'base') setup = { ...baseSetup(), options: { ...baseSetup().options, ...(setup.provider === 'local' ? { seed: setup.options.seed } : {}) } };
     const views = {};
     for (const view of VIEWS) {
       const file = form.get(view);
       if (file && typeof file === 'object') views[view] = await toImage(Buffer.from(await file.arrayBuffer()), file.type);
     }
-    return { setup, views, name: form.get('name') };
+    return { setup, views, name: form.get('name'), workspace: workspaceOf(form.get('workspace')) };
   }
+  const workspaceOf = (w) => (w === 'warframe' ? 'warframe' : 'car');
 
   // Checks a setup has the photos it needs. views: { front, left, back, right } of { image, type }.
   function checkViews(setup, views) {
@@ -337,6 +375,14 @@ export async function startServer({
       task: setup.mode === 'views' ? 'multiview_to_model' : 'image_to_model', model: setup.options.model || setup.engine,
       credits: estimate(setup).credits, modelId,
     };
+    if (setup.provider === 'local') {
+      const uris = Object.fromEntries(Object.entries(views).map(([view, { image, type }]) => [view, `data:${type};base64,${image.toString('base64')}`]));
+      let out;
+      try { out = await local().submit(uris, setup.options); } catch (e) { throw new HttpError(e.status || 502, e.message); }
+      if (typeof out?.task_id !== 'string' || !out.task_id) throw new HttpError(502, 'Local engine: no task id');
+      append(SPEND, entry({ service: LOCAL, ...spend, credits: 0, taskId: out.task_id })).catch((e) => console.error(`Spend ledger: ${e.message}`));
+      return out.task_id;
+    }
     if (setup.provider === 'tripo') {
       const { image, type } = views.front;
       const form = new FormData();
@@ -407,7 +453,7 @@ export async function startServer({
     const preview = form.get('preview');
     const id = randomUUID();
     const now = new Date().toISOString();
-    const m = { id, name: cleanName(form.get('name') || originalName.replace(/\.[^.]+$/, '')), created_at: now, activeVersion: 1, versions: [] };
+    const m = { id, name: cleanName(form.get('name') || originalName.replace(/\.[^.]+$/, '')), created_at: now, activeVersion: 1, versions: [], workspace: workspaceOf(form.get('workspace')) };
     m.slug = uniqueSlug(m.name, slugsExcept(m));
     await mkdir(path.join(MODELS, m.id), { recursive: true });
     await writeFile(path.join(MODELS, m.id, 'model.glb'), glb);
@@ -428,12 +474,12 @@ export async function startServer({
   }
 
   async function createModel(req, queryName) {
-    const { setup, views, name } = await readInput(req);
+    const { setup, views, name, workspace } = await readInput(req);
     if (!setup) throw new HttpError(400, 'Add a photo');
     checkViews(setup, views);
     const id = randomUUID();
     const task_id = await submit(setup, views, id);
-    const m = { id, name: cleanName(name ?? queryName), created_at: new Date().toISOString(), activeVersion: 1, versions: [] };
+    const m = { id, name: cleanName(name ?? queryName), created_at: new Date().toISOString(), activeVersion: 1, versions: [], workspace: workspace || 'car' };
     m.slug = uniqueSlug(m.name, slugsExcept(m));
     await mkdir(path.join(MODELS, m.id), { recursive: true });
     m.versions.push(newVersion(1, setup, task_id, await saveViews(m, 1, views)));
@@ -491,11 +537,59 @@ export async function startServer({
     } else if (FAILED.includes(t.status)) Object.assign(v, { status: 'failed', error: failure(t) });
   }
 
+  // Local jobs are checked when the page asks, like Tripo. The GLB comes straight from the local service.
+  async function refreshLocal(m, v) {
+    let t;
+    try { t = await local().status(v.task_id); } catch (e) {
+      if (e.status === 404) Object.assign(v, { status: 'failed', error: 'The local engine restarted and lost this job. Click Retry.' });
+      return;
+    }
+    v.progress = t.progress ?? v.progress;
+    v.upstream_status = t.status;
+    if (t.status === 'success') {
+      const glb = await local().result(v.task_id);
+      const name = vname('model', v.n) + '.glb';
+      await writeFile(path.join(MODELS, m.id, name), glb);
+      Object.assign(v, { glb: name, status: 'ready', progress: 100, credits: 0 });
+    } else if (t.status === 'failed') Object.assign(v, { status: 'failed', error: `Local engine: ${t.error || 'failed'}` });
+  }
+
+  // ---- Local engine (local.mjs): TRELLIS on the user's GPU, started on first use, stopped on close ----
+  const weightsDir = () => settings.localEngine?.weightsDir || path.join(dataDir, 'local-engine', 'weights');
+  const textures = createTextureLibrary({ dir: path.join(dataDir, 'textures'), fetch: textureFetch });
+  const upscalerDir = () => path.join(path.dirname(weightsDir()), 'upscaler');
+  let localInst = localEngine;
+  let localFor = null;
+  function local() {
+    const key = `${weightsDir()}|${settings.localEngine?.python || ''}`;
+    if (!localInst || (!localEngine && localFor !== key)) {
+      localInst?.stop?.();
+      localInst = createLocalEngine({ weightsDir: weightsDir(), python: settings.localEngine?.python || 'python', cuda: cudaCheck });
+      localFor = key;
+    }
+    return localInst;
+  }
+  const weightsJob = { running: false, done: 0, file: null, error: null };
+  async function localView() {
+    const gpu = await cudaCheck().then((g) => ({ ok: true, ...g }), (e) => ({ ok: false, error: e.message }));
+    return { weightsDir: weightsDir(), ready: weightsReady(weightsDir()), upscaler: weightsReady(upscalerDir()), python: settings.localEngine?.python || '', gpu, download: { running: weightsJob.running, done: weightsJob.done, file: weightsJob.file, error: weightsJob.error } };
+  }
+  function startDownload() {
+    if (weightsJob.running) return;
+    Object.assign(weightsJob, { running: true, done: 0, file: null, error: null });
+    const onProgress = (p) => Object.assign(weightsJob, p);
+    // TRELLIS first, then the small Real-ESRGAN file Detail Boost uses. Both resume if stopped.
+    weightsJob.promise = downloadWeights({ dir: weightsDir(), fetch: weightsFetch, onProgress })
+      .then(() => downloadWeights({ dir: upscalerDir(), files: UPSCALER_FILES, fetch: weightsFetch, onProgress }))
+      .catch((e) => { weightsJob.error = e.message; })
+      .finally(() => { weightsJob.running = false; });
+  }
+
   // Tripo tasks are checked when the page asks. 3D AI Studio jobs are checked by the poller below instead.
   async function refreshModel(m) {
-    const pending = m.versions.filter((v) => v.status === 'generating' && v.provider === 'tripo');
+    const pending = m.versions.filter((v) => v.status === 'generating' && (v.provider === 'tripo' || v.provider === 'local'));
     if (!pending.length) return;
-    for (const v of pending) await refreshVersion(m, v);
+    for (const v of pending) await (v.provider === 'local' ? refreshLocal(m, v) : refreshVersion(m, v));
     mirror(m);
     await save();
   }
@@ -583,6 +677,7 @@ export async function startServer({
 
   const wallet = { at: 0 }; // last 3D AI Studio balance; it costs one of the 3 requests a minute, so it's kept a while
   async function account(provider, fresh) {
+    if (provider === 'local') return { hasKey: true, free: true, ready: weightsReady(weightsDir()) };
     if (!keyStore.get(provider)) return { hasKey: false };
     if (provider === 'tripo') return { hasKey: true, ...(await tripo('/account/balance')) };
     if (fresh || Date.now() - wallet.at > 5 * 60 * 1000) {
@@ -606,9 +701,17 @@ export async function startServer({
     if (provider === '3daistudio') { Object.assign(wallet, balance, { at: Date.now() }); wakePoller(1000); } // jobs waiting for a key
     return { hasKey: true, ...balance };
   }
-  const keySources = () => Object.fromEntries(Object.keys(PROVIDERS).map((p) => [p, keyStore.source(p)]));
-  const providerParam = (p) => {
-    if (!Object.hasOwn(PROVIDERS, p)) throw new HttpError(404, 'Unknown provider');
+  const keySources = () => Object.fromEntries(Object.keys(PROVIDERS).filter((p) => !PROVIDERS[p].local).map((p) => [p, keyStore.source(p)]));
+  // The vision key (Anthropic) is checked with a free models call, then saved like the provider keys.
+  async function saveVisionKey(key) {
+    key = String(key ?? '').trim();
+    if (!KEY_FORMAT.test(key)) throw new HttpError(400, 'That does not look like an Anthropic API key');
+    try { await checkAnthropicKey(key); } catch (e) { throw new HttpError(e.status || 502, e.message); }
+    await keyStore.set('anthropic', key);
+    return { hasKey: true };
+  }
+  const providerParam = (p, keyed) => {
+    if (!Object.hasOwn(PROVIDERS, p) || (keyed && PROVIDERS[p].local)) throw new HttpError(404, 'Unknown provider');
     return p;
   };
 
@@ -645,8 +748,65 @@ export async function startServer({
     return view;
   }
 
+  // ---- TennoGen texture set check (public/lib/tennogen.js): names and sizes of the PNGs in a folder ----
+
+  async function textureFolder(dir) {
+    if (typeof dir !== 'string' || !path.isAbsolute(dir)) throw new HttpError(400, 'Pick the folder with the texture files');
+    if (!(await stat(dir).catch(() => null))?.isDirectory()) throw new HttpError(400, 'That texture folder does not exist');
+    return path.resolve(dir);
+  }
+  const contentType = (type) => {
+    if (!Object.hasOwn(CONTENT_TYPES, type)) throw new HttpError(400, `Content type must be one of ${Object.keys(CONTENT_TYPES).join(', ')}`);
+    return type;
+  };
+  // Reads the names and PNG sizes of the files in a texture folder (top level only).
+  async function textureFiles(dir) {
+    const files = [];
+    for (const name of readdirSync(dir).sort()) {
+      if (!/\.(png|jpe?g|tga|tif|tiff|bmp|psd|fbx)$/i.test(name)) continue;
+      const f = { name };
+      if (/\.png$/i.test(name)) {
+        const head = Buffer.alloc(24);
+        const fh = await open(path.join(dir, name));
+        try { await fh.read(head, 0, 24, 0); } finally { await fh.close(); }
+        Object.assign(f, pngSize(head) || {});
+      }
+      files.push(f);
+    }
+    return files;
+  }
+  async function tennogenReport(dir, type) {
+    dir = await textureFolder(dir);
+    type = contentType(type);
+    const files = await textureFiles(dir);
+    return { dir, files, ...checkTennogen(type, files) };
+  }
+  // Applies the report's fixes: renames in place, resizes with the original kept in tennogen-original/.
+  async function tennogenFix(dir, type) {
+    const report = await tennogenReport(dir, type);
+    const applied = [];
+    for (const fix of fixPlan(report)) {
+      const from = path.join(report.dir, fix.file);
+      if (fix.kind === 'rename') {
+        const to = path.join(report.dir, fix.to);
+        if (existsSync(to)) { applied.push({ ...fix, ok: false, error: `${fix.to} already exists` }); continue; }
+        await rename(from, to);
+        applied.push({ ...fix, ok: true });
+      } else if (fix.kind === 'resize') {
+        const keep = path.join(report.dir, 'tennogen-original');
+        await mkdir(keep, { recursive: true });
+        if (!existsSync(path.join(keep, fix.file))) await copyFile(from, path.join(keep, fix.file));
+        try {
+          await writeFile(from, resizePng(await readFile(from), fix.width, fix.height));
+          applied.push({ ...fix, ok: true });
+        } catch (e) { applied.push({ ...fix, ok: false, error: e.message }); }
+      }
+    }
+    return { applied, ...(await tennogenReport(report.dir, type)) };
+  }
+
   async function patchModel(m, body) {
-    const allowed = ['name', 'activeVersion', 'scene', 'approved'];
+    const allowed = ['name', 'activeVersion', 'scene', 'approved', 'workspace', 'tennogen'];
     if (Object.keys(body).some((k) => !allowed.includes(k))) throw new HttpError(400, `Only ${allowed.join(', ')} can be changed`);
     if ('name' in body) {
       if (typeof body.name !== 'string' || !body.name.trim()) throw new HttpError(400, 'Give the model a name');
@@ -665,6 +825,14 @@ export async function startServer({
       if (!body.scene || typeof body.scene !== 'object' || Array.isArray(body.scene)) throw new HttpError(400, 'Bad scene');
       m.scene = body.scene;
       await writeAtomic(path.join(MODELS, m.id, 'scene.json'), m.scene); // next to the model, so a render reproduces it
+    }
+    if ('workspace' in body) {
+      if (!['car', 'warframe'].includes(body.workspace)) throw new HttpError(400, 'workspace must be car or warframe');
+      m.workspace = body.workspace;
+    }
+    if ('tennogen' in body) { // the model's TennoGen texture folder and content type, or null
+      if (body.tennogen === null) delete m.tennogen;
+      else m.tennogen = { dir: await textureFolder(body.tennogen?.dir), type: contentType(body.tennogen?.type) };
     }
     mirror(m);
     await save();
@@ -742,8 +910,22 @@ export async function startServer({
           if (!Object.hasOwn(PROVIDERS, p)) throw new HttpError(400, 'Unknown provider');
           try { next.setups[p] = normalize({ ...setup, provider: p }); } catch { throw new HttpError(400, 'Unknown provider or engine'); }
         }
+      } else if (k === 'localEngine') {
+        const l = body.localEngine;
+        const okPath = (x) => x === '' || (typeof x === 'string' && x.length < 1024 && path.isAbsolute(x));
+        if (!l || typeof l !== 'object' || !okPath(l.weightsDir ?? '') || !okPath(l.python ?? '')) throw new HttpError(400, 'localEngine needs full folder and file paths');
+        next.localEngine = { weightsDir: l.weightsDir ?? settings.localEngine.weightsDir, python: l.python ?? settings.localEngine.python };
       } else if (['texture', 'pbr', 'alsoTransparent'].includes(k)) bool(k);
-      else if (k === 'renderer') {
+      else if (k === 'theme') next.theme = normalizeTheme(body.theme);
+      else if (k === 'gridUnit') { if (!['m', 'ft'].includes(body.gridUnit)) throw new HttpError(400, 'Grid unit must be m or ft'); next.gridUnit = body.gridUnit; }
+      else if (k === 'gitRepo') {
+        if (typeof body.gitRepo !== 'string' || (body.gitRepo && (!path.isAbsolute(body.gitRepo) || !existsSync(path.join(body.gitRepo, '.git'))))) throw new HttpError(400, 'That folder is not a git repository');
+        next.gitRepo = body.gitRepo;
+      }
+      else if (k === 'ffmpegPath') {
+        if (typeof body.ffmpegPath !== 'string' || body.ffmpegPath.length > 1024 || (body.ffmpegPath && (!path.isAbsolute(body.ffmpegPath) || !existsSync(body.ffmpegPath)))) throw new HttpError(400, 'ffmpeg was not found at that path');
+        next.ffmpegPath = body.ffmpegPath;
+      } else if (k === 'renderer') {
         if (!['three', 'blender'].includes(body.renderer)) throw new HttpError(400, 'Renderer must be three or blender');
         next.renderer = body.renderer;
       } else if (k === 'defaultScene') {
@@ -755,6 +937,11 @@ export async function startServer({
         if (!v) throw new HttpError(400, `Bad ${k}`);
         next[k] = v;
       } else if (k === 'blenderPath') next.blenderPath = body.blenderPath === '' ? '' : await checkBlenderPath(body.blenderPath);
+      else if (k === 'studioPresets') {
+        const v = cleanStudioPresets(body.studioPresets);
+        if (!v || Object.keys(v).length > 100) throw new HttpError(400, 'Bad studio presets');
+        next.studioPresets = v;
+      }
       else if (k === 'updates') {
         // Only the automatic check is set here; a skipped version comes from POST /api/update/skip.
         if (typeof body.updates?.autoCheck !== 'boolean' || Object.keys(body.updates).length !== 1) throw new HttpError(400, 'updates must be { autoCheck: true or false }');
@@ -766,6 +953,9 @@ export async function startServer({
           && Object.entries(t).every(([s, n]) => SERVICES.includes(s) && Number.isFinite(n) && n >= 0 && n <= 1e7);
         if (!ok) throw new HttpError(400, 'spend must be { thresholds: { tripo, 3daistudio } } in credits');
         next.spend = { thresholds: { ...settings.spend.thresholds, ...t } };
+      } else if (k === 'tennogenCheck') {
+        if (!Object.hasOwn(EXPORT_MODES, body.tennogenCheck)) throw new HttpError(400, `tennogenCheck must be ${Object.keys(EXPORT_MODES).join(', ')}`);
+        next.tennogenCheck = body.tennogenCheck;
       } else throw new HttpError(400, `Unknown setting: ${k}`);
     }
     const replan = next.updates.autoCheck !== settings.updates.autoCheck;
@@ -779,6 +969,7 @@ export async function startServer({
   const settingsView = () => ({
     ...settings, apiBase: apiBase(), regions: REGIONS, version: VERSION, libraryDir: dataDir,
     suggestedOutputRoot: suggestedOutputRoot(), platform: process.platform, keys: keySources(),
+    visionKey: keyStore.source('anthropic'), // the car material inference's vision model (saved, env or none)
   });
 
   // ---- Update checks (updates.mjs): this server asks GitHub, never the page ----
@@ -915,9 +1106,19 @@ export async function startServer({
       const modeled = preset === 'showroom' && Boolean(m.scene?.modeled);
       return ['--plate', JSON.stringify({ slug: preset, modeled, camera: plateCamera(PLATES[preset].cam, 4 / 3), light: PLATES[preset].light })];
     };
+    // The scene look (look.js) and the painted pieces' materials (tenno.js), resolved here so the script only applies them.
+    const lookJson = mergeLook(m.scene?.look);
+    const hdri = lookJson.hdri.file;
+    const hdriPath = hdri ? (hdri.startsWith('builtin:') ? (Object.hasOwn(HDRIS, hdri.slice(8)) ? path.join(hdriDir, `${hdri.slice(8)}.hdr`) : null) : path.join(BACKDROPS, hdri)) : null;
+    const lookArg = ['--scenelook', JSON.stringify(blenderLook(lookJson, { hdriPath }))];
+    const paint = m.scene?.paint;
+    const materialsFile = path.join(MODELS, m.id, 'blender-materials.json');
+    const materials = paint?.pieces ? Object.fromEntries(Object.entries(paint.pieces).filter(([, p]) => p.material || p.slot || p.colors || p.region)
+      .map(([key, p]) => [key, { ...blenderMaterial(deserializeMaterial(p.material), resolveColors(paint, p)), slot: p.slot, textured: p.material?.textured !== false && !p.material?.color }])) : {};
     const job = { status: 'running', looks, look: looks[0], frame: 0, frames, error: null };
     jobs.set(m.id, job);
     (async () => {
+      await writeAtomic(materialsFile, { materials, groups: paint?.groups || {} });
       for (const look of looks) {
         job.look = look;
         job.frame = 0;
@@ -928,6 +1129,7 @@ export async function startServer({
           '--look', look, '--frames', String(frames), '--step', String(STEP), '--res', `${width}x${height}`,
           ...(existsSync(sceneFile) ? ['--scene', sceneFile] : []),
           '--rig', JSON.stringify({ lighting: settings.lighting, glass: settings.glass }),
+          ...lookArg, '--materials', materialsFile,
           ...plateArg(look),
           ...(still !== undefined ? ['--still', String(still), '--still-out', path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still))] : []),
         ]);
@@ -968,6 +1170,31 @@ export async function startServer({
 
   const findModel = (id) => library.find((x) => x.id === id) || (() => { throw new HttpError(404, 'Model not found'); })();
 
+  // Batch export of colour variants (batch.mjs): the queue survives a crash; the page runs the jobs.
+  const batch = createQueue({ file: path.join(dataDir, 'batch.json') });
+  await batch.load();
+  // Local video export (video.mjs): a PNG sequence from the render folder to an MP4/WebM in a folder the user picks.
+  async function exportVideo(body) {
+    const m = findModel(body.modelId);
+    const dir = m.renders?.outDir;
+    if (!dir) throw new HttpError(409, 'Render the frames first');
+    if (typeof body.frames !== 'string' || !/^[\w.-]+(\/[\w.-]+)*$/.test(body.frames)) throw new HttpError(400, 'Bad frames folder');
+    const framesDir = path.resolve(dir, body.frames);
+    if (!framesDir.startsWith(dir + path.sep) || !existsSync(framesDir)) throw new HttpError(400, 'Frames folder not found');
+    if (!Object.hasOwn(VIDEO_FORMATS, body.format) || body.format === 'png') throw new HttpError(400, 'Pick MP4 or WebM');
+    if (!Object.hasOwn(VIDEO_QUALITIES, body.quality || 'good')) throw new HttpError(400, 'Unknown quality');
+    if (body.resolution && !Object.hasOwn(RESOLUTIONS, body.resolution)) throw new HttpError(400, 'Unknown resolution');
+    const outDir = typeof body.outDir === 'string' && body.outDir ? body.outDir : null;
+    if (!outDir || !path.isAbsolute(outDir) || !existsSync(outDir)) throw new HttpError(400, 'Pick an output folder');
+    const pattern = typeof body.pattern === 'string' && /^[\w.%-]+\.png$/.test(body.pattern) ? body.pattern : '%04d.png';
+    const base = String(body.name || m.slug || 'render').replace(/[^\w.-]+/g, '-').slice(0, 80) || 'render';
+    const [width, height] = body.resolution ? RESOLUTIONS[body.resolution] : [];
+    const fps = Math.min(120, Math.max(1, Number(body.fps) || 30));
+    const seconds = Number(body.seconds) > 0 ? Math.min(3600, Number(body.seconds)) : undefined;
+    const r = await encodeVideo({ ffmpeg: findFfmpeg({ configured: settings.ffmpegPath }), framesDir, pattern, outDir, fileName: base + extensionFor(body.format), fps, format: body.format, quality: body.quality || 'good', width, height, seconds });
+    return { output: r.output };
+  }
+
   async function route(req, res) {
     // Only answer requests addressed to this server, so a web page can't reach it through DNS rebinding.
     const { port: actual } = server.address();
@@ -986,8 +1213,10 @@ export async function startServer({
       if (method !== 'GET') throw new HttpError(404, 'Not found');
       if (parts[0] === 'files') return serveFile(res, inside(MODELS, parts.slice(1)));
       if (parts[0] === 'backdrops') return serveFile(res, inside(BACKDROPS, parts.slice(1)));
+      if (parts[0] === 'decals' && parts.length === 2 && DECAL_FILE.test(parts[1])) return serveFile(res, path.join(DECALS, parts[1]), { 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox", 'Cache-Control': 'max-age=31536000, immutable' });
       if (parts[0] === 'vendor' && parts[1] === 'three' && parts[2] === 'examples' && parts[3] === 'jsm') return serveFile(res, inside(threeAddons, parts.slice(4)));
       if (parts[0] === 'vendor' && parts[1] === 'three' && parts[2] === 'build') return serveFile(res, inside(THREE, parts.slice(2)));
+      if (parts[0] === 'vendor' && VENDOR[parts[1]] && parts[2] === 'src') return serveFile(res, inside(VENDOR[parts[1]], parts.slice(3)));
       const file = inside(PUBLIC, parts.length ? parts : ['index.html']);
       return serveFile(res, file, file.endsWith('.html') ? { 'Content-Security-Policy': CSP } : {});
     }
@@ -998,8 +1227,68 @@ export async function startServer({
       return send(res, 200, await account(providerParam(url.searchParams.get('provider') || 'tripo'), url.searchParams.has('fresh')));
     }
     // Keys go in and can be removed; nothing ever reads one back.
+    if (area === 'keys' && id === 'anthropic' && !sub) {
+      if (method === 'PUT') return send(res, 200, { ...(await saveVisionKey((await readJson(req)).key)), visionKey: keyStore.source('anthropic') });
+      if (method === 'DELETE') { await keyStore.remove('anthropic'); return send(res, 200, { visionKey: keyStore.source('anthropic') }); }
+    }
+    // Car material inference: labels the photo's colour clusters with the vision model, or the built-in rules.
+    if (area === 'infer' && !id && method === 'POST') {
+      const body = await readJson(req, MAX_INFER);
+      if (!Array.isArray(body.stats) || body.stats.length > 32) throw new HttpError(400, 'Bad cluster statistics');
+      return send(res, 200, await inferRegions({ stats: body.stats, image: typeof body.image === 'string' ? body.image : null, key: keyStore.get('anthropic') }));
+    }
+    if (area === 'local' && !id && method === 'GET') return send(res, 200, await localView());
+    if (area === 'local' && id === 'download' && method === 'POST') { startDownload(); return send(res, 202, await localView()); }
+    // Your scene templates ("Save current scene as template"), per workspace, in templates.json.
+    if (area === 'templates') {
+      const w = /^[a-z0-9][a-z0-9-]{0,39}$/.test(url.searchParams.get('workspace') || '') ? url.searchParams.get('workspace') : 'car';
+      const file = path.join(dataDir, 'templates.json');
+      const all = await readFile(file, 'utf8').then(JSON.parse).catch(() => ({}));
+      const mine = Array.isArray(all[w]) ? all[w] : [];
+      const save = async (list) => { await writeFile(`${file}.tmp`, JSON.stringify({ ...all, [w]: list }, null, 2)); await rename(`${file}.tmp`, file); return list; };
+      if (!id && method === 'GET') return send(res, 200, mine);
+      if (!id && method === 'POST') {
+        const t = normalizeTemplate({ ...(await readJson(req, 256 * 1024)), id: undefined, savedAt: undefined });
+        if (!t) throw new HttpError(400, 'Give the template a name');
+        if (mine.length >= 50) throw new HttpError(400, 'You have 50 templates here. Delete one first.');
+        await save([...mine, t]);
+        return send(res, 201, t);
+      }
+      if (id && !sub && method === 'DELETE') {
+        if (!mine.some((t) => t.id === id)) throw new HttpError(404, 'No such template');
+        return send(res, 200, await save(mine.filter((t) => t.id !== id)));
+      }
+    }
+    // Decals: a PNG or SVG goes in, its stored name comes back. The scene keeps the placement.
+    if (area === 'decals' && !id && method === 'POST') {
+      const buf = await readBody(req, 10 * 1024 * 1024, 'Decal too large (max 10 MB)');
+      const kind = decalKind(buf);
+      if (!kind) throw new HttpError(415, 'Use a PNG, or an SVG without scripts');
+      const file = `${createHash('sha1').update(buf).digest('hex')}.${kind}`;
+      await mkdir(DECALS, { recursive: true });
+      if (!existsSync(path.join(DECALS, file))) await writeFile(path.join(DECALS, file), buf);
+      return send(res, 201, { file });
+    }
+    // Texture library: CC0 surfaces synced from ambientCG / Poly Haven (cached for offline), and your own per workspace.
+    if (area === 'textures') {
+      const w = url.searchParams.get('workspace');
+      if (!id && method === 'GET') return send(res, 200, await textures.list(w));
+      if (id === 'sync' && !sub && method === 'POST') {
+        const ids = (await readJson(req)).ids;
+        textures.sync(Array.isArray(ids) ? ids.map(String) : undefined);
+        return send(res, 202, await textures.list(w));
+      }
+      if (id === 'licenses' && !sub && method === 'GET') return send(res, 200, await textures.licenses());
+      if (id === 'import' && !sub && method === 'POST') {
+        const t = await textures.importTexture(w, url.searchParams.get('name'), await readBody(req, 25 * 1024 * 1024, 'Texture too large (max 25 MB)'));
+        return send(res, 201, t);
+      }
+      if (id && sub && method === 'GET') { const f = await textures.file(id, sub, w); return serveFile(res, f.file, { 'Content-Type': f.type, 'Cache-Control': 'max-age=3600' }); }
+      if (id && !sub && method === 'DELETE') { await textures.remove(w, id); return send(res, 200, await textures.list(w)); }
+    }
+    if (area === 'local' && id === 'base' && method === 'GET') return send(res, 200, baseSetup()); // what Generate Spin Set and thumbnails use
     if (area === 'keys' && id && !sub) {
-      const provider = providerParam(id);
+      const provider = providerParam(id, true);
       if (method === 'PUT') return send(res, 200, { ...(await saveKey(provider, (await readJson(req)).key)), keys: keySources() });
       if (method === 'DELETE') {
         await keyStore.remove(provider);
@@ -1019,9 +1308,93 @@ export async function startServer({
       if (id === 'check' && method === 'POST') return send(res, 200, await updater.check());
       if (id === 'skip' && method === 'POST') return send(res, 200, await skipVersion((await readJson(req)).version));
     }
+    if (area === 'batch') {
+      if (!id && method === 'GET') return send(res, 200, batch.view());
+      if (!id && method === 'POST') { try { return send(res, 201, await batch.start(await readJson(req, 256 * 1024))); } catch (e) { throw new HttpError(e.status || 400, e.message); } }
+      if (!id && method === 'DELETE') { try { return send(res, 200, await batch.clear()); } catch (e) { throw new HttpError(e.status || 400, e.message); } }
+      if (id === 'retry' && method === 'POST') return send(res, 200, await batch.retryFailed());
+      if (id === 'cancel' && method === 'POST') return send(res, 200, await batch.cancelAll());
+      if (id === 'jobs' && sub && method === 'PATCH') {
+        const b = await readJson(req);
+        try { return send(res, 200, await batch.set(sub, b.status, b.error)); } catch (e) { throw new HttpError(e.status || 400, e.message); }
+      }
+    }
+    if (area === 'workspaces') {
+      if (!workspaces) throw new HttpError(404, 'Workspaces are off');
+      if (!id && method === 'GET') return send(res, 200, workspaces.view());
+      try {
+        if (!id && method === 'POST') return send(res, 201, await workspaces.add(await readJson(req)));
+        if (id === 'active' && method === 'POST') {
+          const v = await workspaces.setActive((await readJson(req)).id);
+          send(res, 200, { ...v, restarting: Boolean(onWorkspaceSwitch) });
+          if (onWorkspaceSwitch) setTimeout(onWorkspaceSwitch, 50);
+          return;
+        }
+      } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(e.status || 400, e.message); }
+    }
+    if (area === 'history') {
+      const repo = settings.gitRepo;
+      if (!repo) throw new HttpError(409, 'Pick the project folder (a git repository) in Settings first');
+      if (id === 'git' && method === 'GET') {
+        const out = await git(repo, ['log', '--max-count=50', '--pretty=format:%H%x09%h%x09%cI%x09%s']);
+        const branch = (await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+        return send(res, 200, { branch, commits: out.split('\n').filter(Boolean).map((l) => { const [sha, short, date, ...msg] = l.split('\t'); return { sha, short, date, subject: msg.join('\t') }; }) });
+      }
+      if (id === 'rollback' && method === 'POST') {
+        const b = await readJson(req);
+        let cmds;
+        try { cmds = rollbackCommand(b); } catch (e) { throw new HttpError(400, e.message); }
+        if (!isSafe(cmds)) throw new HttpError(400, 'Refused: not a safe rollback');
+        if ((await git(repo, ['status', '--porcelain'])).trim()) throw new HttpError(409, 'Commit or stash your changes first');
+        for (const argv of cmds) await git(repo, argv);
+        return send(res, 200, { ok: true, ran: cmds.map((a) => `git ${a.join(' ')}`) });
+      }
+    }
+    if (area === 'ffmpeg' && !id && method === 'GET') {
+      const found = findFfmpeg({ configured: settings.ffmpegPath });
+      return send(res, 200, { found: Boolean(found), path: found, configured: settings.ffmpegPath });
+    }
+    if (area === 'video' && !id && method === 'POST') {
+      try { return send(res, 200, await exportVideo(await readJson(req))); } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(e.status || 500, e.message); }
+    }
     if (area === 'blender' && !id && method === 'GET') {
       const found = findBlender();
       return send(res, 200, { found: Boolean(found), path: found, configured: settings.blenderPath });
+    }
+    // TennoGen: check a texture folder, or check and fix it (renames, resizes).
+    if (area === 'poses' && !id && method === 'GET') {
+      const files = [];
+      for (const dir of [path.join(ROOT, 'public', 'poses'), path.join(dataDir, 'poses')]) {
+        if (!existsSync(dir)) continue;
+        for (const f of readdirSync(dir).filter((n) => n.endsWith('.json')).sort()) {
+          try { files.push({ file: f, data: JSON.parse(readFileSync(path.join(dir, f), 'utf8')) }); } catch { files.push({ file: f, data: null }); }
+        }
+      }
+      return send(res, 200, loadPoses(files));
+    }
+    // Named presets saved by the Sadie tools (camera moves, sky playlists, material sets). One small JSON file
+    // per kind in the data folder. POST { name, data } saves or replaces, { name, remove: true } deletes.
+    if (area === 'presets' && PRESET_KINDS.includes(id) && !sub && (method === 'GET' || method === 'POST')) {
+      const file = path.join(dataDir, 'presets', `${id}.json`);
+      let list = [];
+      try { list = JSON.parse(readFileSync(file, 'utf8')); if (!Array.isArray(list)) list = []; } catch { list = []; }
+      if (method === 'GET') return send(res, 200, list);
+      const b = await readJson(req, 256 * 1024);
+      const name = String(b.name || '').trim().slice(0, 60);
+      if (!name) throw new HttpError(400, 'Give it a name');
+      list = list.filter((x) => x.name !== name);
+      if (!b.remove) list.unshift({ name, data: b.data ?? null, saved: new Date().toISOString() });
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, JSON.stringify(list.slice(0, 100), null, 2));
+      return send(res, 200, list);
+    }
+    if (area === 'tennogen' && id === 'check' && !sub && method === 'POST') {
+      const b = await readJson(req);
+      return send(res, 200, await tennogenReport(b.dir, b.type));
+    }
+    if (area === 'tennogen' && id === 'fix' && !sub && method === 'POST') {
+      const b = await readJson(req);
+      return send(res, 200, await tennogenFix(b.dir, b.type));
     }
     if (area === 'backdrops' && !id && method === 'GET') return send(res, 200, settings.backdrops);
     if (area === 'backdrops' && !id && method === 'POST') {
@@ -1037,7 +1410,7 @@ export async function startServer({
         await once(id, () => refreshModel(m));
         return send(res, 200, m);
       }
-      if (!sub && method === 'PATCH') return send(res, 200, await patchModel(m, await readJson(req, 64 * 1024)));
+      if (!sub && method === 'PATCH') return send(res, 200, await patchModel(m, await readJson(req, 4 * 1024 * 1024))); // a scene carries paint and face groups
       if (!sub && method === 'DELETE') {
         jobs.get(id)?.child?.kill();
         jobs.delete(id);
@@ -1093,14 +1466,34 @@ export async function startServer({
     clearTimeout(pollTimer);
     ai.limiter.stop();
     updater.stop();
+    localInst?.stop?.(); // the TRELLIS service closes with the app
     return new Promise((ok) => server.close(ok));
   };
   return { server, port: server.address().port, close };
 }
 
+// The app with workspaces: dataDir is the base folder; each workspace runs the server on its own folder.
+// Switching closes the server and starts it again on the same port with the new folder.
+export async function startApp(opts) {
+  const workspaces = createWorkspaces({ baseDir: opts.dataDir });
+  await workspaces.load();
+  let cur;
+  const boot = async (port) => {
+    cur = await startServer({ ...opts, port, dataDir: workspaces.activeDir(), workspaces, onWorkspaceSwitch: restart });
+  };
+  async function restart() {
+    const port = cur.port;
+    cur.server.closeAllConnections?.();
+    await cur.close();
+    await boot(port);
+  }
+  await boot(opts.port || 0);
+  return { get port() { return cur.port; }, get server() { return cur.server; }, close: () => cur.close(), workspaces };
+}
+
 // `node server.mjs`: browser version, keys from TRIPO_API_KEY and THREE_D_AI_STUDIO_KEY.
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
-  const { port } = await startServer({
+  const { port } = await startApp({
     dataDir: path.resolve(process.env.DATA_DIR || path.join(ROOT, 'data')),
     port: Number(process.env.PORT || 5173),
     ...(process.env.TRIPO_BASE && { apiBase: process.env.TRIPO_BASE }),

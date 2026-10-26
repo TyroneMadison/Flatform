@@ -1,0 +1,19 @@
+{
+  "id": "doors-gullwing",
+  "name": "Doors open (gullwing)",
+  "kind": "car",
+  "icon": "🕊",
+  "description": "Gullwing doors raised.",
+  "parts": {
+    "door.gullwing": {
+      "rotation": [
+        0,
+        0,
+        70
+      ]
+    }
+  },
+  "requires": [
+    "door.gullwing"
+  ]
+}

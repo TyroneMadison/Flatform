@@ -1,0 +1,10 @@
+{
+  "id": "lifted",
+  "name": "Lifted",
+  "kind": "car",
+  "icon": "⬆",
+  "description": "Body raised.",
+  "body": {
+    "lift": 0.09
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "id": "agile-idle",
+  "name": "Agile idle",
+  "kind": "humanoid",
+  "icon": "🤸",
+  "description": "Loose stance, slight lean.",
+  "bones": {
+    "upperArm.L": {
+      "rotation": [
+        15,
+        0,
+        -60
+      ]
+    },
+    "upperArm.R": {
+      "rotation": [
+        15,
+        0,
+        60
+      ]
+    },
+    "spine": {
+      "rotation": [
+        8,
+        0,
+        5
+      ]
+    },
+    "upperLeg.L": {
+      "rotation": [
+        -10,
+        0,
+        0
+      ]
+    },
+    "upperLeg.R": {
+      "rotation": [
+        5,
+        0,
+        0
+      ]
+    }
+  }
+}

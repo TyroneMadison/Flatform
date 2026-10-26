@@ -1,0 +1,58 @@
+{
+  "id": "wall-latch",
+  "name": "Wall-latch",
+  "kind": "humanoid",
+  "icon": "🧗",
+  "description": "Clinging to a wall, body turned.",
+  "bones": {
+    "spine": {
+      "rotation": [
+        15,
+        30,
+        0
+      ]
+    },
+    "upperArm.L": {
+      "rotation": [
+        -120,
+        0,
+        -40
+      ]
+    },
+    "lowerArm.L": {
+      "rotation": [
+        -60,
+        0,
+        0
+      ]
+    },
+    "upperArm.R": {
+      "rotation": [
+        -60,
+        0,
+        60
+      ]
+    },
+    "upperLeg.L": {
+      "rotation": [
+        -70,
+        0,
+        -20
+      ]
+    },
+    "lowerLeg.L": {
+      "rotation": [
+        80,
+        0,
+        0
+      ]
+    },
+    "upperLeg.R": {
+      "rotation": [
+        -30,
+        0,
+        20
+      ]
+    }
+  }
+}

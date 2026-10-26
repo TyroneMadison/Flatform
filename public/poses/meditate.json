@@ -1,0 +1,72 @@
+{
+  "id": "meditate",
+  "name": "Meditate",
+  "kind": "humanoid",
+  "icon": "🧘",
+  "description": "Seated, legs crossed, hands on knees.",
+  "bones": {
+    "upperLeg.L": {
+      "rotation": [
+        -95,
+        0,
+        -45
+      ]
+    },
+    "lowerLeg.L": {
+      "rotation": [
+        120,
+        0,
+        0
+      ]
+    },
+    "upperLeg.R": {
+      "rotation": [
+        -95,
+        0,
+        45
+      ]
+    },
+    "lowerLeg.R": {
+      "rotation": [
+        120,
+        0,
+        0
+      ]
+    },
+    "upperArm.L": {
+      "rotation": [
+        30,
+        0,
+        -30
+      ]
+    },
+    "lowerArm.L": {
+      "rotation": [
+        -60,
+        0,
+        0
+      ]
+    },
+    "upperArm.R": {
+      "rotation": [
+        30,
+        0,
+        30
+      ]
+    },
+    "lowerArm.R": {
+      "rotation": [
+        -60,
+        0,
+        0
+      ]
+    },
+    "head": {
+      "rotation": [
+        10,
+        0,
+        0
+      ]
+    }
+  }
+}

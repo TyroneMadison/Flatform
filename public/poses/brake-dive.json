@@ -1,0 +1,10 @@
+{
+  "id": "brake-dive",
+  "name": "Brake dive (nose down)",
+  "kind": "car",
+  "icon": "🛑",
+  "description": "Weight on the front wheels.",
+  "body": {
+    "pitch": 3
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "id": "aiming",
+  "name": "Aiming down sights",
+  "kind": "humanoid",
+  "icon": "🎯",
+  "description": "Both arms up, sighted.",
+  "bones": {
+    "upperArm.R": {
+      "rotation": [
+        -85,
+        0,
+        10
+      ]
+    },
+    "lowerArm.R": {
+      "rotation": [
+        -20,
+        0,
+        0
+      ]
+    },
+    "upperArm.L": {
+      "rotation": [
+        -80,
+        20,
+        -10
+      ]
+    },
+    "lowerArm.L": {
+      "rotation": [
+        -45,
+        0,
+        0
+      ]
+    },
+    "head": {
+      "rotation": [
+        5,
+        -10,
+        0
+      ]
+    },
+    "spine": {
+      "rotation": [
+        0,
+        -20,
+        0
+      ]
+    }
+  }
+}
