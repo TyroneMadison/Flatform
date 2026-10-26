@@ -10,6 +10,7 @@ export const KEYCAPS = [
   { label: 'Jump', caps: [['Space', 'Space']] },
   { label: 'Climb', caps: [['Space', 'Space']], tip: 'Jump at a ledge to climb up it' },
   { label: 'Look', caps: [['Mouse', 'Mouse']], tip: 'Click the scene, then move the mouse' },
+  { label: 'Photo', caps: [['P', 'KeyP']], tip: 'Pause and make a ray-traced photo of this moment. Any key plays on.' },
   { label: 'Leave', caps: [['Esc', 'Escape']], tip: 'Esc frees the mouse, press it again to leave' },
 ];
 /** Whether a cap ([label, ...codes]) is lit for the held codes (a Set). */

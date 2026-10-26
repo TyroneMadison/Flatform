@@ -102,9 +102,9 @@ test('game input pauses while the Look panel is open, and comes back when it clo
   assert.equal(keyRoute('F12', { panelOpen: true }), 'pass');
 });
 
-test('keycaps: W A S D Move, Shift Run, Space Jump and Climb, mouse Look, Esc Leave; lit while held', () => {
+test('keycaps: W A S D Move, Shift Run, Space Jump and Climb, mouse Look, P Photo, Esc Leave; lit while held', () => {
   assert.deepEqual(KEYCAPS.map((g) => [g.label, g.caps.map((c) => c[0]).join(' ')]), [
-    ['Move', 'W A S D'], ['Run', 'Shift'], ['Jump', 'Space'], ['Climb', 'Space'], ['Look', 'Mouse'], ['Leave', 'Esc'],
+    ['Move', 'W A S D'], ['Run', 'Shift'], ['Jump', 'Space'], ['Climb', 'Space'], ['Look', 'Mouse'], ['Photo', 'P'], ['Leave', 'Esc'],
   ]);
   const lit = (held) => KEYCAPS.flatMap((g) => g.caps.filter((c) => capLit(c, new Set(held))).map((c) => `${g.label}:${c[0]}`));
   assert.deepEqual(lit([]), []);

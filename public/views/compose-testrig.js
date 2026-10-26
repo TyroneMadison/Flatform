@@ -1,6 +1,9 @@
 // Compose, Test rig (humanoids with a skeleton only): play the character in a small arena of blocks to see the rig
 // move. It runs on its own canvas over Compose with a copy of the model. Only the Look panel changes the Compose
 // scene (lib/rig-look.js: place, light, fog, rain, glow), one undo step per change; leaving just removes the overlay. Movement and poses live in lib/testrig.js, the bone work in lib/testrig-rig.js.
+// The picture uses the main scene's pipeline (post.js): sky-picture light and reflections, corner shading, soft
+// shadows, tone mapping, subsurface on skin and cloth and the toned-down glow, at Fast or High (lib/rig-quality.js).
+// Photo (P) pauses and lets the path tracer build up a ray-traced picture of the frame; any key plays on.
 import * as THREE from 'three';
 import { keyOf } from '../lib/shortcuts.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
@@ -12,16 +15,14 @@ import { ARENA, START, TUNE, newPlayer, step, newAnim, stepAnim, poseFor, mixPos
 import { makeRig, applyPose } from '../lib/testrig-rig.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { Post, PathTraced, TONE } from '../lib/post.js';
+import { withSSS } from '../lib/paint.js';
 import { ENVIRONMENTS, envParts, partBounds, skyRotation } from '../lib/environments.js';
 import { buildEnvironment, buildRain } from '../lib/env3d.js';
 import { mergeLook, lightsFromPreset } from '../lib/look.js';
 import { RIG_ENVS, RIG_LIGHTS, TIME, rigLookOf, lookChange, sunAt, timeLabel } from '../lib/rig-look.js';
 import { KEYCAPS, capLit, keyRoute, showHowTo, rememberHowTo, contextPrompt } from '../lib/testrig-ui.js';
+import { QUALITY, qualityOf, saveQuality, rigEffects, materialKind, SSS, lightingHdri, adaptScale, fpsOf, photoLabel } from '../lib/rig-quality.js';
 
 let ctx; // same ctx as compose-motion
 let run = null; // the live session, or null
@@ -67,7 +68,7 @@ const HOWTO = [
   ['W A S D', 'Move'], ['Mouse', 'Look around'], ['Shift', 'Sprint'], ['Space', 'Jump, press again in the air to jump again'],
   ['Ctrl or C', 'Crouch, or slide when running fast'], ['Ctrl + Space', 'Bullet jump: launch where you look'],
   ['Hold right mouse', 'Glide while falling'], ['Q', 'Roll'], ['Run beside a wall', 'Wall run'], ['Jump at a ledge', 'Climb up'],
-  ['R', 'Back to the start'], ['Esc', 'Free the mouse, press again to leave'],
+  ['R', 'Back to the start'], ['P', 'Pause and make a ray-traced photo, any key plays on'], ['Esc', 'Free the mouse, press again to leave'],
 ];
 
 function arenaMeshes() {
@@ -111,7 +112,24 @@ function character(studio) {
   src.traverse((o) => { if (o.isBone) srcBones[o.name] = o; });
   copy.traverse((o) => {
     if (o.isBone && srcBones[o.name]?.userData.rest) { const r = srcBones[o.name].userData.rest; o.position.copy(r.p); o.quaternion.copy(r.q); } // as made, not as posed
-    if (o.isMesh) { o.frustumCulled = false; o.castShadow = true; }
+    if (o.isMesh) { o.frustumCulled = false; o.castShadow = true; o.receiveShadow = true; }
+  });
+  // Skin and cloth let a little light through (paint.js withSSS). Shared materials stay Compose's; a painted piece
+  // already has its own subsurface. Only these copies are the Test Rig's to dispose.
+  const own = [];
+  copy.traverse((o) => {
+    if (!o.isMesh) return;
+    const mats = [].concat(o.material).map((m) => {
+      const kind = !m.userData?.sss && materialKind(m, o.name);
+      if (!kind) return m;
+      const c = withSSS(m.clone());
+      c.userData.sss.amount.value = SSS[kind].amount;
+      c.userData.sss.radius.value = SSS[kind].radius;
+      c.userData.sss.color.value.set(SSS[kind].color);
+      own.push(c);
+      return c;
+    });
+    o.material = Array.isArray(o.material) ? mats : mats[0];
   });
   copy.position.set(0, 0, 0);
   const wrap = new THREE.Group(); wrap.add(copy);
@@ -133,15 +151,16 @@ function character(studio) {
   const c = box.getCenter(new THREE.Vector3());
   wrap.position.set(-c.x, -box.min.y, -c.z);
   root.updateMatrixWorld(true);
-  return { root, body, rig: makeRig(copy, body) };
+  return { root, body, rig: makeRig(copy, body), own };
 }
 
 // --- the overlay ---
 const capsHtml = () => KEYCAPS.map((g, gi) => `<span class="tr-capgrp" title="${esc(g.tip || `${g.label}: ${g.caps.map((c) => c[0]).join(' ')}`)}">${g.caps.map((c, ci) => `<kbd data-cap="${gi}.${ci}"${c[0] === 'Mouse' ? ' class="mouse"' : ''}>${esc(c[0])}</kbd>`).join('')}<span>${esc(g.label)}</span></span>`).join('');
 const sliderRow = (key, label, min, max, stepBy, value, text, tip) => `<div class="sl" title="${esc(tip)}"><label for="trl-${key}">${label}</label><input class="range" type="range" title="${esc(tip)}" id="trl-${key}" data-look="${key}" min="${min}" max="${max}" step="${stepBy}" value="${value}" style="--p:${((value - min) / (max - min)) * 100}%"><span class="v" id="trv-${key}">${text}</span></div>`;
 const switchRow = (key, label, small, on, tip) => `<label class="tg" title="${esc(tip)}"><span>${label}<small>${small}</small></span><input class="sw" type="checkbox" role="switch" data-look="${key}" ${on ? 'checked' : ''}></label>`;
-function lookHtml(l) {
+function lookHtml(l, quality) {
   return `<h3>Look</h3>
+    <div class="tr-quality" role="radiogroup" aria-label="Picture quality" title="How good the picture looks. Fast keeps it smooth on any computer."><span>Picture</span>${Object.entries(QUALITY).map(([k, q]) => `<button class="chip" type="button" role="radio" aria-checked="${quality === k}" data-quality="${k}" title="${esc(q.tip)}">${esc(q.label)}</button>`).join('')}</div>
     <label class="row-sel" title="${PLACE_TIP}"><span>Place</span><select class="inp" data-look="env">${opts(RIG_ENVS, l.env)}</select></label>
     <div class="tr-lights" role="radiogroup" aria-label="Light">${Object.entries(RIG_LIGHTS).map(([k, p]) => `<button class="chip" type="button" role="radio" aria-checked="${l.light === k}" data-look-light="${k}" title="${esc(p.tip)}">${esc(p.label)}</button>`).join('')}</div>
     ${sliderRow('time', 'Time of day', TIME.min, TIME.max, 0.5, l.time, timeLabel(l.time), 'Where the sun is: low in the morning and evening, high at noon')}
@@ -163,9 +182,11 @@ function start() {
   el.innerHTML = `<canvas class="tr-cv" tabindex="-1" title="Click to look around with the mouse"></canvas>
     <div class="tr-state" aria-live="polite" title="What the character is doing right now">Standing</div>
     <div class="tr-prompt" aria-live="polite" hidden></div>
+    <div class="tr-photo" aria-live="polite" hidden></div>
     <div class="tr-caps" aria-label="Keys">${capsHtml()}</div>
     <div class="tr-top">
       <button class="btn sec tr-lookbtn" type="button" aria-expanded="false" aria-controls="tr-look" title="Change the place, light, time of day, fog, rain and glow. The game waits while it is open.">Look</button>
+      <button class="btn sec tr-photobtn" type="button" title="Pause and make a ray-traced photo of this moment (P). Any key plays on.">Photo</button>
       <button class="btn sec icon tr-helpbtn" type="button" aria-label="How to play" title="How to play (?)">?</button>
       <button class="btn sec tr-exit" type="button" title="Go back to the Scene screen (Esc)">Back to scene</button>
     </div>
@@ -181,11 +202,13 @@ function start() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.NeutralToneMapping;
   renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap; // soft edges from shadow.radius (High)
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x14110f);
   const sun = new THREE.DirectionalLight(0xffffff, 2.2);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.03;
   Object.assign(sun.shadow.camera, { left: -20, right: 20, top: 20, bottom: -20, near: 1, far: 70 });
   const hemi = new THREE.HemisphereLight(0xfff1e8, 0x2b2624, 1.1);
   const rim = new THREE.DirectionalLight(0xffffff, 1);
@@ -195,19 +218,20 @@ function start() {
   const ch = character(ctx.studio());
   scene.add(ch.root);
   const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 400);
-  const pmrem = new THREE.PMREMGenerator(renderer);
 
   run = {
-    el, cv, renderer, scene, arena, camera, ch, sun, hemi, rim, pmrem, keys: new Set(), aim: false, yaw: 0, pitch: -0.25, locked: false, unlockedAt: 0,
+    el, cv, renderer, scene, arena, camera, ch, sun, hemi, rim, quality: qualityOf(globalThis.localStorage), size: { scale: 1 }, times: [], photo: null, post: null, pt: null, keys: new Set(), aim: false, yaw: 0, pitch: -0.25, locked: false, unlockedAt: 0,
     player: newPlayer(), anim: newAnim(), pose: poseFor(newAnim()), last: performance.now(), raf: 0, label: '', prompt: '', lit: '', mouseAt: 0,
-    panelOpen: false, place: null, placeSlug: null, builds: 0, hdris: {}, room: null, rain: null, ownRain: null, composer: null,
+    panelOpen: false, place: null, placeSlug: null, builds: 0, hdris: {}, skyKey: '', rain: null, ownRain: null,
   };
   const resize = () => {
-    const w = innerWidth, h = innerHeight - 38;
-    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
-    run?.composer?.setSize(w, h);
+    if (!run) return;
+    run.w = innerWidth; run.h = innerHeight - 38;
+    run.size = { scale: maxScale(run) }; // a new size: try the full picture again
+    sizeRenderer(run);
   };
   run.resize = resize;
+  setQuality(run, run.quality);
   resize();
   applyLook(run, ctx.scene());
 
@@ -215,12 +239,13 @@ function start() {
   const setHowTo = (show) => { howto.hidden = !show; if (!show) rememberHowTo(globalThis.localStorage); };
   howto.hidden = !showHowTo(globalThis.localStorage);
   const setPanel = (open) => {
+    stopPhoto(run);
     run.panelOpen = open;
     run.keys.clear(); run.aim = false; // the game waits: nothing stays held
     el.querySelector('.tr-lookbtn').setAttribute('aria-expanded', String(open));
     if (open) {
       if (document.pointerLockElement === cv) document.exitPointerLock();
-      look.innerHTML = lookHtml(rigLookOf(ctx.scene()));
+      look.innerHTML = lookHtml(rigLookOf(ctx.scene()), run.quality);
       look.hidden = false;
       look.querySelector('select')?.focus();
     } else { look.hidden = true; cv.focus(); }
@@ -229,7 +254,13 @@ function start() {
   const onKey = (e) => {
     if (!run) return;
     const route = keyRoute(e.key, { panelOpen: run.panelOpen });
-    if (route === 'pass' || route === 'panel') return; // the panel's own controls get it; the overlay stops it reaching Compose
+    if (route === 'pass') return;
+    if (run.photo) { // any key plays on (and does nothing else)
+      e.preventDefault(); e.stopPropagation();
+      if (e.type === 'keydown' && !e.repeat) stopPhoto(run);
+      return;
+    }
+    if (route === 'panel') return; // the panel's own controls get it; the overlay stops it reaching Compose
     e.preventDefault(); e.stopPropagation(); // Compose shortcuts, the hotkey sheet and Ctrl menu keys stay out of it
     if (route === 'close') { if (e.type === 'keydown') setPanel(false); return; }
     if (e.type === 'keydown') run.keys.add(e.code); else run.keys.delete(e.code);
@@ -240,6 +271,7 @@ function start() {
     }
     if (e.type === 'keydown' && e.key === '?' && !e.repeat) setHowTo(howto.hidden);
     if (e.type === 'keydown' && e.code === 'KeyR' && !e.repeat) { run.player = newPlayer(START); run.yaw = 0; }
+    if (e.type === 'keydown' && e.code === 'KeyP' && !e.repeat) startPhoto(run);
   };
   const onBlur = () => { run.keys.clear(); run.aim = false; };
   const onMouse = (e) => {
@@ -249,6 +281,7 @@ function start() {
     run.pitch = THREE.MathUtils.clamp(run.pitch - e.movementY * 0.0025, -1.2, 0.7);
   };
   const onDown = (e) => {
+    if (run.photo) { stopPhoto(run); return; } // a click plays on too
     if (run.panelOpen) setPanel(false); // clicking the scene closes Look and plays on
     if (e.button === 2) run.aim = true;
     if (!run.locked) cv.requestPointerLock()?.catch?.(() => {});
@@ -282,16 +315,22 @@ function start() {
     const b = e.target.closest('button');
     if (!b) return;
     if (b.dataset.lookClose !== undefined) { setPanel(false); return; }
+    if (b.dataset.quality) {
+      setQuality(run, b.dataset.quality);
+      look.querySelectorAll('[data-quality]').forEach((q) => q.setAttribute('aria-checked', String(q === b)));
+      return;
+    }
     if (b.dataset.lookLight) {
       await commit('light', b.dataset.lookLight);
       if (!run?.panelOpen) return;
-      look.innerHTML = lookHtml(rigLookOf(ctx.scene())); // a preset moves every slider
+      look.innerHTML = lookHtml(rigLookOf(ctx.scene()), run.quality); // a preset moves every slider
       look.querySelector(`[data-look-light="${b.dataset.lookLight}"]`)?.focus();
     }
   });
   el.addEventListener('keydown', (e) => e.stopPropagation()); // keys typed into the panel never reach Compose
   el.addEventListener('keyup', (e) => e.stopPropagation());
   el.querySelector('.tr-lookbtn').addEventListener('click', () => setPanel(!run.panelOpen));
+  el.querySelector('.tr-photobtn').addEventListener('click', () => { if (run.panelOpen) setPanel(false); startPhoto(run); });
   el.querySelector('.tr-helpbtn').addEventListener('click', () => setHowTo(howto.hidden));
   howto.querySelector('[data-howto-ok]').addEventListener('click', () => setHowTo(false));
   window.addEventListener('keydown', onKey, true);
@@ -320,12 +359,26 @@ function start() {
 function disposeTree(o) {
   o.traverse((x) => { x.geometry?.dispose(); [].concat(x.material || []).forEach((m) => m.dispose()); });
 }
+// A sky picture as an equirect texture: the renderer makes its own reflection maps from it, and the path tracer
+// reads it as it is.
 function hdriOf(r, name) {
   r.hdris[name] ||= new HDRLoader().loadAsync(`/img/hdri/${name}.hdr`).then((tex) => {
     tex.mapping = THREE.EquirectangularReflectionMapping;
-    return { tex, env: r.pmrem.fromEquirectangular(tex).texture };
+    return tex;
   });
   return r.hdris[name];
+}
+// The light and reflections come from a sky picture (rig-quality.js lightingHdri): the scene's own, else the place's.
+function setSky(r) {
+  const e = ENVIRONMENTS[r.placeSlug];
+  const L = lightingHdri(r.look, e);
+  const turn = L.rotation ?? (e?.sky.hdri ? skyRotation(e) : 0);
+  const key = `${L.name}|${turn}|${L.intensity}|${e?.light.env}`;
+  if (key === r.skyKey) return;
+  r.skyKey = key;
+  r.scene.environmentIntensity = 0.5 * (e?.light.env ?? 1) * L.intensity;
+  r.scene.environmentRotation.set(0, THREE.MathUtils.degToRad(turn), 0);
+  hdriOf(r, L.name).then((tex) => { if (run === r && r.skyKey === key) r.scene.environment = tex; }, () => { /* no reflections, the lights still work */ });
 }
 // The place goes round the play area. A room or a white studio is made big enough to hold all of it; an outdoor
 // place is spread out so its buildings stand outside the walls. ponytail: one rule for every outdoor place; give
@@ -334,6 +387,7 @@ const ARENA_SPAN = 33, OUTDOOR = 1.7;
 async function setPlace(r, slug) {
   if (r.placeSlug === slug) return;
   r.placeSlug = slug;
+  setSky(r);
   const build = ++r.builds;
   const e = ENVIRONMENTS[slug];
   const gltf = new GLTFLoader();
@@ -354,33 +408,23 @@ async function setPlace(r, slug) {
   r.ownRain = group.getObjectByName('rain') || null;
   const sky = e.sky;
   r.scene.backgroundRotation.set(0, 0, 0);
-  r.scene.environmentRotation.set(0, 0, 0);
   r.scene.backgroundIntensity = 1;
   r.scene.background = new THREE.Color(sky.color || e.light.sky[0]);
-  r.room ||= r.pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  r.scene.environment = r.room;
-  r.scene.environmentIntensity = 0.5 * (e.light.env ?? 1);
   r.hemi.color.set(e.light.sky[0]);
   r.hemi.groundColor.set(e.light.sky[1]);
   r.hemiBase = 0.6 + e.light.sky[2];
   applyLights(r);
-  const hdri = sky.hdri || e.reflect;
-  if (!hdri) return;
+  if (!sky.hdri) return;
   try {
-    const h = await hdriOf(r, hdri);
+    const tex = await hdriOf(r, sky.hdri);
     if (run !== r || build !== r.builds) return;
-    r.scene.environment = h.env;
-    if (sky.hdri) {
-      const turn = THREE.MathUtils.degToRad(skyRotation(e));
-      r.scene.background = h.tex;
-      r.scene.backgroundIntensity = sky.intensity ?? 1;
-      r.scene.backgroundRotation.set(0, turn, 0);
-      r.scene.environmentRotation.set(0, turn, 0);
-    }
+    r.scene.background = tex;
+    r.scene.backgroundIntensity = sky.intensity ?? 1;
+    r.scene.backgroundRotation.set(0, THREE.MathUtils.degToRad(skyRotation(e)), 0);
   } catch { /* the plain sky colour stays */ }
 }
 function applyLights(r) {
-  const { lights, exposure, fog, bloom } = r.look;
+  const { lights, exposure, fog } = r.look;
   const studio = lightsFromPreset('studio');
   const lit = lights.preset === 'match' ? { ...studio, key: { ...studio.key, ...sunAt(13) } } : lights; // the scene's own light: shown as Studio at 1 pm
   const dir = (c, d) => {
@@ -393,20 +437,10 @@ function applyLights(r) {
   r.hemi.intensity = (r.hemiBase ?? 1.1) * (0.4 + (lit.fill.on ? lit.fill.intensity : 0));
   r.rim.color.set(lit.rim.color);
   r.rim.intensity = lit.rim.on ? lit.rim.intensity * 1.6 : 0;
+  r.renderer.toneMapping = TONE[r.look.tone] ?? THREE.NeutralToneMapping;
   r.renderer.toneMappingExposure = exposure;
   r.scene.fog = fog.on ? new THREE.FogExp2(fog.color, fog.density) : null;
-  // Glow: a bloom pass that only catches what is brighter than white (lit signs, lamps, glowing parts).
-  if (bloom.on && !r.composer) {
-    const c = r.composer = new EffectComposer(r.renderer);
-    c.addPass(new RenderPass(r.scene, r.camera));
-    r.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), bloom.strength, 0.4, bloom.threshold);
-    const hp = r.bloom.materialHighPassFilter; // what feeds the glow is capped, as in post.js: no white-out from a bright spot
-    hp.fragmentShader = hp.fragmentShader.replace('gl_FragColor = mix( outputColor, texel, alpha );', '$& gl_FragColor = min( gl_FragColor, vec4( 2.0 ) );');
-    c.addPass(r.bloom);
-    c.addPass(new OutputPass());
-    r.resize();
-  } else if (!bloom.on && r.composer) { r.composer.dispose(); r.composer = null; r.bloom = null; }
-  if (r.bloom) { r.bloom.strength = bloom.strength; r.bloom.threshold = bloom.threshold; }
+  configurePost(r);
   const rain = r.look.rain && !r.ownRain; // Night City has its own rain
   if (rain && !r.rain) r.scene.add(r.rain = buildRain(ENVIRONMENTS['night-city-rain'].rain));
   else if (!rain && r.rain) { r.scene.remove(r.rain); disposeTree(r.rain); r.rain = null; }
@@ -416,13 +450,92 @@ function applyLook(r, scene) {
   if (!r || run !== r) return;
   r.look = mergeLook(scene.look);
   applyLights(r);
+  setSky(r);
   setPlace(r, rigLookOf(scene).env);
+}
+
+// --- picture quality (rig-quality.js): Fast or High, and a picture size that follows the frame rate ---
+const maxScale = (r) => Math.min(devicePixelRatio || 1, QUALITY[r.quality].pixelRatio);
+function sizeRenderer(r) {
+  r.renderer.setPixelRatio(r.size.scale);
+  r.renderer.setSize(r.w, r.h, false);
+  r.camera.aspect = r.w / r.h;
+  r.camera.updateProjectionMatrix();
+  configurePost(r);
+}
+// The main scene's effects (post.js): corner shading on High, glow when the look has it, edge smoothing.
+function configurePost(r) {
+  if (!r.look || !r.w) return;
+  const fx = rigEffects(r.look, r.quality);
+  if (fx.composer) {
+    r.post ||= new Post(r.renderer, r.scene, r.camera);
+    r.post.configure(r.look, fx, r.w, r.h, r.size.scale);
+  } else if (r.post) { r.post.dispose(); r.post = null; }
+}
+function setQuality(r, quality) {
+  r.quality = Object.hasOwn(QUALITY, quality) ? quality : 'high';
+  saveQuality(globalThis.localStorage, r.quality);
+  const q = QUALITY[r.quality];
+  r.sun.shadow.mapSize.set(q.shadowMap, q.shadowMap);
+  r.sun.shadow.radius = q.shadowRadius;
+  r.sun.shadow.map?.dispose();
+  r.sun.shadow.map = null; // made again at the new size on the next frame
+  r.times = [];
+  r.size = { scale: maxScale(r) };
+  if (r.w) sizeRenderer(r);
+  r.el.dataset.quality = r.quality;
+}
+// Once a second: the frame rate, and on a slow computer a smaller picture so play stays smooth.
+function trackFps(r, now) {
+  r.times.push(now);
+  if (now - r.times[0] < 1000) return;
+  const fps = fpsOf(r.times);
+  r.times = [now];
+  r.el.dataset.fps = fps.toFixed(1);
+  const next = adaptScale(r.size, fps, maxScale(r));
+  if (next.scale !== r.size.scale) { r.size = next; sizeRenderer(r); } else r.size = next;
+  r.el.dataset.scale = String(r.size.scale);
+}
+
+// --- Photo: pause and let the path tracer (post.js PathTraced) build up a ray-traced picture of this frame ---
+function startPhoto(r) {
+  if (!r || r.photo) return;
+  if (document.pointerLockElement === r.cv) document.exitPointerLock();
+  r.keys.clear(); r.aim = false;
+  const photo = r.photo = { ready: false, text: '' };
+  r.el.querySelector('.tr-photo').hidden = false;
+  r.el.querySelector('.tr-prompt').hidden = true;
+  r.el.querySelector('.tr-photobtn').setAttribute('aria-pressed', 'true');
+  r.pt ||= new PathTraced(r.renderer);
+  r.pt.setScene(r.scene, r.camera).then(() => { if (r.photo === photo) photo.ready = true; }, (err) => {
+    if (r.photo !== photo) return;
+    stopPhoto(r);
+    toast(`Photo could not start on this computer: ${err.message}`);
+  });
+}
+function stopPhoto(r) {
+  if (!r?.photo) return;
+  r.photo = null;
+  r.el.querySelector('.tr-photo').hidden = true;
+  r.el.querySelector('.tr-photobtn').removeAttribute('aria-pressed');
+  r.prompt = null; // shown again on the next frame
+  r.times = [];
+  r.last = performance.now();
+}
+function photoFrame(r) {
+  const ph = r.photo;
+  if (ph.ready) r.pt.renderSample();
+  else if (r.post?.composer) r.post.render(); else r.renderer.render(r.scene, r.camera);
+  const text = photoLabel(r.pt.samples, r.pt.maxSamples, ph.ready);
+  if (text !== ph.text) { ph.text = text; r.el.querySelector('.tr-photo').textContent = text; }
 }
 
 const ray = new THREE.Raycaster();
 function frame(now) {
   if (!run) return;
   const r = run;
+  if (r.photo) { photoFrame(r); r.raf = requestAnimationFrame(frame); return; } // the game waits
+  trackFps(r, now);
   const dt = Math.min(0.1, (now - r.last) / 1000);
   r.last = now;
   const k = (c) => r.keys.has(c);
@@ -470,7 +583,7 @@ function frame(now) {
   const t = now / 1000;
   if (r.rain) { r.rain.position.set(p.pos[0], 0, p.pos[2]); r.rain.userData.update(t); }
   r.ownRain?.userData.update(t);
-  if (r.composer) r.composer.render(); else r.renderer.render(r.scene, r.camera);
+  if (r.post?.composer) r.post.render(); else r.renderer.render(r.scene, r.camera);
   r.raf = requestAnimationFrame(frame);
 }
 
@@ -482,12 +595,12 @@ export function stopTestRig() {
   cancelAnimationFrame(r.raf);
   r.off?.();
   if (document.pointerLockElement === r.cv) document.exitPointerLock();
-  r.ch.root.removeFromParent(); // the character shares Compose's meshes: not disposed
+  r.ch.root.removeFromParent(); // the character shares Compose's meshes: not disposed, only its own skin copies
+  r.ch.own.forEach((m) => m.dispose());
   disposeTree(r.scene);
-  for (const h of Object.values(r.hdris)) h.then((x) => { x.tex.dispose(); x.env.dispose(); }, () => {});
-  r.room?.dispose();
-  r.composer?.dispose();
-  r.pmrem.dispose();
+  for (const h of Object.values(r.hdris)) h.then((tex) => tex.dispose(), () => {});
+  r.post?.dispose();
+  r.pt?.dispose();
   r.renderer.dispose();
   r.renderer.forceContextLoss();
   r.el.remove();

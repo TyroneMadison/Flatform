@@ -92,10 +92,12 @@ export class PathTraced {
     return t;
   }
 
-  // The scene changed (model, materials, lights, environment): rebuild the BVH and start over.
+  // The scene changed (model, materials, lights, environment): rebuild the BVH and start over. Built on this thread:
+  // setSceneAsync needs a BVH worker, and workers do not see the page's import map. ponytail: a big place stalls a
+  // frame or so; add three-mesh-bvh's ParallelMeshBVHWorker (bundled) if that shows.
   async setScene(scene, camera) {
     const t = await this.load();
-    await t.setSceneAsync(scene, camera);
+    t.setScene(scene, camera);
     this.paused = false;
   }
 
