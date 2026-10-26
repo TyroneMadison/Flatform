@@ -328,17 +328,9 @@ async function generate() {
       check();
     }
     const looks = ['showroom', ...(opts.interior ? ['interior'] : [])];
-    const plate = await load(P.plateUrl('showroom'));
-    const over = (img) => { const c = document.createElement('canvas'); Object.assign(c, { width: img.naturalWidth, height: img.naturalHeight }); const g = c.getContext('2d'); const s = Math.max(c.width / plate.naturalWidth, c.height / plate.naturalHeight); g.drawImage(plate, (c.width - plate.naturalWidth * s) / 2, (c.height - plate.naturalHeight * s) / 2, plate.naturalWidth * s, plate.naturalHeight * s); g.drawImage(img, 0, 0); return c; };
     const frames = S.SPIN_OPTIONS[opts.option].frames;
     for (const look of looks) {
-      await finish(look, frames, async (i) => {
-        const img = await load(`/api/renders/${m.id}/file?path=${encodeURIComponent(H.frameFile(m.slug, look, i))}&t=${Date.now()}`);
-        if (look !== 'showroom') return img;
-        const c = over(img); // Blender's showroom frames come on a shadow catcher; the plate goes under them
-        await put(H.frameFile(m.slug, look, i), await toBlob(c, 'image/png'));
-        return c;
-      }, `${m.slug}.glb`, 'blender');
+      await finish(look, frames, (i) => load(`/api/renders/${m.id}/file?path=${encodeURIComponent(H.frameFile(m.slug, look, i))}&t=${Date.now()}`), `${m.slug}.glb`, 'blender');
     }
     job.done = true;
     progress(`Saved to ${m.renders?.outDir}`, frames, frames);

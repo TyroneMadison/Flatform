@@ -1,6 +1,6 @@
 // The Flatform Test app's v3 checklist: one line per thing to try, each marked pass or fail on the Test screen and
 // kept in the test app's data folder (test-checklist.json). `open`: where to start, filled in by the page.
-import { PLATES } from './pipeline.js';
+import { ENVIRONMENTS } from './pipeline.js';
 
 export const CHECKLIST = [
   { group: 'Auto-rig and model kind', items: [
@@ -14,7 +14,7 @@ export const CHECKLIST = [
   ] },
   { group: 'Rooms', items: [
     { id: 'room-default', text: 'A new model opens in White Cyc Studio (pinned Default in the scene list).' },
-    ...Object.entries(PLATES).map(([slug, p]) => ({ id: `room-${slug}`, text: `${p.label}: a 3D room, not a photo. In Free roam, orbit: floor and background have depth and turn with the camera.`, open: `room-${slug}` })),
+    ...Object.entries(ENVIRONMENTS).map(([slug, p]) => ({ id: `room-${slug}`, text: `${p.label}: a 3D room, not a photo. In Free roam, orbit: floor and background have depth and turn with the camera.`, open: `room-${slug}` })),
     { id: 'room-scale', text: 'Humanoid in Luxury Garage: the room is at a person\'s scale (doors and lamps look right round them), not a car\'s.', open: 'room-scale' },
     { id: 'room-sun', text: 'Desert Highway Dusk: the car\'s shadow falls away from the sun you see in the sky. Moving the key light on Render turns the sky with it.', open: 'room-desert-highway-dusk' },
     { id: 'room-blender', text: 'Render a room scene with Blender: the frames show that room (mock Blender uses its thumbnail; the real Blender renders it).', open: 'room-night-city-rain' },

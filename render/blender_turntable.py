@@ -4,7 +4,8 @@
         --frames 72 --step 5 --res 2048x1536 [--scene scene.json] [--rig '{"lighting": {...}, "glass": {...}}']
         [--still 30 --still-out stills/x.png] [--pose '{"bones": {"LeftArm": [0, 0, -45]}, "retarget": {...}}']
 
-Builds the Escalade ring studio, the showroom or the transparent look in code, normalises and frames the car
+Builds the Escalade ring studio, a 3D environment (public/lib/environments.js, passed as --environment) or the
+transparent look in code, normalises and frames the car
 exactly like the in-app renderer (public/lib/studio.js), applies the Render step's light rig and glass, then turns
 only the car by --step degrees per frame. The camera, lights and studio
 never move. Prints "FLATFORM_FRAME <done> <total>" after each frame so Flatform can show progress.
@@ -21,11 +22,10 @@ import sys
 
 import bpy
 from bpy_extras.object_utils import world_to_camera_view
-from mathutils import Vector
+from mathutils import Euler, Matrix, Vector
 
 CAR_LENGTH = 4.6
 RING = (1.0, 0.195, 0.133)  # #ff7a66, the app's coral accent, in linear RGB
-GOLD = (0.888, 0.462, 0.147)  # #f2b56b, the showroom's floor ring
 FILL = {"wide": 0.7, "square": 0.84}  # share of the frame width the car's footprint diagonal spans, as studio.js
 LIGHTING = {"key": 1.0, "azimuth": -40.0, "elevation": 40.0, "kelvin": 5600.0, "fill": 1.0, "rim": 1.0}
 GLASS = {"on": True, "tint": "#14202a", "opacity": 0.15}
@@ -75,10 +75,7 @@ def parse_args():
     p.add_argument("--res", default="2048x1536")
     p.add_argument("--scene")
     p.add_argument("--rig")
-    p.add_argument("--plate")  # spin sets only: the showroom photo {"slug", "modeled", "camera", "light"}
-    # The scene's 3D room (public/lib/rooms.js): {"slug", "type", "kind", "camera", "light", hdri rooms: "files",
-    # "turn", "height", "radius", "floor"}. Built round the model, scaled to it.
-    p.add_argument("--room")
+    p.add_argument("--environment")  # environments.js blenderEnvironment: parts, mats, lights, sky, camera, light
     p.add_argument("--still", type=float)
     p.add_argument("--still-out")
     p.add_argument("--samples", type=int, default=128)
@@ -259,29 +256,6 @@ def apply_glass(meshes, glass):
                 glass_bsdf(mat, glass)
             elif mat.use_nodes:
                 tinted_glass(mat, glass)
-
-
-def build_showroom(reflection):
-    """The modeled showroom (fallback to the photo), as studio.js: matte near-black room, dark glossy floor, thin
-    warm-gold ring inset in the floor, two tall white LED bars in the back corners, a big ceiling softbox."""
-    world(0.02)
-    floor = plane("floor", 80, 80, (0, 0, 0), mat=principled("floor", (0.004, 0.004, 0.004), 0.2 - 0.12 * reflection))
-    floor.data.materials[0].node_tree.nodes["Principled BSDF"].inputs["Specular IOR Level"].default_value = 0.3 + 0.4 * reflection
-    plane("wall", 60, 24, (0, 8, 12), rotation=(math.radians(90), 0, 0), mat=principled("wall", (0.006, 0.006, 0.006), 0.9))
-    bpy.ops.mesh.primitive_torus_add(major_radius=3.3, minor_radius=0.014, major_segments=320, minor_segments=12, location=(0, 0, 0.008))
-    add_object(bpy.context.active_object, emission("gold ring", GOLD, 7.0))
-    for x in (-4.8, 4.8):
-        bpy.ops.mesh.primitive_cube_add(size=1, location=(x, 4.2, 1.3))
-        bar = bpy.context.active_object
-        bar.scale = (0.1, 0.1, 2.6)
-        add_object(bar, emission("light bar", (1, 1, 1), 12.0))
-        light("AREA", "bar light", (x, 4.0, 1.3), 160, size=(0.3, 2.6), target=(0, 0, 0.8))
-    plane("ceiling", 60, 30, (0, 0, 6.02), rotation=(math.radians(180), 0, 0), mat=principled("ceiling", (0.004, 0.004, 0.004), 0.9))
-    plane("ceiling softbox", 9, 5, (0, 5.5, 6.0), rotation=(math.radians(180), 0, 0), mat=emission("softbox", srgb_to_linear(kelvin_color(6500)), 5.0))
-    light("AREA", "overhead softbox", (0, 0.6, 4.5), 550, size=(8, 5), target=(0, 0.6, 0), color=srgb_to_linear(kelvin_color(6500)))
-    light("SUN", "key", (-6, -7, 8), 2.0, color=(1.0, 0.95, 0.89))
-    light("SUN", "fill", (8, -6, 3), 0.5, color=(0.87, 0.91, 1.0))
-    light("SUN", "rim", (1, 10, 6), 1.9)
 
 
 def build_ring_studio(reflection):
@@ -528,15 +502,16 @@ def apply_look(look, meshes):
         lit = nt.nodes.new("ShaderNodeBackground")
         lit.inputs["Strength"].default_value = hdri.get("intensity", 1.0)
         nt.links.new(env.outputs["Color"], lit.inputs["Color"])
+        # The HDRI lights and reflects; the camera sees the scene's own background, or the place on a dome.
+        mix = nt.nodes.new("ShaderNodeMixShader")
+        path = nt.nodes.new("ShaderNodeLightPath")
+        nt.links.new(path.outputs["Is Camera Ray"], mix.inputs["Fac"])
+        nt.links.new(lit.outputs["Background"], mix.inputs[1])
+        nt.links.new(bg_node.outputs["Background"], mix.inputs[2])
+        nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
         if hdri.get("background"):
-            nt.links.new(lit.outputs["Background"], out.inputs["Surface"])
-        else:  # the HDRI lights and reflects; the camera still sees the scene's own background
-            mix = nt.nodes.new("ShaderNodeMixShader")
-            path = nt.nodes.new("ShaderNodeLightPath")
-            nt.links.new(path.outputs["Is Camera Ray"], mix.inputs["Fac"])
-            nt.links.new(lit.outputs["Background"], mix.inputs[1])
-            nt.links.new(bg_node.outputs["Background"], mix.inputs[2])
-            nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
+            height, radius = hdri.get("ground") or (1.7, 40)
+            grounded_dome(hdri["path"], height, radius, hdri.get("rotation", 0), hdri.get("intensity", 1.0))
     lights = look.get("lights")
     if lights:
         objs = scene.objects
@@ -562,207 +537,234 @@ def apply_look(look, meshes):
         scene.eevee.use_raytracing = True
 
 
-def build_plate(plate):
-    """A photo scene: the car alone on a shadow catcher, lit to match the photo. Film is transparent; Flatform lays
-    each frame over the plate (public/img/backplates/<slug>.jpg) when it makes the sprites."""
-    light_ = plate["light"]
-    sky, ground, ambient = light_["sky"]
-    world(ambient * 2.5, hex_linear(sky))
-    bpy.context.scene.render.film_transparent = True
-    catcher = plane("shadow catcher", 30, 30, (0, 0, 0), mat=principled("catcher", hex_linear(ground), 0.6))
-    catcher.is_shadow_catcher = True
+AREA_W = 15.0  # three.js RectAreaLight intensity per m² -> Blender watts. ponytail: hand-matched; retune against a reference frame
+EMIT_W = 4.0  # three.js emissive multiplier -> Blender emission strength (same hand match as the old showroom)
+SKY_STRENGTH = 0.15  # Blender's physical Sky Texture is far brighter than the app's suns; this keeps them in step
+TO_BLENDER = Matrix(((1, 0, 0), (0, 0, -1), (0, 1, 0)))  # Flatform's Y-up (x, y, z) is Blender's (x, -z, y)
+
+
+def bl(v):
+    return (v[0], -v[2], v[1])
+
+
+def see_through_back(mat):
+    """Room walls face inward: from outside they let the camera through, like studio.js's BackSide walls."""
+    nt = mat.node_tree
+    out = next(n for n in nt.nodes if n.type == "OUTPUT_MATERIAL")
+    surface = out.inputs["Surface"].links[0].from_socket
+    mix = nt.nodes.new("ShaderNodeMixShader")
+    geo = nt.nodes.new("ShaderNodeNewGeometry")
+    clear = nt.nodes.new("ShaderNodeBsdfTransparent")
+    nt.links.new(geo.outputs["Backfacing"], mix.inputs["Fac"])
+    nt.links.new(surface, mix.inputs[1])
+    nt.links.new(clear.outputs[0], mix.inputs[2])
+    nt.links.new(mix.outputs[0], out.inputs["Surface"])
+    return mat
+
+
+def env_material(name, spec):
+    color = hex_linear(spec["color"])
+    if spec.get("emit", 0) > 0:
+        return emission(name, color, spec["emit"] * EMIT_W)
+    return principled(name, color, spec.get("rough", 0.8), spec.get("metal", 0.0))
+
+
+def env_object(name, mesh_obj, rot=None):
+    mesh_obj.name = f"env {name}"
+    mesh_obj.visible_shadow = False  # the place never blocks the key/fill/rim suns (studio.js: castShadow off)
+    if rot:
+        r = Euler([math.radians(a) for a in rot], "XYZ").to_matrix()
+        mesh_obj.rotation_euler = (TO_BLENDER @ r @ TO_BLENDER.inverted()).to_euler()
+    return mesh_obj
+
+
+def mesh_from(name, verts, faces, mat_indices=None, mats=()):
+    me = bpy.data.meshes.new(name)
+    me.from_pydata(verts, [], faces)
+    for m in mats:
+        me.materials.append(m)
+    if mat_indices:
+        for poly, i in zip(me.polygons, mat_indices):
+            poly.material_index = i
+    me.update()
+    obj = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(obj)
+    return obj
+
+
+def room_mesh(p, mats):
+    """A box seen from inside: floor on z = 0, faces wound inward (walls, ceiling, floor materials)."""
+    w, h, d = p["room"]
+    cx, cz = p["at"]
+    x0, x1, y0, y1 = cx - w / 2, cx + w / 2, -(cz + d / 2), -(cz - d / 2)
+    v = [(x0, y0, 0), (x1, y0, 0), (x1, y1, 0), (x0, y1, 0), (x0, y0, h), (x1, y0, h), (x1, y1, h), (x0, y1, h)]
+    faces = [(0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]  # normals point in
+    walls, ceiling, floor = (see_through_back(env_material(f"room {k}", mats[p[k]])) for k in ("walls", "ceiling", "floor"))
+    return mesh_from("room", v, faces, [2, 1, 0, 0, 0, 0], (walls, ceiling, floor))
+
+
+def cyc_mesh(p, mat):
+    """env3d.js cycGeometry: floor from z to z + front, a quarter-circle cove of `radius`, the wall up to h."""
+    w, h, r, front = p["cyc"]
+    x, z0 = p["at"]
+    profile = [(z0 + front, 0), (z0 + r, 0)]
+    profile += [(z0 + r - r * math.sin(i / 16 * math.pi / 2), r - r * math.cos(i / 16 * math.pi / 2)) for i in range(1, 17)]
+    profile.append((z0, h))
+    verts = [bl((x + sx, y, z)) for z, y in profile for sx in (-w / 2, w / 2)]
+    faces = [(2 * i, 2 * i + 1, 2 * i + 3, 2 * i + 2) for i in range(len(profile) - 1)]
+    obj = mesh_from("cyc", verts, faces, mats=(mat,))
+    for poly in obj.data.polygons:
+        poly.use_smooth = True
+    return obj
+
+
+def env_world(sky, reflect):
+    """The sky around the place: a colour, an HDRI at infinity or Blender's physical sky from the place's sun.
+    `reflect` (an HDRI path) lights and reflects while the camera still sees the sky colour."""
+    w = bpy.data.worlds.new("Flatform")
+    w.use_nodes = True
+    bpy.context.scene.world = w
+    nt = w.node_tree
+    bg = nt.nodes["Background"]  # apply_rig scales this one with the rim slider, like studio.js environmentIntensity
+    out = next(n for n in nt.nodes if n.type == "OUTPUT_WORLD")
+    if sky.get("path") and os.path.exists(sky["path"]):
+        env = nt.nodes.new("ShaderNodeTexEnvironment")
+        env.image = bpy.data.images.load(sky["path"])
+        mapping = nt.nodes.new("ShaderNodeMapping")
+        mapping.inputs["Rotation"].default_value = (0, 0, math.radians(sky.get("rotation", 0)))
+        coord = nt.nodes.new("ShaderNodeTexCoord")
+        nt.links.new(coord.outputs["Generated"], mapping.inputs["Vector"])
+        nt.links.new(mapping.outputs["Vector"], env.inputs["Vector"])
+        nt.links.new(env.outputs["Color"], bg.inputs["Color"])
+        bg.inputs["Strength"].default_value = sky.get("intensity", 1.0)
+        return
+    if sky.get("sun"):
+        tex = nt.nodes.new("ShaderNodeTexSky")
+        for kind in ("NISHITA", "MULTIPLE_SCATTERING"):  # renamed in Blender 5
+            try:
+                tex.sky_type = kind
+                break
+            except TypeError:
+                continue
+        sun = sky["sunDir"]
+        tex.sun_disc = False  # the key light is the sun
+        tex.sun_elevation = math.radians(sun["elevation"])
+        tex.sun_rotation = math.radians(sun["azimuth"]) + math.pi  # Cycles puts rotation 0 on +Y; Flatform's 0 is the camera side
+        nt.links.new(tex.outputs["Color"], bg.inputs["Color"])
+        bg.inputs["Strength"].default_value = SKY_STRENGTH
+        return
+    color = hex_linear(sky.get("color", "#000000"))
+    bg.inputs["Color"].default_value = (*color, 1)
+    bg.inputs["Strength"].default_value = 1.0
+    if reflect and os.path.exists(reflect):
+        env = nt.nodes.new("ShaderNodeTexEnvironment")
+        env.image = bpy.data.images.load(reflect)
+        nt.links.new(env.outputs["Color"], bg.inputs["Color"])
+        seen = nt.nodes.new("ShaderNodeBackground")
+        seen.inputs["Color"].default_value = (*color, 1)
+        mix = nt.nodes.new("ShaderNodeMixShader")
+        path = nt.nodes.new("ShaderNodeLightPath")
+        nt.links.new(path.outputs["Is Camera Ray"], mix.inputs["Fac"])
+        nt.links.new(bg.outputs["Background"], mix.inputs[1])
+        nt.links.new(seen.outputs["Background"], mix.inputs[2])
+        nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
+
+
+def build_environment(env):
+    """A 3D environment (public/lib/environments.js) around the car, part for part as public/lib/env3d.js builds
+    it, lit like studio.js buildEnv: the place's own area lights plus key, fill and rim suns matched to it."""
+    light_ = env["light"]
+    env_world({**env["sky"], "sunDir": light_["sun"]}, env.get("reflect"))
+    mats = {k: env_material(k, m) for k, m in env["mats"].items()}
+    for i, p in enumerate(env["parts"]):
+        if "room" in p:
+            env_object(f"room {i}", room_mesh(p, env["mats"]))
+            continue
+        if "cyc" in p:
+            env_object(f"cyc {i}", cyc_mesh(p, env_material(f"cyc {i}", env["mats"][p["mat"]])))
+            continue
+        if "glb" in p:
+            if not (p.get("path") and os.path.exists(p["path"])):
+                continue
+            before = set(bpy.context.scene.objects)
+            bpy.ops.import_scene.gltf(filepath=p["path"])
+            root = bpy.data.objects.new(f"env glb {i}", None)
+            bpy.context.scene.collection.objects.link(root)
+            for o in set(bpy.context.scene.objects) - before:
+                if o.parent is None:
+                    o.parent = root
+                o.name = f"env {o.name}"  # hidden with the rest when a place HDRI shows (grounded_dome)
+                o.visible_shadow = False
+            root.location = bl(p["at"])
+            root.scale = (p.get("scale", 1),) * 3
+            env_object(f"glb {i}", root, p.get("rot"))
+            continue
+        loc = bl(p["at"])
+        if "box" in p:
+            bpy.ops.mesh.primitive_cube_add(size=1, location=loc)
+            obj = bpy.context.active_object
+            w, h, d = p["box"]
+            obj.scale = (w, d, h)
+        elif "cyl" in p:
+            top, bottom, h = p["cyl"]
+            bpy.ops.mesh.primitive_cone_add(vertices=24, radius1=bottom, radius2=top, depth=h, location=loc)
+            obj = bpy.context.active_object
+        else:
+            bpy.ops.mesh.primitive_torus_add(major_radius=p["ring"][0], minor_radius=p["ring"][1], major_segments=320, minor_segments=12, location=loc)
+            obj = bpy.context.active_object
+        obj.data.materials.append(mats[p["mat"]])
+        env_object(f"{p['mat']} {i}", obj, p.get("rot"))
+    for i, l in enumerate(env["lights"]):
+        w, h = l["area"]
+        a = light("AREA", f"env light {i}", bl(l["at"]), l["power"] * w * h * AREA_W, size=(w, h), target=bl(l["aim"]), color=hex_linear(l["color"]))
+        a.data.size_y = h
     light("SUN", "key", (-6, -7, 8), 2.4 * light_["key"])
     light("SUN", "fill", (8, -6, 3), 1.2 * light_["fill"], color=(0.87, 0.91, 1.0))
     light("SUN", "rim", (1, 10, 6), 1.4 * light_["rim"])
-    if plate["slug"] == "showroom":  # cool overhead softbox, white bars in the back corners, the ring's glow
-        light("AREA", "overhead softbox", (0, 0.6, 6.3), 700, size=(8, 5), target=(0, 0.6, 0), color=srgb_to_linear(kelvin_color(6500)))
-        for x in (-4.8, 4.8):
-            light("AREA", "bar light", (x, 4.0, 1.5), 160, size=(0.3, 2.6), target=(0, 0, 0.8))
-        glow = light("AREA", "ring glow", (0, 0, 0.01), 60 * light_["glow"][1], size=(6.6, 6.6), target=(0, 0, 1), color=hex_linear(light_["glow"][0]))
-        glow.data.size_y = 6.6
 
 
-REAL_SIZE = {"car": 4.6, "humanoid": 1.8}  # rooms.js roomScale: a car's length, a person's height (m)
+def grounded_dome(path, height, radius, rotation, strength):
+    """studio.js showDome (three's GroundedSkybox): the HDRI on a sphere whose bottom is flattened into a floor
+    `height` below its centre, so a place HDRI's ground meets the car at real scale. Hides the environment."""
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=96, ring_count=48, radius=radius, location=(0, 0, height - 0.01))
+    dome = bpy.context.active_object
+    dome.name = "hdri dome"
+    for v in dome.data.vertices:
+        v.co.z = max(v.co.z, -height)
+    dome.visible_shadow = False
+    mat = bpy.data.materials.new("hdri dome")
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+    coord = nt.nodes.new("ShaderNodeTexCoord")
+    mapping = nt.nodes.new("ShaderNodeMapping")  # the same turn as the world HDRI in apply_look
+    mapping.inputs["Rotation"].default_value = (0, 0, math.radians(rotation))
+    env = nt.nodes.new("ShaderNodeTexEnvironment")
+    env.image = bpy.data.images.load(path)
+    em = nt.nodes.new("ShaderNodeEmission")
+    em.inputs["Strength"].default_value = strength
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    nt.links.new(coord.outputs["Object"], mapping.inputs["Vector"])  # direction from the dome's centre, as in three
+    nt.links.new(mapping.outputs["Vector"], env.inputs["Vector"])
+    nt.links.new(env.outputs["Color"], em.inputs["Color"])
+    nt.links.new(em.outputs["Emission"], out.inputs["Surface"])
+    dome.data.materials.append(mat)
+    for o in bpy.context.scene.objects:
+        if o.name.startswith("env ") and o.type != "LIGHT":
+            o.hide_render = True
 
 
-def room_scale(size, kind):
-    """rooms.js roomScale. size is Blender's (x, y, z = height) of the normalised model."""
+REAL_SIZE = {"car": 4.6, "humanoid": 1.8}  # environments.js envScale: a car's length, a person's height (m)
+
+
+def env_scale(size, kind):
+    """environments.js envScale. size is Blender's (x, y, z = height) of the normalised model."""
     s = size.z / REAL_SIZE["humanoid"] if kind == "humanoid" else max(size.x, size.y) / REAL_SIZE["car"]
     return min(4.0, max(0.25, s)) if s > 0 else 1.0
 
 
-def room_lights(light):
-    """The room's sky and key/fill/rim, as build_plate. light: pipeline.js PLATES[slug].light, or None for the defaults."""
-    if light:
-        sky, _ground, ambient = light["sky"]
-        world(ambient * 2.5, hex_linear(sky))
-    else:
-        world(0.6, (0.9, 0.9, 0.92))
-    k = light or {"key": 1.0, "fill": 0.5, "rim": 0.8}
-    light_("SUN", "key", (-6, -7, 8), 2.4 * k["key"])
-    light_("SUN", "fill", (8, -6, 3), 1.2 * k["fill"], color=(0.87, 0.91, 1.0))
-    light_("SUN", "rim", (1, 10, 6), 1.4 * k["rim"])
-
-
-light_ = light  # build_room's argument is called light too
-
-
-def build_cyc(color):
-    """studio.js buildCyclorama: a flat floor, a quarter-circle cove and the back wall, 3.5 m behind the car."""
-    r = 4.0
-    profile = [(30 - i * 30 / 8, 0.0) for i in range(9)]  # (three z, three y)
-    profile += [(-r * math.sin(i / 16 * math.pi / 2), r - r * math.cos(i / 16 * math.pi / 2)) for i in range(1, 17)]
-    profile += [(-r, r + i * 3.0) for i in range(1, 7)]
-    verts, faces = [], []
-    for z, y in profile:
-        verts += [(-30, -(z - 3.5), y), (30, -(z - 3.5), y)]
-    for i in range(len(profile) - 1):
-        faces.append((2 * i, 2 * i + 1, 2 * i + 3, 2 * i + 2))
-    mesh = bpy.data.meshes.new("cyc")
-    mesh.from_pydata(verts, [], faces)
-    obj = bpy.data.objects.new("cyc", mesh)
-    bpy.context.scene.collection.objects.link(obj)
-    for p in mesh.polygons:
-        p.use_smooth = True
-    obj.data.materials.append(principled("cyc", hex_linear(color), 0.92))
-    light_("AREA", "top", (0, 0, 7), 900, size=(8, 4), target=(0, 0, 0))
-    return obj
-
-
-def build_soft_studio(color):
-    """studio.js buildSoftStudio: a 24 x 24 x 8 m grey room, softboxes either side of the camera and overhead."""
-    objs = []
-    wall = principled("walls", hex_linear(color), 0.95)
-    for name, size, loc, rot in (
-        ("floor", (24, 24), (0, 0, 0), (0, 0, 0)), ("ceiling", (24, 24), (0, 0, 8), (math.pi, 0, 0)),
-        ("back", (24, 8), (0, 12, 4), (math.pi / 2, 0, 0)), ("front", (24, 8), (0, -12, 4), (-math.pi / 2, 0, 0)),
-        ("left", (24, 8), (-12, 0, 4), (math.pi / 2, 0, math.pi / 2)), ("right", (24, 8), (12, 0, 4), (math.pi / 2, 0, -math.pi / 2)),
-    ):
-        objs.append(plane(name, *size, loc, rotation=rot, mat=principled("floor", hex_linear("#8d9097"), 0.9) if name == "floor" else wall))
-    for x in (-5.5, 5.5):
-        box = plane("softbox", 3, 4, (x, -4, 2.6), mat=emission("softbox", (1, 1, 1), 4.0))
-        box.rotation_euler = (Vector((0, 0, 1.2)) - box.location).to_track_quat("Z", "Y").to_euler()
-        objs.append(box)
-        light_("AREA", "softbox light", (x, -4, 2.6), 500, size=(3, 4), target=(0, 0, 1.2))
-    objs.append(plane("top softbox", 6, 4, (0, 0, 7.95), rotation=(math.pi, 0, 0), mat=emission("top softbox", (1, 1, 1), 4.0)))
-    light_("AREA", "overhead", (0, 0, 7.9), 700, size=(6, 4), target=(0, 0, 0))
-    return objs
-
-
-def env_node(nt, path, turn):
-    """An Environment Texture of the room's HDRI, turned by -turn about Z (rooms.js roomRotation, see its note)."""
-    env = nt.nodes.new("ShaderNodeTexEnvironment")
-    env.image = bpy.data.images.load(path, check_existing=True)
-    mapping = nt.nodes.new("ShaderNodeMapping")
-    mapping.inputs["Rotation"].default_value = (0, 0, -turn)
-    return env, mapping
-
-
-def build_hdri_room(room):
-    """studio.js buildHdriRoom: the HDRI lights the scene from the world and is projected onto a dome round the model
-    (three's GroundedSkybox shape) that only the camera sees, over a textured floor disc fading into it."""
-    files, turn, h, radius = room["files"], room["turn"], room["height"], room["radius"]
-    w = bpy.context.scene.world
-    nt = w.node_tree
-    env, mapping = env_node(nt, files["hdri"], turn)
-    coord = nt.nodes.new("ShaderNodeTexCoord")
-    nt.links.new(coord.outputs["Generated"], mapping.inputs["Vector"])
-    nt.links.new(mapping.outputs["Vector"], env.inputs["Vector"])
-    bg = nt.nodes["Background"]
-    nt.links.new(env.outputs["Color"], bg.inputs["Color"])
-    bg.inputs["Strength"].default_value = 1.0
-    # The dome: a sphere whose lower half is flattened onto the ground, as GroundedSkybox does.
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, segments=128, ring_count=64, location=(0, 0, h - 0.02))
-    dome = bpy.context.active_object
-    dome.name = "room dome"
-    y1 = -h * 1.5
-    for v in dome.data.vertices:
-        z = v.co.z
-        if z < 0:
-            v.co *= -h / z if z < y1 else 1 - z * z / (3 * y1 * y1)
-    mat = bpy.data.materials.new("room dome")
-    mat.use_nodes = True
-    mn = mat.node_tree
-    mn.nodes.clear()
-    out = mn.nodes.new("ShaderNodeOutputMaterial")
-    em = mn.nodes.new("ShaderNodeEmission")
-    denv, dmap = env_node(mn, files["hdri"], turn)
-    dco = mn.nodes.new("ShaderNodeTexCoord")
-    mn.links.new(dco.outputs["Object"], dmap.inputs["Vector"])
-    mn.links.new(dmap.outputs["Vector"], denv.inputs["Vector"])
-    mn.links.new(denv.outputs["Color"], em.inputs["Color"])
-    mn.links.new(em.outputs["Emission"], out.inputs["Surface"])
-    dome.data.materials.append(mat)
-    for ray in ("visible_diffuse", "visible_glossy", "visible_transmission", "visible_volume_scatter", "visible_shadow"):
-        setattr(dome, ray, False)  # the world lights and reflects; the dome is only what the camera sees
-    # The floor: a disc with the room's texture set, solid to 55% of its radius, then fading out.
-    f = room["floor"]
-    bpy.ops.mesh.primitive_circle_add(vertices=96, radius=f["radius"], fill_type="NGON", location=(0, 0, 0))
-    floor = bpy.context.active_object
-    floor.name = "room floor"
-    mat = bpy.data.materials.new("room floor")
-    mat.use_nodes = True
-    mn = mat.node_tree
-    bsdf = mn.nodes["Principled BSDF"]
-    co = mn.nodes.new("ShaderNodeTexCoord")
-    scale = mn.nodes.new("ShaderNodeVectorMath")
-    scale.operation = "SCALE"
-    scale.inputs["Scale"].default_value = 1 / f["tile"]
-    mn.links.new(co.outputs["Object"], scale.inputs[0])
-
-    def tex(path, data):
-        t = mn.nodes.new("ShaderNodeTexImage")
-        t.image = bpy.data.images.load(path, check_existing=True)
-        if data:
-            t.image.colorspace_settings.name = "Non-Color"
-        mn.links.new(scale.outputs["Vector"], t.inputs["Vector"])
-        return t
-    mn.links.new(tex(files["diff"], False).outputs["Color"], bsdf.inputs["Base Color"])
-    rough = mn.nodes.new("ShaderNodeMath")
-    rough.operation = "MULTIPLY"
-    mn.links.new(tex(files["rough"], True).outputs["Color"], rough.inputs[0])
-    rough.inputs[1].default_value = f["roughness"]
-    mn.links.new(rough.outputs[0], bsdf.inputs["Roughness"])
-    nmap = mn.nodes.new("ShaderNodeNormalMap")
-    mn.links.new(tex(files["nor"], True).outputs["Color"], nmap.inputs["Color"])
-    mn.links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
-    length = mn.nodes.new("ShaderNodeVectorMath")
-    length.operation = "LENGTH"
-    mn.links.new(co.outputs["Object"], length.inputs[0])
-    fade = mn.nodes.new("ShaderNodeMapRange")
-    fade.interpolation_type = "SMOOTHSTEP"
-    fade.inputs["From Min"].default_value = 0.55 * f["radius"]
-    fade.inputs["From Max"].default_value = f["radius"]
-    fade.inputs["To Min"].default_value = 1.0
-    fade.inputs["To Max"].default_value = 0.0
-    mn.links.new(length.outputs["Value"], fade.inputs["Value"])
-    mn.links.new(fade.outputs["Result"], bsdf.inputs["Alpha"])
-    floor.data.materials.append(mat)
-    return [dome, floor]
-
-
-def build_room(room, size, reflection):
-    """The scene's 3D room (rooms.js), built round the normalised model and scaled to it like studio.js."""
-    if room["type"] == "showroom":
-        build_showroom(reflection)
-        return
-    room_lights(room.get("light"))
-    before = set(bpy.data.objects)
-    if room["type"] == "cyc":
-        build_cyc(room["color"])
-    elif room["type"] == "studio":
-        build_soft_studio(room["color"])
-    elif room["type"] == "hdri":
-        build_hdri_room(room)
-    s = room_scale(size, room.get("kind", "car"))
-    for o in set(bpy.data.objects) - before:
-        if o.type != "LIGHT" or o.name not in ("key", "fill", "rim"):
-            o.location *= s
-            o.scale *= s
-
-
-def plate_lighting(lighting, sun):
-    """The rig moves and tints the photo's own sun, as in studio.js: its defaults leave the sun as matched."""
+def env_lighting(lighting, sun):
+    """The rig moves and tints the place's own sun, as in studio.js: its defaults leave the sun as matched."""
     out = dict(lighting)
     out["azimuth"] = sun["azimuth"] + lighting["azimuth"] - LIGHTING["azimuth"]
     out["elevation"] = min(88.0, max(3.0, sun["elevation"] + lighting["elevation"] - LIGHTING["elevation"]))
@@ -779,16 +781,16 @@ def aim_camera(data, location, target):
     return obj
 
 
-def plate_camera(cam, aspect, s, sphere):
-    """The camera pipeline.js plateCamera solved for the photo; Flatform's Y-up (x, y, z) is Blender's (x, -z, y).
-    "Frame all" pulls back along the photo's own view until the whole model fits (studio.js applyPlateCamera)."""
+def env_camera(cam, aspect, s, sphere):
+    """The eye-level camera pipeline.js envCamera solved for the place; Flatform's Y-up (x, y, z) is Blender's
+    (x, -z, y). "Frame all" pulls back along its own view until the whole model fits (studio.js applyEnvCamera)."""
     (px, py, pz), (tx, ty, tz) = cam["position"], cam["target"]
     data = bpy.data.cameras.new("camera")
     data.sensor_fit = "HORIZONTAL"
     data.angle = 2 * math.atan(math.tan(math.radians(cam["vfov"]) / 2) * aspect)
     location, target = Vector((px, -pz, py)), Vector((tx, -tz, ty))
     cam_obj = aim_camera(data, location, target)
-    if s["fit"] == "all":  # the photo's camera aims at the floor: pull back along its view until every corner fits
+    if s["fit"] == "all":  # the eye-level camera aims at the floor: pull back along its view until every corner fits
         scene = bpy.context.scene
         for _ in range(40):
             bpy.context.view_layer.update()
@@ -930,10 +932,8 @@ def main():
     rig = json.loads(args.rig) if args.rig else {}
     lighting = {**LIGHTING, **rig.get("lighting", {})}
     glass = {**GLASS, **rig.get("glass", {})}
-    plate = json.loads(args.plate) if args.plate and args.look != "transparent" else None
-    room = json.loads(args.room) if args.room and args.look != "transparent" else None
-    photo = bool(plate) and not plate["modeled"]
-    # The model first: a room is built round it and scaled to it.
+    env = json.loads(args.environment) if args.environment and args.look != "transparent" else None
+    # The model first: the place is built round it and scaled to it.
     pivot, meshes, size, sphere = import_car(args.glb, s)
     if args.pose:  # after normalising, like studio.js applyModel, so the model is placed exactly as in the app
         print(f"FLATFORM_POSE {apply_pose(json.loads(args.pose))}", flush=True)
@@ -944,15 +944,15 @@ def main():
             bpy.context.view_layer.update()
     if args.look == "transparent":
         build_transparent()
-    elif photo:
-        build_plate(plate)
-        lighting = plate_lighting(lighting, plate["light"]["sun"])
-    elif room:
-        build_room(room, size, float(s["reflection"]))
-        if room.get("light"):
-            lighting = plate_lighting(lighting, room["light"]["sun"])
-    elif args.look == "showroom" or (plate and plate["slug"] == "showroom"):
-        build_showroom(float(s["reflection"]))
+    elif env:
+        before = set(bpy.data.objects)
+        build_environment(env)
+        k = env_scale(size, args.kind)
+        for o in set(bpy.data.objects) - before:
+            if o.parent is None and o.name not in ("key", "fill", "rim"):
+                o.location *= k
+                o.scale *= k
+        lighting = env_lighting(lighting, env["light"]["sun"])
     else:
         build_ring_studio(float(s["reflection"]))
     apply_rig(lighting)
@@ -960,7 +960,7 @@ def main():
     if args.materials and os.path.exists(args.materials):
         with open(args.materials, encoding="utf-8") as f:
             apply_materials(meshes, json.load(f))
-    setup_render(width, height, "transparent" if photo else args.look, args.samples)
+    setup_render(width, height, args.look, args.samples)
     apply_look(json.loads(args.scenelook) if args.scenelook else None, meshes)
     profile = json.loads(args.profile) if args.profile else None
     if profile:
@@ -969,9 +969,9 @@ def main():
         interior_camera(s)
     elif s["view"] == "free" and s["orbit"]:
         free_camera(s)
-    elif plate or (room and room.get("camera")):
+    elif env:
         tall = args.kind == "humanoid" or not is_car_shape(size)  # always "Frame all", as studio.js
-        plate_camera((plate or room)["camera"], width / height, {**s, "fit": "all"} if tall else s, sphere)
+        env_camera(env["camera"], width / height, {**s, "fit": "all"} if tall else s, sphere)
     else:
         place_camera(s, args.look, size, sphere)
     os.makedirs(args.out, exist_ok=True)

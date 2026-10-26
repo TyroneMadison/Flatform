@@ -2,13 +2,13 @@
 // render/blender_autorig.py do, in a moment, with no Blender. Point Settings at the real Blender to test real renders.
 // - Auto-rig: the sample humanoid gets its real rig (seed/humanoid-rigged.glb, made by blender_autorig.py); any other
 //   model fails with a clear message.
-// - Renders: every frame is the room's thumbnail (or the showroom's), so a render looks like the room it was set in.
+// - Renders: every frame is the environment's picker thumbnail (or the showroom's), so a render looks like its place.
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOMS = path.join(HERE, '..', 'public', 'img', 'rooms');
+const THUMBS = path.join(HERE, '..', 'public', 'img', 'environments');
 const args = process.argv.slice(process.argv.indexOf('--') + 1);
 const opt = (name) => (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : undefined);
 const out = opt('out');
@@ -24,8 +24,8 @@ if (/\.glb$/i.test(out || '')) {
   process.exit(0);
 }
 
-const room = opt('room') ? JSON.parse(opt('room')).slug : opt('look') === 'transparent' ? null : 'showroom';
-const frame = room ? readFileSync(path.join(ROOMS, `${room}-thumb.png`)) : readFileSync(path.join(HERE, 'seed', 'photos', 'car.png'));
+const place = opt('environment') ? JSON.parse(opt('environment')).slug : opt('look') === 'transparent' ? null : 'showroom';
+const frame = place ? readFileSync(path.join(THUMBS, `${place}.jpg`)) : readFileSync(path.join(HERE, 'seed', 'photos', 'car.png'));
 const frames = Number(opt('frames') || 0);
 mkdirSync(out, { recursive: true });
 writeFileSync(path.join(out, 'mock-blender-args.json'), JSON.stringify(args, null, 2)); // what the real Blender would get

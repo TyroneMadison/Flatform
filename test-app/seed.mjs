@@ -5,7 +5,7 @@ import { readFile, writeFile, mkdir, copyFile, readdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PLATES } from '../public/lib/pipeline.js';
+import { ENVIRONMENTS } from '../public/lib/pipeline.js';
 
 const SEED = path.join(path.dirname(fileURLToPath(import.meta.url)), 'seed');
 export const MOCK_BLENDER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'mock-blender.mjs');
@@ -34,7 +34,7 @@ export async function seedTestApp({ base, dataDir, photosDir }) {
   }
   const models = {};
   // Imported newest first, so the library lists the three samples at the top.
-  for (const [slug, p] of Object.entries(PLATES).reverse()) models[`room-${slug}`] = await add(`Room · ${p.label}`, 'car', 'car', { preset: slug });
+  for (const [slug, p] of Object.entries(ENVIRONMENTS).reverse()) models[`room-${slug}`] = await add(`Room · ${p.label}`, 'car', 'car', { preset: slug });
   models['room-scale'] = await add('Room scale · person in the garage', 'humanoid-rigged', 'humanoid', { preset: 'luxury-garage', motion: { pose: { preset: 'idle' } } });
   models.car = await add('Sample car', 'car', 'car');
   models.humanoid = await add('Sample humanoid (no skeleton)', 'humanoid', 'humanoid');

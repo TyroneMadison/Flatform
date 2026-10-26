@@ -40,28 +40,13 @@ Seven 1k environment maps from [Poly Haven](https://polyhaven.com), released und
 | `goegap_road.hdr` | https://polyhaven.com/a/goegap_road (Greg Zaal) |
 | `white_studio_02.hdr` | https://polyhaven.com/a/white_studio_02 (Grzegorz Wronkowski) |
 
-## Room HDRIs and floor textures (bundled in `public/img/rooms/`, CC0 1.0)
+## 3D environments (`public/lib/environments.js`)
 
-The 3D rooms behind every scene (`public/lib/rooms.js`). All from [Poly Haven](https://polyhaven.com), released under
-[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (public domain, no attribution required; credited with thanks).
-HDRIs are the 2k `.hdr`; textures are the 1k JPG diffuse, roughness and OpenGL normal maps. Downloaded 2026-10-26.
-
-| Files | Room | Source |
-| --- | --- | --- |
-| `autoshop_01_2k.hdr` | Luxury Garage | https://polyhaven.com/a/autoshop_01 (Oliksiy Yakovlyev) |
-| `umhlanga_sunrise_2k.hdr` | Golden Hour Coast | https://polyhaven.com/a/umhlanga_sunrise (Greg Zaal) |
-| `shanghai_bund_2k.hdr` | Night City Rain | https://polyhaven.com/a/shanghai_bund (Greg Zaal) |
-| `goegap_road_2k.hdr` | Desert Highway Dusk | https://polyhaven.com/a/goegap_road (Greg Zaal, James Ray Cock) |
-| `pool_2k.hdr` | Modern Villa Driveway | https://polyhaven.com/a/pool (Greg Zaal) |
-| `concrete_floor_01_*_1k.jpg` | Luxury Garage floor | https://polyhaven.com/a/concrete_floor_01 (Rob Tuytel) |
-| `coast_sand_01_*_1k.jpg` | Golden Hour Coast floor | https://polyhaven.com/a/coast_sand_01 (Rob Tuytel) |
-| `asphalt_02_*_1k.jpg` | Night City Rain floor | https://polyhaven.com/a/asphalt_02 (Rob Tuytel) |
-| `asphalt_01_*_1k.jpg` | Desert Highway Dusk floor | https://polyhaven.com/a/asphalt_01 (Dario Barresi, Charlotte Baglioni) |
-| `large_floor_tiles_02_*_1k.jpg` | Modern Villa Driveway floor | https://polyhaven.com/a/large_floor_tiles_02 (Rob Tuytel) |
-
-The room thumbnails (`*-thumb.png`) are Flatform's own Blender renders of these rooms (`test-app/make-room-thumbs.mjs`),
-and the White Cyc Studio, Soft studio and Showroom rooms are built in code. The Flatform Test app's sample humanoid and
-car (`test-app/seed/`) are made in code by `test-app/make-samples.py`; they are part of Flatform (MIT).
+Every scene (Showroom, White Cyc Studio, Soft studio, Luxury Garage, Golden Hour Coast, Night City Rain, Desert Highway
+Dusk, Modern Villa Driveway) is built in code from primitives by Flatform itself: no third-party models or textures.
+Skies and reflections reuse the CC0 Poly Haven HDRIs listed above (`goegap_road`, `kloofendal_48d_partly_cloudy_puresky`,
+`garage`, `white_studio_02`, `studio_small_03`); Golden Hour Coast uses a procedural sky (three.js `Sky`, MIT; Blender's
+Sky Texture). Any CC0 model added later goes in `public/env/` and gets a row here with its source URL and license.
 
 ## Fonts (bundled in `public/fonts/`, SIL Open Font License 1.1)
 

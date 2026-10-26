@@ -9,7 +9,7 @@ import { startServer } from '../server.mjs';
 import { createKeyStore } from '../keys.mjs';
 import { startMocks, MOCK_KEYS } from '../test-app/mocks.mjs';
 import { seedTestApp } from '../test-app/seed.mjs';
-import { PLATES } from '../public/lib/pipeline.js';
+import { ENVIRONMENTS } from '../public/lib/pipeline.js';
 import { CHECK_IDS } from '../public/lib/checklist.js';
 
 const temps = [];
@@ -30,10 +30,10 @@ test('test app: seeded library, mock Tripo and Blender, checklist', async () => 
     const seed = await seedTestApp({ base, dataDir: data, photosDir: path.join(data, 'photos') });
     assert.deepEqual(await seedTestApp({ base, dataDir: data, photosDir: path.join(data, 'photos') }), seed); // once only
     const lib = (await json('/api/models')).body;
-    assert.equal(lib.length, Object.keys(PLATES).length + 4);
+    assert.equal(lib.length, Object.keys(ENVIRONMENTS).length + 4);
     const byId = Object.fromEntries(lib.map((m) => [m.id, m]));
     assert.deepEqual([byId[seed.models.car].kind, byId[seed.models.humanoid].kind, byId[seed.models['humanoid-rigged']].kind], ['car', 'humanoid', 'humanoid']);
-    for (const slug of Object.keys(PLATES)) assert.equal(byId[seed.models[`room-${slug}`]].scene.preset, slug);
+    for (const slug of Object.keys(ENVIRONMENTS)) assert.equal(byId[seed.models[`room-${slug}`]].scene.preset, slug);
     assert.deepEqual((await readdir(seed.photosDir)).sort(), ['car.png', 'person.png']);
     const settings = (await json('/api/settings')).body;
     assert.deepEqual([settings.testMode, settings.updates.autoCheck, /mock-blender\.mjs$/.test(settings.blenderPath)], [true, false, true]);

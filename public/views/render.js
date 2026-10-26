@@ -7,7 +7,6 @@ import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upser
 import { icon } from '../lib/icons.js';
 import * as P from '../lib/pipeline.js';
 import { Studio, defaultScene, kelvinColor } from '../lib/studio.js';
-import { roomThumb } from '../lib/rooms.js';
 import { tennogenApplies, tennogenCard, onTennogen, onTennogenSubmit, tennogenGate } from '../lib/tennogen-ui.js';
 import { makeSheets as makeSheetSet, downscale, toBlob } from '../lib/sheets.js';
 
@@ -98,7 +97,7 @@ function renderLeft() {
     ${opts.models && !tripo ? '<p class="fine" style="margin:-4px 0 10px 32px">Other formats come from Tripo’s converter, which only works on models made with Tripo direct.</p>' : ''}
     <h2 class="label">Looks</h2>
     <div class="looks">
-      ${look('showroom', 'Showroom', 'Default · 4:3', `<div class="stage"><img class="thumb" src="${roomThumb('showroom')}" alt=""></div>`)}
+      ${look('showroom', 'Showroom', 'Default · 4:3', `<div class="stage"><img class="thumb" src="${P.envThumb('showroom')}" alt=""></div>`)}
       ${look('studio', 'Scene', 'From Compose · 4:3', sceneArt())}
       ${look('transparent', 'Transparent', '1:1 · RGBA', '<div class="stage s-clear"><div class="checker"></div><div class="sc-shadow"></div></div>')}
     </div>
@@ -119,7 +118,7 @@ function renderLeft() {
 // The composed scene's thumbnail for the "Scene" look tile.
 function sceneArt() {
   const preset = sceneFor(m, 'studio').preset;
-  return P.PLATES[preset] ? `<div class="stage"><img class="thumb" src="${roomThumb(preset)}" alt=""></div>`
+  return P.ENVIRONMENTS[preset] ? `<div class="stage"><img class="thumb" src="${P.envThumb(preset)}" alt="" onerror="this.remove()"></div>`
     : '<div class="stage s-ring"><div class="sg-wall"></div><div class="sg-panel"></div><div class="sg-bar l"></div><div class="sg-bar r"></div><div class="sg-floor"></div><div class="sg-ring"></div></div>';
 }
 

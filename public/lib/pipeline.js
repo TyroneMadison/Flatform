@@ -7,7 +7,7 @@ export const HALF = 37; // the 180° half turn is frames 000–036, cut from the
 export const COLUMNS = 12; // sprite sheet columns
 export const WEB_WIDTHS = [512, 256]; // frame widths of the web sprite sheets
 export const LOOKS = {
-  showroom: { width: 2048, height: 1536, label: 'Showroom' }, // 4:3, the showroom backplate: Dud Rents' house look
+  showroom: { width: 2048, height: 1536, label: 'Showroom' }, // 4:3, the 3D showroom: Dud Rents' house look
   studio: { width: 2048, height: 1536, label: 'Composed scene' }, // 4:3, whatever scene was set up in Compose
   transparent: { width: 2048, height: 2048, label: 'Transparent' }, // RGBA with a soft contact shadow
 };
@@ -49,6 +49,12 @@ export function frameOrbit({ center, radius }, from, hfov, aspect) {
   return { target: [...center], position: center.map((v, i) => v + dir[i] * d) };
 }
 
+// A look's frame (aspect) fitted inside a canvas of aspect `view`: the vertical fov (degrees) that keeps the frame's
+// own vertical half-angle tangent `tanV`, so the scene shows at the same size whatever the window's shape.
+export function letterbox(tanV, aspect, view) {
+  return (2 * Math.atan(view >= aspect ? tanV : (tanV * aspect) / view) * 180) / Math.PI;
+}
+
 // Validates a full or partial lighting / glass object; returns the merged result or null if anything is off.
 export function cleanLighting(next, base = DEFAULT_LIGHTING) {
   if (!next || typeof next !== 'object' || Array.isArray(next)) return null;
@@ -72,64 +78,16 @@ export function cleanGlass(next, base = DEFAULT_GLASS) {
   return out;
 }
 
-// Scene cameras and light. These began as photo backplates; since v3 every one is a 3D room (rooms.js) and only
-// the Dud Rents spin sets still lay frames over the showroom photo. The camera is still solved to the old photo,
-// eye level with the floor, so v0.5 scenes keep their framing. Calibration, in fractions of the 4:3 frame from the top:
-// horizon = where the eye-level horizon sits, ground = where the car's centre touches the floor, width = metres
-// visible across the frame at the car, hfov = horizontal field of view in degrees.
-// Light: sun = key direction (azimuth from the camera, negative = camera left; elevation) and colour temperature,
-// key/fill/rim = intensities, sky/ground = ambient colours and strength, shadow = contact shadow strength,
-// reflection = glossy floor reflection strength (0 = none), env = how much the photo shows in the paint.
-// Only the showroom photo is still bundled (public/img/backplates/showroom.jpg), for the spin sets.
-export const PLATES = {
-  'white-cyc-studio': {
-    label: 'White Cyc Studio', note: 'Bright infinity cove · soft even light',
-    cam: { horizon: 0.5, ground: 0.72, width: 7.4, hfov: 45 },
-    light: { sun: { azimuth: -30, elevation: 60, kelvin: 6000 }, key: 0.9, fill: 0.7, rim: 0.4, sky: ['#ffffff', '#d8dade', 0.9], shadow: 0.6, reflection: 0.06, env: 1.0 },
-  },
-  'soft-studio': {
-    label: 'Soft studio', note: 'Grey room · big softboxes · gentle shadows',
-    cam: { horizon: 0.5, ground: 0.72, width: 7.4, hfov: 45 },
-    light: { sun: { azimuth: -25, elevation: 55, kelvin: 5600 }, key: 0.8, fill: 0.8, rim: 0.6, sky: ['#ffffff', '#9a9ca2', 0.7], shadow: 0.55, reflection: 0.04, env: 1.0 },
-  },
-  showroom: {
-    label: 'Showroom', note: 'Dark showroom · gold ring · ceiling softbox',
-    // The ring in the reference photo: centre 71% down, 90% of the frame wide, seen 7° above the floor.
-    cam: { horizon: 0.53, ground: 0.71, width: 7.3, hfov: 50 },
-    light: { sun: { azimuth: 0, elevation: 70, kelvin: 6500 }, key: 1.0, fill: 0.15, rim: 1.6, sky: ['#d8dde6', '#2a1e10', 0.12], shadow: 0.85, reflection: 0.35, env: 0.9, glow: ['#f2b56b', 0.3] },
-  },
-  'golden-hour-coast': {
-    label: 'Golden Hour Coast', note: 'Palm Beach oceanfront · warm low sun',
-    cam: { horizon: 0.5, ground: 0.76, width: 7.6, hfov: 50 },
-    light: { sun: { azimuth: -70, elevation: 12, kelvin: 3300 }, key: 1.8, fill: 0.25, rim: 0.9, sky: ['#ffd9a8', '#5a4636', 0.35], shadow: 0.75, reflection: 0, env: 0.8 },
-  },
-  'night-city-rain': {
-    label: 'Night City Rain', note: 'Wet asphalt · neon reflections',
-    cam: { horizon: 0.5, ground: 0.76, width: 7.6, hfov: 50 },
-    light: { sun: { azimuth: 150, elevation: 25, kelvin: 7500 }, key: 0.5, fill: 0.2, rim: 1.6, sky: ['#5a6cff', '#1a0f2a', 0.25], shadow: 0.7, reflection: 0.55, env: 1.2 },
-  },
-  'luxury-garage': {
-    label: 'Luxury Garage', note: 'Polished concrete · warm LED strips',
-    cam: { horizon: 0.5, ground: 0.76, width: 7.6, hfov: 55 },
-    light: { sun: { azimuth: 0, elevation: 75, kelvin: 3600 }, key: 1.0, fill: 0.3, rim: 1.3, sky: ['#ffe2bd', '#3a332c', 0.25], shadow: 0.8, reflection: 0.3, env: 1.0 },
-  },
-  'desert-highway-dusk': {
-    label: 'Desert Highway Dusk', note: 'Purple-orange sky · open road',
-    cam: { horizon: 0.5, ground: 0.78, width: 7.6, hfov: 50 },
-    light: { sun: { azimuth: 170, elevation: 6, kelvin: 2900 }, key: 0.9, fill: 0.3, rim: 1.4, sky: ['#b58cd8', '#4a3a3e', 0.4], shadow: 0.6, reflection: 0, env: 0.9 },
-  },
-  'modern-villa-driveway': {
-    label: 'Modern Villa Driveway', note: 'Palms · white architecture · midday',
-    cam: { horizon: 0.5, ground: 0.8, width: 7.6, hfov: 50 },
-    light: { sun: { azimuth: -35, elevation: 62, kelvin: 5800 }, key: 2.0, fill: 0.45, rim: 0.6, sky: ['#bcd8ff', '#e8e2d8', 0.6], shadow: 0.85, reflection: 0, env: 1.0 },
-  },
-};
-export const plateUrl = (slug) => `/img/backplates/${slug}.jpg`;
+// 3D environments (environments.js): real places in metres. Each has an eye-level car-view camera (envCamera)
+// calibrated so the car stands on the floor where its thumbnail shows it; light = the matched key/fill/rim.
+export { ENVIRONMENTS } from './environments.js';
+export const envThumb = (slug) => `/img/environments/${slug}.jpg`; // picker thumbnails only, never a background
 
-// The camera that matches a plate, for a frame of the given aspect (the plate is cover-fitted, so its vertical
-// fractions hold). Returns { position: [x, y, z], target: [x, y, z], vfov } in metres and degrees, Y up, car at
-// the origin, camera on +Z. Pure maths so the in-app renderer and Blender (render/blender_turntable.py) agree.
-export function plateCamera({ horizon, ground, width, hfov }, aspect = 4 / 3) {
+// The car-view camera of an environment, for a frame of the given aspect. Calibration in fractions of the frame
+// from the top: horizon = eye level, ground = where the car's centre touches the floor, width = metres visible
+// across the frame at the car, hfov in degrees. Returns { position: [x, y, z], target: [x, y, z], vfov } in metres
+// and degrees, Y up, car at the origin, camera on +Z. Pure maths so the in-app renderer and Blender agree.
+export function envCamera({ horizon, ground, width, hfov }, aspect = 4 / 3) {
   const rad = Math.PI / 180;
   const tanH = Math.tan((hfov * rad) / 2);
   const tanV = tanH / aspect;

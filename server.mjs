@@ -10,7 +10,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
-import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, PLATES, plateCamera } from './public/lib/pipeline.js';
+import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, ENVIRONMENTS, envCamera } from './public/lib/pipeline.js';
+import { blenderEnvironment } from './public/lib/environments.js';
 import { PROVIDERS, VIEWS, DEFAULT_PROVIDER, normalize, baseSetup, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
 import { estimate } from './public/lib/pricing.js';
 import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
@@ -34,7 +35,6 @@ import { decalKind, DECAL_FILE } from './public/lib/decals.js';
 import { normalizeTemplate } from './public/lib/templates.js';
 import { localEngine as createLocalEngine, downloadWeights, weightsReady, checkCuda, UPSCALER_FILES } from './local.mjs';
 import { loadPoses } from './public/lib/poses.js';
-import { blenderRoom } from './public/lib/rooms.js';
 import { CHECK_IDS } from './public/lib/checklist.js';
 import { RETARGET, deserializePose, poseBones } from './public/lib/motion.js';
 const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
@@ -77,7 +77,7 @@ const BACKDROP_TYPES = ['.jpg', '.jpeg', '.png', '.hdr', '.exr'];
 const FAILED = ['failed', 'cancelled', 'banned'];
 // Global keys work on .ai; .com (the host the docs show) is the China region and rejects global keys.
 const REGIONS = { global: 'https://openapi.tripo3d.ai/v3', china: 'https://openapi.tripo3d.com/v3' };
-const SCENES = [...Object.keys(PLATES), 'ring', 'transparent', 'cyclorama', 'miami', 'custom']; // 'ring' was called 'gold' before v0.4
+const SCENES = [...Object.keys(ENVIRONMENTS), 'ring', 'transparent', 'cyclorama', 'miami', 'custom']; // 'ring' was called 'gold' before v0.4
 // Version fields mirrored at the top level of each library entry, so v0.2 readers and the UI see the active version.
 const VERSION_FIELDS = ['task_id', 'status', 'progress', 'tripo_status', 'glb', 'thumb', 'credits', 'error', 'exports', 'source',
   'provider', 'engine', 'mode', 'views', 'upstream_status', 'note', 'generation', 'file', 'fileName'];
@@ -159,7 +159,7 @@ export async function startServer({
   // so the packaged app ships this one as a resource file too.
   threeAddons = path.join(THREE, 'examples', 'jsm'),
   hdriDir = path.join(PUBLIC, 'img', 'hdri'), // built-in HDRIs for Blender (a resource file in the packaged app)
-  roomsDir = path.join(PUBLIC, 'img', 'rooms'), // the rooms' HDRIs and floor textures for Blender (rooms.js), likewise
+  envDir = path.join(PUBLIC, 'env'), // the environments' bundled CC0 models for Blender (environments.js), likewise
   updateUrl,
   updateDelayMs,
   workspaces = null, // workspaces.mjs; startApp() passes it, tests may leave it out
@@ -1166,17 +1166,19 @@ export async function startServer({
     if (jobs.get(m.id)?.status === 'running') throw new HttpError(409, 'Blender is already rendering this car');
     const v = active(m);
     const sceneFile = path.join(MODELS, m.id, 'scene.json');
-    // Rooms (rooms.js): Blender builds the same 3D room as the app, with its camera, light, HDRI and floor. The
-    // Showroom look always uses the showroom; the room is scaled to the model's kind in the script.
-    const roomArg = (look) => {
+    // 3D environments: Blender builds the same place (environments.js) around the car, with its eye-level camera
+    // and matched light. The Showroom look always uses the showroom.
+    const builtinHdri = (name) => (Object.hasOwn(HDRIS, name) ? path.join(hdriDir, `${name}.hdr`) : null);
+    const envArg = (look) => {
       const preset = look === 'showroom' ? 'showroom' : look === 'transparent' ? null : m.scene?.preset || settings.defaultScene;
-      const room = blenderRoom(preset, { kind: m.kind, keyAzimuth: { ...DEFAULT_LIGHTING, ...settings.lighting }.azimuth, dir: roomsDir });
-      return room ? ['--room', JSON.stringify(room)] : [];
+      if (!ENVIRONMENTS[preset]) return [];
+      const glb = (file) => path.join(envDir, path.basename(file));
+      return ['--environment', JSON.stringify(blenderEnvironment(preset, envCamera(ENVIRONMENTS[preset].cam, 4 / 3), { hdri: builtinHdri, glb }))];
     };
     // The scene look (look.js) and the painted pieces' materials (tenno.js), resolved here so the script only applies them.
     const lookJson = mergeLook(m.scene?.look);
     const hdri = lookJson.hdri.file;
-    const hdriPath = hdri ? (hdri.startsWith('builtin:') ? (Object.hasOwn(HDRIS, hdri.slice(8)) ? path.join(hdriDir, `${hdri.slice(8)}.hdr`) : null) : path.join(BACKDROPS, hdri)) : null;
+    const hdriPath = hdri ? (hdri.startsWith('builtin:') ? builtinHdri(hdri.slice(8)) : path.join(BACKDROPS, hdri)) : null;
     const lookArg = ['--scenelook', JSON.stringify(blenderLook(lookJson, { hdriPath }))];
     const paint = m.scene?.paint;
     const materialsFile = path.join(MODELS, m.id, 'blender-materials.json');
@@ -1198,7 +1200,7 @@ export async function startServer({
           ...(existsSync(sceneFile) ? ['--scene', sceneFile] : []),
           '--rig', JSON.stringify({ lighting: settings.lighting, glass: settings.glass }),
           ...lookArg, '--materials', materialsFile, ...poseArg, '--kind', m.kind === 'humanoid' ? 'humanoid' : 'car',
-          ...roomArg(look),
+          ...envArg(look),
           ...(still !== undefined ? ['--still', String(still), '--still-out', path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still))] : []),
         ]);
       }
