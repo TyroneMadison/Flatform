@@ -1,0 +1,92 @@
+/* "Grandma test" screens (flatform-redesign mock-up): plain words, big obvious buttons, few choices per screen.
+   Shared by the Warframe home, Set the scene, Pose and move, Materials and the model tools on Compose. */
+.gt { display: flex; flex-direction: column; gap: 18px; max-width: 1180px; }
+.gt h1.ph { font-size: 34px; display: flex; align-items: center; gap: 14px; }
+.gt .sub { font-size: 16px; margin: -10px 0 0; }
+.gt h3 { font: 700 18px var(--display); margin: 0 0 10px; }
+.gt .card { background: var(--glass-bg, linear-gradient(#12100d, #0d0c0a)); border: 1px solid var(--line); border-radius: 18px; padding: 20px; }
+.gt .grid { display: grid; gap: 14px; }
+.gt .g2 { grid-template-columns: 1fr 1fr; } .gt .g3 { grid-template-columns: repeat(3, 1fr); } .gt .g4 { grid-template-columns: repeat(4, 1fr); } .gt .g6 { grid-template-columns: repeat(6, 1fr); }
+.gt .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.gt .help { font-size: 13px; color: var(--muted); margin-top: 6px; }
+/* Big buttons: the one primary action, and the plain choices. */
+.bigbtn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 68px; padding: 16px 28px; border-radius: 16px; border: 0;
+  font: 700 20px var(--display); letter-spacing: -.01em; color: var(--on-accent); background: var(--accent-grad); cursor: pointer; box-shadow: 0 6px 20px rgba(255, 122, 102, .28); text-decoration: none; }
+.bigbtn.wide { width: 100%; }
+.bigbtn.tall { min-height: 150px; font-size: 26px; }
+.bigbtn:disabled { opacity: .45; cursor: not-allowed; }
+.pick { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 54px; padding: 12px 20px; border-radius: 12px; border: 2px solid var(--line-4);
+  font: 600 16px var(--sans); color: var(--text); background: #14110f; cursor: pointer; text-decoration: none; text-align: center; }
+.pick.tall { min-height: 150px; font-size: 22px; }
+.pick.big { min-height: 90px; font-size: 18px; }
+.pick.wide { width: 100%; }
+.pick:hover:not(:disabled) { border-color: var(--line-5); filter: brightness(1.1); }
+.pick.sel, .pick[aria-pressed='true'], .pick[aria-checked='true'] { border-color: var(--accent); background: rgba(255, 122, 102, .16); color: var(--accent-hi); }
+.pick.ok { background: #2fbf71; border-color: #2fbf71; color: #fff; }
+.pick.bad { background: #e5484d; border-color: #e5484d; color: #fff; }
+.pick:disabled { opacity: .45; cursor: not-allowed; }
+.pick small { display: block; font-size: 12px; font-weight: 500; opacity: .7; }
+/* Segmented choice, big. */
+.segbig { display: inline-flex; background: #14110f; border-radius: 14px; padding: 5px; gap: 4px; }
+.segbig button { font: 600 16px var(--sans); border: 0; background: none; color: var(--text); padding: 10px 20px; border-radius: 10px; cursor: pointer; }
+.segbig button[aria-checked='true'] { background: var(--accent); color: var(--on-accent); }
+.segbig button:disabled { opacity: .4; cursor: not-allowed; }
+/* Tiles: a thumbnail and one word. */
+.tile { background: #14110f; border: 2px solid transparent; border-radius: 14px; padding: 12px; text-align: center; font: 600 15px var(--sans); color: var(--text); cursor: pointer; }
+.tile:hover { border-color: var(--line-5); }
+.tile.sel, .tile[aria-pressed='true'] { border-color: var(--accent); color: var(--accent-hi); }
+.tile .th { height: 70px; border-radius: 10px; margin-bottom: 8px; overflow: hidden; position: relative; background: #0a0908; }
+.tile .th img { width: 100%; height: 100%; object-fit: cover; }
+.tile .th.dash { border: 2px dashed var(--line-4); background: none; }
+/* Drop zone on a home screen. */
+.dz2 { border: 4px dashed var(--line-4); border-radius: 22px; padding: 26px; text-align: center; transition: .15s; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.dz2.hot { border-color: var(--accent); background: rgba(255, 122, 102, .14); }
+.dz2 .big { font: 800 28px var(--display); }
+.dz2 .ic { color: var(--accent); }
+/* Whole-window drop overlay. */
+.dropover { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(5, 4, 3, .78); border: 6px dashed var(--accent); pointer-events: none; }
+.dropover b { font: 800 40px var(--display); color: var(--accent-hi); }
+.gt .toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; font: 600 17px var(--sans); }
+.gt .toggle .help { margin-top: 2px; font-weight: 400; }
+.gt .toggle .sw { width: 54px; height: 30px; }
+.gt .toggle .sw::before { width: 26px; height: 26px; }
+.gt .toggle .sw:checked::before { left: 26px; }
+.gt details { background: #14110f; border-radius: 14px; padding: 12px 18px; }
+.gt summary { cursor: pointer; font: 700 16px var(--sans); color: var(--accent); }
+.gt details > :not(summary) { margin-top: 12px; }
+.pill2 { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 30px; font: 700 13px var(--sans); background: #14110f; }
+.pill2.ok { background: #2fbf71; color: #fff; }
+.pill2.bad { background: #e5484d; color: #fff; }
+.issues { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.issues li { padding: 8px 12px; border-radius: 8px; background: #14110f; border-left: 3px solid var(--bad); }
+.issues li.warn { border-left-color: var(--warn); }
+.issues li code { font: 12px var(--mono); color: var(--accent-hi); }
+/* Compose: the big model-tool row and the saved angles bar. */
+.tools2 { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+.angles { position: absolute; left: 50%; bottom: 60px; transform: translateX(-50%); z-index: 9; display: flex; gap: 6px; padding: 6px; border-radius: 12px; background: rgba(5, 4, 3, .8); border: 1px solid var(--line-4); }
+.angles .pick { min-height: 40px; padding: 6px 12px; font-size: 14px; border-radius: 9px; }
+.angles .pick.num { width: 40px; padding: 0; }
+.angles .pick.num.saved { border-color: var(--line-5); }
+.angles .pick.num.hero { color: #f2b56b; border-color: #f2b56b; }
+.measure { position: absolute; z-index: 8; pointer-events: none; font: 600 12px var(--mono); color: #fff; padding: 3px 8px; border-radius: 6px; background: rgba(5, 4, 3, .8); border: 1px solid var(--accent); transform: translate(-50%, -50%); white-space: nowrap; }
+.dims { position: absolute; left: 16px; top: 44px; z-index: 8; pointer-events: none; font: 600 12px var(--mono); color: var(--accent-hi); display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 8px; background: rgba(5, 4, 3, .75); border: 1px solid var(--line-4); }
+.dims .bad { color: var(--bad); }
+/* Camera path timeline. */
+.tlwrap { display: flex; flex-direction: column; gap: 8px; }
+.keys { position: relative; height: 54px; border-radius: 10px; background: #0a0908; border: 1px solid var(--line-3); cursor: crosshair; }
+.keys .kf { position: absolute; top: 8px; width: 38px; height: 38px; margin-left: -19px; border-radius: 50%; display: grid; place-items: center; font: 700 13px var(--mono); background: #14110f; border: 2px solid var(--accent); color: var(--accent-hi); cursor: grab; }
+.keys .kf.sw { border-color: #f2b56b; color: #f2b56b; border-radius: 8px; }
+.keys .head { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #ffe3dc; box-shadow: 0 0 8px var(--accent); pointer-events: none; }
+.heat { display: flex; gap: 0; height: 10px; border-radius: 5px; overflow: hidden; margin: 6px 0; }
+.heat i { flex: 1; display: block; }
+/* Material and texture library. */
+.texgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
+.tex { position: relative; border-radius: 12px; overflow: hidden; background: #14110f; border: 2px solid transparent; cursor: grab; text-align: center; font: 600 12.5px var(--sans); padding-bottom: 6px; }
+.tex img, .tex .sw3 { display: block; width: 100%; height: 80px; object-fit: cover; margin-bottom: 6px; }
+.tex.sel { border-color: var(--accent); }
+.tex small { display: block; font-size: 10.5px; opacity: .6; font-weight: 400; }
+.compare { display: flex; gap: 10px; overflow-x: auto; padding: 4px 0; }
+.compare button { flex: none; width: 150px; border-radius: 12px; overflow: hidden; background: #14110f; border: 2px solid transparent; padding: 0 0 8px; color: var(--text); font: 600 13px var(--sans); cursor: pointer; }
+.compare button.sel { border-color: var(--accent); }
+.compare canvas, .compare img, .compare .ph2 { display: block; width: 150px; height: 100px; object-fit: cover; margin-bottom: 6px; background: #0a0908; }
+@media (max-width: 1320px) { .gt .g4, .gt .g6 { grid-template-columns: repeat(3, 1fr); } }

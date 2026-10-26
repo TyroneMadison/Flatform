@@ -1,7 +1,7 @@
 // Flatform server: photos → 3D model (Tripo direct or 3D AI Studio) → local library → scene → turntable renders →
 // handoff folder. Used two ways: `npm run web` (keys from .env) or embedded by the Electron app (main.mjs).
 import http from 'node:http';
-import { readFile, writeFile, rename, mkdir, rm, copyFile, stat } from 'node:fs/promises';
+import { readFile, writeFile, rename, mkdir, rm, copyFile, stat, open } from 'node:fs/promises';
 import { createReadStream, createWriteStream, existsSync, statSync, readFileSync, readdirSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -17,6 +17,8 @@ import { threeDAIStudio, createLimiter, THREE_D_AI_BASE, HIGH } from './provider
 import { createKeyStore } from './keys.mjs';
 import { createUpdater, parseVersion, updateOptions } from './updates.mjs';
 import { SERVICES, CONVERT_CREDITS, entry, append, parse, summary, defaultThresholds } from './ledger.mjs';
+import { check as checkTennogen, fixPlan, CONTENT_TYPES, EXPORT_MODES } from './public/lib/tennogen.js';
+import { pngSize, resizePng } from './png.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -148,6 +150,7 @@ export async function startServer({
     lighting: DEFAULT_LIGHTING, glass: DEFAULT_GLASS,
     updates: { autoCheck: true, skippedVersion: null },
     spend: { thresholds: defaultThresholds() }, // low-balance alert per provider, in credits
+    tennogenCheck: 'warn', // before an export of a Warframe model with a texture folder: warn, block or off
   };
   const settings = { ...defaults, ...(existsSync(SETTINGS) ? JSON.parse(await readFile(SETTINGS, 'utf8')) : {}) };
   if (settings.defaultScene === 'gold') settings.defaultScene = 'ring';
@@ -645,8 +648,65 @@ export async function startServer({
     return view;
   }
 
+  // ---- TennoGen texture set check (public/lib/tennogen.js): names and sizes of the PNGs in a folder ----
+
+  async function textureFolder(dir) {
+    if (typeof dir !== 'string' || !path.isAbsolute(dir)) throw new HttpError(400, 'Pick the folder with the texture files');
+    if (!(await stat(dir).catch(() => null))?.isDirectory()) throw new HttpError(400, 'That texture folder does not exist');
+    return path.resolve(dir);
+  }
+  const contentType = (type) => {
+    if (!Object.hasOwn(CONTENT_TYPES, type)) throw new HttpError(400, `Content type must be one of ${Object.keys(CONTENT_TYPES).join(', ')}`);
+    return type;
+  };
+  // Reads the names and PNG sizes of the files in a texture folder (top level only).
+  async function textureFiles(dir) {
+    const files = [];
+    for (const name of readdirSync(dir).sort()) {
+      if (!/\.(png|jpe?g|tga|tif|tiff|bmp|psd|fbx)$/i.test(name)) continue;
+      const f = { name };
+      if (/\.png$/i.test(name)) {
+        const head = Buffer.alloc(24);
+        const fh = await open(path.join(dir, name));
+        try { await fh.read(head, 0, 24, 0); } finally { await fh.close(); }
+        Object.assign(f, pngSize(head) || {});
+      }
+      files.push(f);
+    }
+    return files;
+  }
+  async function tennogenReport(dir, type) {
+    dir = await textureFolder(dir);
+    type = contentType(type);
+    const files = await textureFiles(dir);
+    return { dir, files, ...checkTennogen(type, files) };
+  }
+  // Applies the report's fixes: renames in place, resizes with the original kept in tennogen-original/.
+  async function tennogenFix(dir, type) {
+    const report = await tennogenReport(dir, type);
+    const applied = [];
+    for (const fix of fixPlan(report)) {
+      const from = path.join(report.dir, fix.file);
+      if (fix.kind === 'rename') {
+        const to = path.join(report.dir, fix.to);
+        if (existsSync(to)) { applied.push({ ...fix, ok: false, error: `${fix.to} already exists` }); continue; }
+        await rename(from, to);
+        applied.push({ ...fix, ok: true });
+      } else if (fix.kind === 'resize') {
+        const keep = path.join(report.dir, 'tennogen-original');
+        await mkdir(keep, { recursive: true });
+        if (!existsSync(path.join(keep, fix.file))) await copyFile(from, path.join(keep, fix.file));
+        try {
+          await writeFile(from, resizePng(await readFile(from), fix.width, fix.height));
+          applied.push({ ...fix, ok: true });
+        } catch (e) { applied.push({ ...fix, ok: false, error: e.message }); }
+      }
+    }
+    return { applied, ...(await tennogenReport(report.dir, type)) };
+  }
+
   async function patchModel(m, body) {
-    const allowed = ['name', 'activeVersion', 'scene', 'approved'];
+    const allowed = ['name', 'activeVersion', 'scene', 'approved', 'workspace', 'tennogen'];
     if (Object.keys(body).some((k) => !allowed.includes(k))) throw new HttpError(400, `Only ${allowed.join(', ')} can be changed`);
     if ('name' in body) {
       if (typeof body.name !== 'string' || !body.name.trim()) throw new HttpError(400, 'Give the model a name');
@@ -665,6 +725,14 @@ export async function startServer({
       if (!body.scene || typeof body.scene !== 'object' || Array.isArray(body.scene)) throw new HttpError(400, 'Bad scene');
       m.scene = body.scene;
       await writeAtomic(path.join(MODELS, m.id, 'scene.json'), m.scene); // next to the model, so a render reproduces it
+    }
+    if ('workspace' in body) {
+      if (!['car', 'warframe'].includes(body.workspace)) throw new HttpError(400, 'workspace must be car or warframe');
+      m.workspace = body.workspace;
+    }
+    if ('tennogen' in body) { // the model's TennoGen texture folder and content type, or null
+      if (body.tennogen === null) delete m.tennogen;
+      else m.tennogen = { dir: await textureFolder(body.tennogen?.dir), type: contentType(body.tennogen?.type) };
     }
     mirror(m);
     await save();
@@ -766,6 +834,9 @@ export async function startServer({
           && Object.entries(t).every(([s, n]) => SERVICES.includes(s) && Number.isFinite(n) && n >= 0 && n <= 1e7);
         if (!ok) throw new HttpError(400, 'spend must be { thresholds: { tripo, 3daistudio } } in credits');
         next.spend = { thresholds: { ...settings.spend.thresholds, ...t } };
+      } else if (k === 'tennogenCheck') {
+        if (!Object.hasOwn(EXPORT_MODES, body.tennogenCheck)) throw new HttpError(400, `tennogenCheck must be ${Object.keys(EXPORT_MODES).join(', ')}`);
+        next.tennogenCheck = body.tennogenCheck;
       } else throw new HttpError(400, `Unknown setting: ${k}`);
     }
     const replan = next.updates.autoCheck !== settings.updates.autoCheck;
@@ -1022,6 +1093,15 @@ export async function startServer({
     if (area === 'blender' && !id && method === 'GET') {
       const found = findBlender();
       return send(res, 200, { found: Boolean(found), path: found, configured: settings.blenderPath });
+    }
+    // TennoGen: check a texture folder, or check and fix it (renames, resizes).
+    if (area === 'tennogen' && id === 'check' && !sub && method === 'POST') {
+      const b = await readJson(req);
+      return send(res, 200, await tennogenReport(b.dir, b.type));
+    }
+    if (area === 'tennogen' && id === 'fix' && !sub && method === 'POST') {
+      const b = await readJson(req);
+      return send(res, 200, await tennogenFix(b.dir, b.type));
     }
     if (area === 'backdrops' && !id && method === 'GET') return send(res, 200, settings.backdrops);
     if (area === 'backdrops' && !id && method === 'POST') {

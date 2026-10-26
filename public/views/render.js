@@ -6,6 +6,7 @@ import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upser
 import { icon } from '../lib/icons.js';
 import * as P from '../lib/pipeline.js';
 import { Studio, defaultScene, kelvinColor } from '../lib/studio.js';
+import { tennogenApplies, tennogenCard, onTennogen, onTennogenSubmit, tennogenGate } from '../lib/tennogen-ui.js';
 
 let root;
 let m; // the car on screen
@@ -98,6 +99,7 @@ function renderLeft() {
       ${look('transparent', 'Transparent', '1:1 · RGBA', '<div class="stage s-clear"><div class="checker"></div><div class="sc-shadow"></div></div>')}
     </div>
     ${rigPanel(busy)}
+    ${tennogenApplies(m) ? tennogenCard(m, busy) : ''}
     <div class="renderer-pick">
       <h2 class="label">Renderer</h2>
       <div class="chips" role="radiogroup" aria-label="Renderer">
@@ -238,7 +240,9 @@ function resetPreview() {
 }
 
 // ---- events ----
+const redrawLeft = () => { m = findModel(m.id) || m; $('#left', root).dataset.html = ''; renderLeft(); };
 async function onClick(e) {
+  if (await onTennogen(e, m, redrawLeft)) return;
   const t = e.target.closest('button');
   if (!t) return;
   if (t.dataset.preview && !(running() && onScreen())) { previewLook = t.dataset.preview; resetPreview(); }
@@ -267,6 +271,7 @@ async function onClick(e) {
   }
 }
 function onChange(e) {
+  if (e.target.dataset.tg) return onTennogen(e, m, redrawLeft);
   const k = e.target.dataset.opt;
   if (k) { opts[k] = e.target.checked; renderLeft(); }
   const g = e.target.dataset.glass;
@@ -285,6 +290,7 @@ function onInput(e) {
   $('#left', root).dataset.html = ''; // the next redraw picks up the new value
 }
 async function onSubmit(e) {
+  if (await onTennogenSubmit(e, m, redrawLeft)) return;
   e.preventDefault();
   await saveFolder($('#folderIn', root).value.trim());
 }
@@ -433,6 +439,7 @@ async function start() {
   if (!state.settings?.outputRoot) return toast('Choose an output folder first');
   if (!looks.length) return toast('Pick at least one look');
   if (!turns.length && !opts.still && !opts.models) return toast('Pick something to render');
+  if (!(await tennogenGate(m))) { redrawLeft(); return; } // TennoGen names and sizes, for Warframe models with a texture folder
   const model = m;
   job = { model, yaw: stillYaw(model), renderer: opts.renderer, frame: 0, total: 0, paused: false, cancelled: false, done: false };
   renderLeft();
