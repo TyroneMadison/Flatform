@@ -15,7 +15,7 @@ import { compareSet, lumaStats } from '../lib/compare.js';
 import { ColorPicker } from '../lib/color-picker.js';
 import { templatesFor, templateScene } from '../lib/templates.js';
 import { normalizeDecals, FINISHES, FINISH_VALUES, finishOf, decalUrl } from '../lib/decals.js';
-import { inferFromPhoto, revertInference, exportTennoGen, exportGlb, setTextureWorkspace } from '../lib/paint.js';
+import { inferFromPhoto, revertInference, exportTennoGen, exportGlb, setTextureWorkspace, similarPieces } from '../lib/paint.js';
 
 // Texture library (CC0 from ambientCG / Poly Haven, plus your own per workspace), loaded once per workspace.
 let textures = null; // { items, sync }
@@ -177,6 +177,7 @@ export function renderPaintGroups() {
         return `<div class="part ${p.key === selected ? 'on' : ''}" data-piece="${esc(p.key)}">
           <button class="pname" type="button" data-select="${esc(p.key)}" title="${esc(p.key)}">${esc(r.name || p.name)}</button>${region}
           <button class="btn icon xs" type="button" data-rename="${esc(p.key)}" title="Rename" aria-label="Rename ${esc(r.name || p.name)}">✎</button>
+          ${r.hidden ? `<button class="btn sm ghostbtn" type="button" data-unhide="${esc(p.key)}" title="This part is hidden. Show it again">Show</button>` : ''}
           ${sel('piece-section', p.key, [['', 'No section'], ...sections.map((s) => [s.id, s.name])], r.section || '')}
           ${sel('piece-slot', p.key, slotOptions, r.slot || '')}
         </div>`;
@@ -396,6 +397,27 @@ export async function onPaintClick(t) {
     const piece = rec(selected);
     const level = colorLevel === 'section' ? piece.section : selected;
     ctx.change({ paint: setColor(paintOf(), level, colorKey, null) });
+    return true;
+  }
+  // The inspector card's Hide / Show and Select similar (compose.js draws the buttons).
+  if (act === 'insp-hide' && selected) {
+    const hide = !rec(selected).hidden;
+    updatePiece(selected, { hidden: hide });
+    return true;
+  }
+  if (t.dataset.unhide) { updatePiece(t.dataset.unhide, { hidden: false }); return true; }
+  if (act === 'insp-similar' && selected) {
+    const keys = similarPieces(pieces(), selected);
+    if (keys.length < 2) { toast('No other parts look like this one.', 'info'); return true; }
+    let paint = paintOf();
+    const name = `Like ${rec(selected).name || pieces().find((p) => p.key === selected)?.name || 'this part'}`.slice(0, 60);
+    const sections = paint.sections || SECTIONS;
+    const id = sections.find((x) => x.name === name)?.id || `similar${Date.now().toString(36)}`;
+    paint = { ...paint, sections: sections.some((x) => x.id === id) ? sections : [...sections, { id, name }] };
+    for (const k of keys) paint = upsertPiece(paint, k, { ...(paint.pieces[k] ? {} : { name: pieces().find((p) => p.key === k)?.name }), section: id });
+    colorLevel = 'section';
+    ctx.change({ paint });
+    toast(`Picked ${keys.length} parts like this one. Colour changes now go to all of them.`, 'info');
     return true;
   }
   if (act === 'section-add') {

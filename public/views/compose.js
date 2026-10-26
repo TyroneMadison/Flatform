@@ -119,9 +119,9 @@ export async function mount(el, { id }) {
     </aside>
     <aside class="icard card" id="insp" aria-labelledby="inspName" hidden>
       <header class="tc-head"><h2 id="inspName">This part</h2>
-        <button class="btn icon ghostbtn" type="button" data-act="insp-rename" title="Rename this part" aria-label="Rename this part">✎</button>
         <button class="btn icon ghostbtn" type="button" data-act="insp-close" title="Close (the part stays picked in Look)" aria-label="Close">${icon('close')}</button></header>
       <p class="fine">Changes here apply to this part only.</p>
+      <div class="mg-row insp-acts" id="inspActs"></div>
       <div id="inspBody"></div>
     </aside>
   </section>`;
@@ -135,6 +135,7 @@ export async function mount(el, { id }) {
   setHumanoid(state.mode === 'warframe'); // until the model has loaded and its skeleton is known
   onDock(state.tool.scene);
   mountRender($('#renderArea', el), m, { onRig: () => { studio?.setRig(state.settings || {}); draw(); } });
+  $('#raIdeasSlot', el)?.append($('#renderIdeas', el)); // v3 order: types, Run, then the ideas, then More settings
   let s;
   try {
     s = studio = new Studio($('#cv', el));
@@ -493,10 +494,14 @@ function placeInspector() {
   const piece = studio.pieces().find((p) => p.key === key);
   $('#inspName', root).textContent = scene.paint?.pieces?.[key]?.name || piece?.name || 'This part';
   for (const id of ['grp-color', 'grp-material']) { const g = $(`#${id}`, root); if (g) body.append(g); }
+  const hidden = scene.paint?.pieces?.[key]?.hidden;
+  $('#inspActs', root).innerHTML = `<button class="btn sm ghostbtn" type="button" data-act="insp-rename" title="Give this part a name you will recognise">Rename</button>
+    <button class="btn sm ghostbtn" type="button" data-act="insp-hide" title="${hidden ? 'Show this part again' : 'Hide this part, in the 3D view and in renders. You can undo it.'}">${hidden ? 'Show' : 'Hide'}</button>
+    <button class="btn sm ghostbtn" type="button" data-act="insp-similar" title="Also pick every part that has the same material, so one colour change reaches all of them">Select similar</button>`;
 }
 function renderIdeas() {
   const box = $('#renderIdeas', root);
-  box.innerHTML = `<h3>${icon('idea', 14)} Render ideas · one click</h3><p class="fine">Click one to set it up, then press the orange Render button. Nothing starts by itself.</p>
+  box.innerHTML = `<h3>${icon('idea', 14)} Render ideas · one click</h3><p class="fine">Click one to set it up, then press Run. Nothing starts by itself.</p>
     <div class="ideas">${ideasFor(state.mode).map((i) => `<button class="idea" type="button" data-idea="${i.id}" title="${esc(i.desc)}"><i style="background:${i.art}" aria-hidden="true"></i><b>${esc(i.label)}</b><small>${esc(i.desc)}</small></button>`).join('')}</div>`;
 }
 async function useIdea(id) {
@@ -504,8 +509,8 @@ async function useIdea(id) {
   if (!r) return;
   if (r.go === 'finish') { state.tool.finish = 'compare'; return go(`#/finish/${m.id}`); }
   await change(r.scene);
-  pickRender(r.render);
-  toast(`${r.label} is set up. Press the orange Render button to make it.`, 'info');
+  pickRender(r.render, r);
+  toast(`${r.label} is set up. Press Run to make it.`, 'info');
 }
 
 export function update() {

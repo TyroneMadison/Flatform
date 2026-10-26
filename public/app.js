@@ -12,6 +12,7 @@ import { installPalette } from './lib/palette.js';
 import { timeAgo } from './lib/session.js';
 import { displayVersion } from './lib/version.js';
 import { journey, dockFor, stepOf, isSheet, SHEETS, DEFAULT_TOOL, ringDash } from './lib/stage.js';
+import { updateNotice, lowNotice } from './lib/notices.js';
 
 export const $ = (s, root = document) => root.querySelector(s);
 export const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -358,7 +359,7 @@ export async function refreshAccount(provider = state.settings?.provider || 'tri
 }
 
 // ---- updates: the server asks GitHub (a few seconds after it starts, then every 6 hours); the page shows the result ----
-let laterAt; // "Later" hides the banner until GitHub answers again, or the app starts again
+let toldUpdate; // the version whose toast already showed this session; "Update ready" in the top bar stays until skipped
 // check: ask GitHub now (Settings → Check for updates) instead of reading the server's last answer.
 export async function refreshUpdate(check = false) {
   try {
@@ -369,48 +370,50 @@ export async function refreshUpdate(check = false) {
   showUpdate();
   refresh();
 }
-function showUpdate() {
-  const u = state.update;
-  const bar = $('#update');
-  const show = Boolean(u?.newer && !u.skipped && u.checkedAt !== laterAt);
-  if (show) {
-    $('#updateTitle').textContent = `Flatform ${displayVersion(u.latest)} is ready`;
-    $('#updateNote').textContent = u.notes;
-    $('#updateDownload').href = u.downloadUrl; // checked by the server: only github.com/TyroneMadison/Flatform/ links
-    if (bar.hidden) announce(`Flatform ${displayVersion(u.latest)} is ready to download`);
-  } else if (bar.contains(document.activeElement)) $('#view').focus();
-  bar.hidden = !show;
+// A newer Flatform: a toast once (Download, Later, Skip this version) and an "Update" pill in the top bar that shows
+// the toast again. Skip this version hides both.
+function showUpdate(force = false) {
+  const n = updateNotice(state.update, displayVersion);
+  $('#updatePill').hidden = !n;
+  if (!n) return;
+  $('#updatePill .tb-l').textContent = n.pill;
+  $('#updatePill').title = `${n.title}. Click to see what is new and download it.`;
+  if (toldUpdate === n.version && !force) return;
+  toldUpdate = n.version;
+  announce(`${n.title} to download`);
+  toast(`${n.title}. ${n.note}`, 'info', [
+    { label: 'Download', title: 'Open the download page for the new version', run: () => window.open(state.update.downloadUrl, '_blank', 'noopener') },
+    { label: 'Later', title: 'Hide this. The Update button in the top bar stays until you install it.', run: () => {} },
+    { label: 'Skip this version', title: 'Do not ask about this version again', run: skipUpdate },
+  ]);
 }
-function updateLater() {
-  laterAt = state.update?.checkedAt;
+async function skipUpdate() {
+  try { state.update = await send('/api/update/skip', 'POST', { version: state.update.latest }); } catch (e) { toast(e.message); }
   showUpdate();
+  refresh();
 }
 
 // ---- spend: the ledger summary (Settings → Spend) and a banner when a balance is under its alert ----
 // Top up opens the provider's billing page: through main.mjs in the app, a plain new tab in `npm run web`.
 export const topUp = (service) => (native?.openBilling ? native.openBilling(service).catch((e) => toast(e.message))
   : window.open(PROVIDERS[service].billingUrl, '_blank', 'noopener'));
-let lowLater = false; // "Later" hides the banner until Flatform starts again
+let toldLow = false; // the low balance toast shows once per session; the account dot stays amber until topped up
 export async function refreshSpend() {
   try { state.spend = await api('/api/spend'); } catch { return; }
   showLow();
   refresh();
 }
-function showLow() {
-  const low = Object.entries(state.spend?.services || {}).filter(([, s]) => s.low);
-  const bar = $('#lowBalance');
-  if (low.length && !lowLater) {
-    const [service, s] = low[0];
-    $('#lowTitle').textContent = `${PROVIDERS[service].name} balance is low`;
-    $('#lowNote').textContent = [`${fmt(s.balance)} credits left, under your alert of ${fmt(s.threshold)}`,
-      s.daysLeft != null && `about ${s.daysLeft} days at this pace`, low.length > 1 && `${PROVIDERS[low[1][0]].name} is low too`].filter(Boolean).join(' · ');
-    $('#lowTopUp').dataset.service = service;
-    if (bar.hidden) announce($('#lowTitle').textContent);
-  }
-  bar.hidden = !low.length || lowLater;
+function showLow(force = false) {
+  const n = lowNotice(state.spend, PROVIDERS, fmt);
+  if (!n || (toldLow && !force)) return n;
+  toldLow = true;
+  announce(n.title);
+  toast(`${n.title}. ${n.note}`, 'info', [
+    { label: 'Top up', title: 'Open the page where you buy more credits', run: () => topUp(n.service) },
+    { label: 'Later', title: 'Hide this. The amber dot in the top bar stays until you top up.', run: () => {} },
+  ]);
+  return n;
 }
-$('#lowTopUp').addEventListener('click', (e) => topUp(e.target.dataset.service));
-$('#lowLater').addEventListener('click', () => { lowLater = true; showLow(); });
 
 // ---- files opened with Flatform (desktop app: "Open with", a second launch) go to the Drop flow ----
 native?.onOpenFiles?.(async (paths) => {
@@ -467,7 +470,9 @@ function renderFrame() {
     el.title = `${l.text}. ${l.tip}`;
     el.setAttribute('aria-label', `${l.text}. ${l.tip}`);
     if (id === 'blenderLight' && el.dataset.busy === 'true') continue; // blinking while a render runs (setRenderLight)
-    const html = `<span class="dot ${l.ok ? 'ok' : l.ok == null ? 'wait' : ''}"></span><span class="tb-l">${esc(label)}</span>`;
+    const low = id === 'accountStatus' && lowNotice(state.spend, PROVIDERS, fmt);
+    if (low) { el.title = low.dot; el.setAttribute('aria-label', low.dot); }
+    const html = `<span class="dot ${low ? 'low' : l.ok ? 'ok' : l.ok == null ? 'wait' : ''}"></span><span class="tb-l">${esc(label)}</span>`;
     if (el.innerHTML !== html) el.innerHTML = html;
   }
   $('#appVersion').textContent = state.settings ? `Version ${displayVersion(state.settings.version)}` : '';
@@ -592,15 +597,6 @@ $('#keyForm').addEventListener('submit', async (e) => {
   } catch (err) { $('#keyError').textContent = err.message; }
 });
 $('#keyDialog').addEventListener('close', () => { $('#keyInput').value = ''; });
-// The Download link opens in the browser (the desktop app hands https links to it); the bar's job is then done.
-$('#updateDownload').addEventListener('click', updateLater);
-$('#updateLater').addEventListener('click', updateLater);
-$('#updateSkip').addEventListener('click', async () => {
-  try { state.update = await send('/api/update/skip', 'POST', { version: state.update.latest }); } catch (e) { toast(e.message); }
-  showUpdate();
-  refresh();
-});
-$('#update').addEventListener('keydown', (e) => { if (e.key === 'Escape') updateLater(); });
 $('#filePicker').addEventListener('change', (e) => { addFiles(e.target.files, { quick: e.target.dataset.quick === 'true' }); e.target.value = ''; });
 // Dropping a file outside a drop zone must not open it in the window.
 window.addEventListener('dragover', (e) => e.preventDefault());
@@ -726,7 +722,9 @@ function wireTopBar(palette) {
   $('#shareBtn').addEventListener('click', shareSheet);
   $('#presentBtn').addEventListener('click', present);
   $('#savedNote').addEventListener('click', restoreLastSession);
+  $('#updatePill').addEventListener('click', () => showUpdate(true));
   $('#accountStatus').addEventListener('click', () => {
+    if (showLow(true)) return; // low balance: the toast with Top up
     const provider = state.settings?.provider || 'tripo';
     return state.accounts[provider]?.hasKey ? go('#/settings/providers') : openKeyDialog(provider);
   });

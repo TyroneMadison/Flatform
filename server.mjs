@@ -17,6 +17,7 @@ import { PROVIDERS, VIEWS, DEFAULT_PROVIDER, normalize, baseSetup, tripoDirectBo
 import { estimate } from './public/lib/pricing.js';
 import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
 import { resolveColors, deserializeMaterial, blenderMaterial } from './public/lib/tenno.js';
+import { cleanExtras } from './public/lib/render-types.js';
 import { inferRegions, checkAnthropicKey } from './inference.mjs';
 import { createQueue } from './batch.mjs';
 import { createWorkspaces } from './workspaces.mjs';
@@ -57,7 +58,9 @@ const MAX_INFER = 4 * 1024 * 1024; // a 256 px PNG of the photo plus its cluster
 const VERSION = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 // The app page may only run its own files (and its inline import map). WebAssembly is for the Draco/Meshopt decoders.
 // GLTFLoader fetches a GLB's embedded textures from blob: URLs (and a .gltf's data: URIs), hence connect-src blob: data:.
-const IMPORT_MAP = readFileSync(path.join(PUBLIC, 'index.html'), 'utf8').match(/<script type="importmap">([\s\S]*?)<\/script>/)[1];
+// The browser hashes the script with its line ends turned into \n (HTML parsing does that), so a Windows checkout
+// with \r\n must hash the same text or the import map is blocked.
+const IMPORT_MAP = readFileSync(path.join(PUBLIC, 'index.html'), 'utf8').match(/<script type="importmap">([\s\S]*?)<\/script>/)[1].replace(/\r\n?/g, '\n');
 const CSP = [
   "default-src 'self'", `script-src 'self' 'wasm-unsafe-eval' 'sha256-${createHash('sha256').update(IMPORT_MAP).digest('base64')}'`,
   "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "worker-src 'self' blob:", "connect-src 'self' blob: data:",
@@ -1119,7 +1122,8 @@ export async function startServer({
     });
   }
 
-  function startBlender(m, { looks = [], frames = FRAMES, still }) {
+  // effect: a Render idea's exploded parts or clay / blueprint (render-types.js). paint: Every colour's repainted body.
+  function startBlender(m, { looks = [], frames = FRAMES, still, effect, paint: paintOverride }) {
     const bin = findBlender();
     if (!bin) throw new HttpError(409, 'Blender not found. Install Blender 4.x or locate it in Settings.');
     if (!m.renders?.outDir) throw new HttpError(409, 'Start the render first');
@@ -1147,10 +1151,13 @@ export async function startServer({
     // The Compose pose (preset or Pose by hand) on a rigged character, with the model's own bone names.
     const pose = m.scene?.motion?.pose ? blenderPose(readFileSync(path.join(MODELS, m.id, v.glb)), m.scene.motion) : null;
     const poseArg = pose ? ['--pose', JSON.stringify(pose)] : [];
-    const paint = m.scene?.paint;
+    if (paintOverride !== undefined && (!paintOverride || typeof paintOverride !== 'object' || Array.isArray(paintOverride))) throw new HttpError(400, 'Bad paint');
+    const paint = paintOverride || m.scene?.paint;
+    const fx = cleanExtras({ effect }).effect;
+    const effectArg = fx ? ['--effect', JSON.stringify(fx)] : [];
     const materialsFile = path.join(MODELS, m.id, 'blender-materials.json');
-    const materials = paint?.pieces ? Object.fromEntries(Object.entries(paint.pieces).filter(([, p]) => p.material || p.slot || p.colors || p.region)
-      .map(([key, p]) => [key, { ...blenderMaterial(deserializeMaterial(p.material), resolveColors(paint, p)), slot: p.slot, textured: p.material?.textured !== false && !p.material?.color }])) : {};
+    const materials = paint?.pieces ? Object.fromEntries(Object.entries(paint.pieces).filter(([, p]) => p && (p.material || p.slot || p.colors || p.region || p.hidden))
+      .map(([key, p]) => [key, { ...blenderMaterial(deserializeMaterial(p.material), resolveColors(paint, p)), slot: p.slot, textured: p.material?.textured !== false && !p.material?.color, ...(p.hidden && { hidden: true }) }])) : {};
     const job = { status: 'running', looks, look: looks[0], frame: 0, frames, error: null };
     jobs.set(m.id, job);
     (async () => {
@@ -1165,7 +1172,7 @@ export async function startServer({
           '--look', look, '--frames', String(frames), '--step', String(STEP), '--res', `${width}x${height}`,
           ...(existsSync(sceneFile) ? ['--scene', sceneFile] : []),
           '--rig', JSON.stringify({ lighting: settings.lighting, glass: settings.glass }),
-          ...lookArg, '--materials', materialsFile, ...poseArg,
+          ...lookArg, '--materials', materialsFile, ...poseArg, ...effectArg,
           ...envArg(look),
           ...(still !== undefined ? ['--still', String(still), '--still-out', path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still))] : []),
         ]);

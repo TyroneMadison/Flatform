@@ -61,7 +61,7 @@ export const TOOL_TIPS = {
   pose: 'Press Test Rig to play as this character, or pick a pose.',
   carparts: 'Open doors, the hood or the trunk, turn the wheels or change the ride height.',
   tools: 'Reset scene puts everything back to how a new scene starts. You can undo it.',
-  render: 'Pick what to make, or click a render idea, then press the orange Render button.',
+  render: 'The only place renders start. Pick a type, press Run. Finished files go to the Library.',
 };
 /** Whether an element id shows for a dock tool. Ids no tool lists always show, so nothing new can go missing. */
 export function shows(tool, id) {
@@ -84,3 +84,10 @@ export function changeName(keys = []) {
 
 /** The ring in the render pill: stroke-dasharray for a 0 to 100 percent. */
 export const ringDash = (pct) => `${Math.max(0, Math.min(100, Math.round(pct || 0)))} 100`;
+
+/** "About 3 min left" for the 3D model ring: from how long it has run and how far it got. */
+export function timeLeft(pct, elapsedMs) {
+  if (!(pct >= 5 && pct < 100 && elapsedMs > 0)) return 'A few minutes left';
+  const s = (elapsedMs / 1000) * ((100 - pct) / pct);
+  return s < 60 ? 'Less than a minute left' : `About ${Math.round(s / 60)} min left`;
+}

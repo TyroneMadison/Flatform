@@ -6,7 +6,7 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdir, rm, readFile } from 'node:fs/promises';
+import { mkdir, rm, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -18,6 +18,7 @@ import { ENVIRONMENTS, blenderEnvironment } from '../public/lib/environments.js'
 import { envCamera } from '../public/lib/pipeline.js';
 import { applyHips } from '../public/lib/handpose.js';
 import { decode } from '../png.mjs';
+import { blenderMaterial, deserializeMaterial, resolveColors } from '../public/lib/tenno.js';
 import { startServer } from '../server.mjs';
 import { createKeyStore } from '../keys.mjs';
 
@@ -42,6 +43,16 @@ function blender(args) {
 const render = (args) => blender(['-P', SCRIPT, '--', ...args]);
 const ok = (r) => assert.equal(r.code, 0, `Blender failed:\n${r.out.split(/\r?\n/).filter((l) => /FLATFORM_ERROR|Error|Traceback/.test(l)).join('\n') || r.out.slice(-2000)}`);
 
+// Mean [r, g, b] (0-255) of one box of a PNG (box: [x0, y0, x1, y1] as shares of the size).
+async function rgb(file, box) {
+  const img = decode(await readFile(file));
+  const [x0, y0, x1, y1] = box.map((v, i) => Math.round(v * (i % 2 ? img.height : img.width)));
+  const sum = [0, 0, 0];
+  let n = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const i = (y * img.width + x) * img.channels; for (let c = 0; c < 3; c++) sum[c] += img.data[i + c]; n++; }
+  return sum.map((v) => v / n);
+}
+
 // Mean brightness (0-255) of a PNG, or of one box in it, and how much it varies: a real picture is not one flat colour.
 async function stats(file, box = null) {
   const img = decode(await readFile(file));
@@ -63,7 +74,7 @@ if (!BIN) {
   const outputs = [];
   before(async () => {
     console.log(`Blender ${await blenderVersion(BIN)}: ${BIN}\nRenders: ${OUT}`);
-    for (const d of ['fixtures', 'environments', 'pose', 'compose']) await rm(path.join(OUT, d), { recursive: true, force: true });
+    for (const d of ['fixtures', 'environments', 'pose', 'compose', 'ideas']) await rm(path.join(OUT, d), { recursive: true, force: true });
     const r = await blender(['-P', path.join(ROOT, 'test', 'blender', 'make_fixtures.py'), '--', FIX]);
     ok(r);
     assert.ok(existsSync(path.join(FIX, 'car.glb')) && existsSync(path.join(FIX, 'mixamo-rig.glb')), 'test models were not made');
@@ -130,6 +141,36 @@ if (!BIN) {
     const file = path.join(dir, 'posed_000.png');
     assert.ok((await stats(file)).spread > 4);
     outputs.push(file);
+  });
+
+  // Render ideas in Blender (render-types.js / --effect): exploded parts, clay, blueprint, and a part hidden in Scene.
+  // The poster title and the 9:16 crop are done by the page on the finished PNGs, so they are not Blender's job.
+  test('Render ideas render in Blender: exploded parts, clay, blueprint, a hidden part', LONG, async () => {
+    const dir = path.join(OUT, 'ideas');
+    await mkdir(dir, { recursive: true });
+    const env = blenderEnvironment('white-cyc-studio', envCamera(ENVIRONMENTS['white-cyc-studio'].cam, 4 / 3), { hdri: (n) => path.join(HDRI, `${n}.hdr`) });
+    const shot = async (slug, extra) => {
+      const r = await render(['--glb', path.join(FIX, 'car.glb'), '--out', path.join(dir, slug), '--slug', slug, '--look', 'studio', '--frames', '1', '--res', '400x300', '--samples', '16', '--environment', JSON.stringify(env), ...extra]);
+      ok(r);
+      const file = path.join(dir, slug, `${slug}_000.png`);
+      assert.ok(existsSync(file), `${slug}: no picture`);
+      outputs.push(file);
+      return { out: r.out, file, rgb: await rgb(file, [0.3, 0.45, 0.7, 0.65]), corner: await rgb(file, [0, 0, 0.12, 0.12]) };
+    };
+    const plain = await shot('plain', []);
+    assert.ok(plain.rgb[0] > plain.rgb[1] + 15, `the fixture car is red paint (${plain.rgb.map(Math.round)})`);
+    const exploded = await shot('exploded', ['--effect', JSON.stringify({ explode: 0.15 })]);
+    assert.match(exploded.out, /FLATFORM_EXPLODED 6/, 'body, cabin and four wheels all moved out');
+    const clay = await shot('clay', ['--effect', JSON.stringify({ override: 'clay' })]);
+    assert.match(clay.out, /FLATFORM_OVERRIDE clay/);
+    assert.ok(Math.abs(clay.rgb[0] - clay.rgb[1]) < 20 && clay.rgb[0] > 60, `clay is one plain light colour, not red paint (${clay.rgb.map(Math.round)})`);
+    const blue = await shot('blueprint', ['--effect', JSON.stringify({ override: 'blueprint' })]);
+    assert.ok(blue.corner[2] > blue.corner[0] + 40, `blueprint background is blue (${blue.corner.map(Math.round)})`);
+    // A wheel hidden in Scene: the key the app gives it is name#index; try every index so the test needs no import order.
+    const spec = path.join(dir, 'hidden.json');
+    await writeFile(spec, JSON.stringify({ materials: Object.fromEntries([0, 1, 2, 3, 4, 5].map((i) => [`Wheel_FL#${i}`, { ...blenderMaterial(deserializeMaterial(null), resolveColors(null, {})), hidden: true }])), groups: {} }));
+    const hidden = await shot('hidden', ['--materials', spec]);
+    assert.match(hidden.out, /FLATFORM_HIDDEN 1/);
   });
 
   test('Compose render path: real server, default White Cyc Studio, a car and a posed character', LONG, async () => {

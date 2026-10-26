@@ -119,15 +119,24 @@ test('render ideas: each one uses a real world, camera and render option', () =>
     for (const k of Object.keys(r.render)) assert.ok(renderKeys.has(k), `${idea.id}: ${k}`);
     assert.ok(r.render.still || r.render.t360 || r.render.t180, `${idea.id} renders something`);
     assert.ok(r.render.showroom || r.render.studio || r.render.transparent, `${idea.id} has a look`);
+    assert.ok(['picture', 'spin'].includes(r.type), `${idea.id} picks a render type`);
   }
+  // The gallery matches the v3 mock-up: its eight ideas, in its order, come first.
+  assert.deepEqual(IDEAS.slice(0, 8).map((i) => i.label), ['Hero poster', 'Dud Rents listing set', 'Photo vs 3D', 'Exploded parts', 'In-game Warframe shot', 'Phone spin 9:16', 'Night neon', 'Clay or blueprint']);
+  assert.deepEqual(applyIdea('explode', cameras).extras, { effect: { explode: 0.15 } });
+  assert.deepEqual(applyIdea('clay', cameras).extras, { effect: { override: 'clay' } });
+  assert.deepEqual(applyIdea('vertical', cameras).extras, { vertical: true });
+  assert.deepEqual(applyIdea('hero', cameras).extras, { poster: '' });
+  const a = applyIdea('clay', cameras); a.extras.effect.override = 'blueprint';
+  assert.equal(applyIdea('clay', cameras).extras.effect.override, 'clay', 'an idea hands out a copy');
   assert.ok(!ideasFor('car').some((i) => i.warframe), 'the Warframe shot is only in Warframe mode');
   assert.ok(ideasFor('warframe').some((i) => i.id === 'ingame'));
   assert.equal(applyIdea('nope'), null);
   assert.deepEqual(applyIdea('hero', cameras).scene, { camera: 'low', turn: 30, lens: 35, view: 'car', fit: 'footprint' });
   // The gallery is in the Render tool, and nothing starts until Render is pressed.
   assert.match(compose, /data-idea="\$\{i\.id\}" title="\$\{esc\(i\.desc\)\}"/);
-  assert.match(compose, /pickRender\(r\.render\)/);
-  assert.match(read('views/compose-render.js'), /export function pickRender\(patch\)/);
+  assert.match(compose, /pickRender\(r\.render, r\)/);
+  assert.match(read('views/compose-render.js'), /export function pickRender\(patch, idea = \{\}\)/);
 });
 
 test('top bar: every v3 control is there, with a tooltip', () => {

@@ -85,8 +85,8 @@ test('Compose render area keeps every old render option, with a tooltip on each 
   for (const k of ['still', 't360', 't180', 'models']) assert.match(r, new RegExp(`card\\('${k}'`), k);
   for (const k of ['showroom', 'studio', 'transparent']) { assert.match(r, new RegExp(`look\\('${k}'`), k); assert.match(r, new RegExp(`data-preview="${k}"`), k); }
   for (const s of ['data-renderer="three"', 'data-renderer="blender"', 'data-format=', "data-glass=\"on\"", 'data-rig=', 'rig-reset', 'sheet360', 'sheet180',
-    'data-act="folder"', 'data-act="render"', 'data-act="open"', 'data-act="pause"', 'data-act="cancel"', 'tennogenCard', 'mountExport(',
-    '/api/renders/${model.id}/start', '/api/renders/${model.id}/blender', 'Render to handoff folder', 'Add to queue', 'Show in folder', "classList.toggle('rendering'", 'setRenderLight(']) {
+    'data-act="folder"', 'data-act="run"', 'data-act="open"', 'data-act="pause"', 'data-act="cancel"', 'tennogenCard', 'mountExport(',
+    '/api/renders/${model.id}/start', '/api/renders/${model.id}/blender', 'More settings', 'Add to queue', 'Show in folder', "classList.toggle('rendering'", 'setRenderLight(']) {
     assert.ok(r.includes(s), s);
   }
   const v = await readFile('public/views/compose-video.js', 'utf8');

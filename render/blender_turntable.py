@@ -88,6 +88,8 @@ def parse_args():
     p.add_argument("--materials")
     p.add_argument("--pose")  # blender.mjs blenderPose: {"bones": {name: [x, y, z] three.js Euler degrees}, "hips": ...}
     p.add_argument("--report-bones", action="store_true")  # tests: print each posed bone's head
+    # Render ideas (public/lib/render-types.js): {"explode": 0..1 of the model's size, "override": "clay" | "blueprint"}
+    p.add_argument("--effect")
     return p.parse_args(argv)
 
 
@@ -945,6 +947,84 @@ def interior_camera(s):
     return aim_camera(cam, (0.35, 0.0, 1.1), (0.35, -3.0, 1.0))
 
 
+BLUEPRINT = "#1e3a8a"  # render-effects.js uses the same blue
+CLAY = "#d8d2c8"
+
+
+def apply_hidden(meshes, spec):
+    """Pieces hidden in Look (paint.js): a whole mesh leaves the render, a face group gets a see-through material."""
+    clear = None
+    hidden = 0
+    for key, piece in spec.get("materials", {}).items():
+        if not piece.get("hidden"):
+            continue
+        for obj in meshes:
+            base = mesh_key(meshes, obj)
+            if key == base:
+                obj.hide_render = True
+            elif key.startswith(base + "@") and int(key.rsplit("@", 1)[1]) < len(obj.material_slots):
+                if clear is None:
+                    clear = bpy.data.materials.new("hidden")
+                    clear.use_nodes = True
+                    nt = clear.node_tree
+                    nt.nodes.clear()
+                    nt.links.new(nt.nodes.new("ShaderNodeBsdfTransparent").outputs[0], nt.nodes.new("ShaderNodeOutputMaterial").inputs["Surface"])
+                obj.material_slots[int(key.rsplit("@", 1)[1])].material = clear
+            else:
+                continue
+            hidden += 1
+    if hidden:
+        print(f"FLATFORM_HIDDEN {hidden}", flush=True)
+
+
+def explode(meshes, size, amount):
+    """Exploded parts, as render-types.js explodeOffsets: every mesh moves out from the middle of all of them by
+    amount x the model's biggest size, never down (wheels stay above the floor). One mesh has nothing to pull apart."""
+    bpy.context.view_layer.update()
+    centers = [sum((o.matrix_world @ Vector(c) for c in o.bound_box), Vector()) / 8 for o in meshes]
+    moved = 0
+    if len(centers) > 1:
+        mid = sum(centers, Vector()) / len(centers)
+        for o, c in zip(meshes, centers):
+            d = c - mid
+            d.z = max(0.0, d.z)
+            if d.length > 1e-6:
+                o.matrix_world = Matrix.Translation(d.normalized() * max(size) * amount) @ o.matrix_world
+                moved += 1
+    bpy.context.view_layer.update()
+    print(f"FLATFORM_EXPLODED {moved}", flush=True)
+
+
+def override_materials(meshes, kind):
+    """Clay: one plain matte clay colour. Blueprint: flat blue with white wireframe lines (the scene is plain blue)."""
+    if kind == "clay":
+        mat = principled("clay", hex_linear(CLAY), 0.8)
+    else:
+        mat = bpy.data.materials.new("blueprint")
+        mat.use_nodes = True
+        nt = mat.node_tree
+        nt.nodes.clear()
+        wire = nt.nodes.new("ShaderNodeWireframe")
+        wire.use_pixel_size = True
+        wire.inputs["Size"].default_value = 1.5
+        fill = nt.nodes.new("ShaderNodeEmission")
+        fill.inputs["Color"].default_value = (*hex_linear("#2a4fa8"), 1)
+        line = nt.nodes.new("ShaderNodeEmission")
+        line.inputs["Color"].default_value = (1, 1, 1, 1)
+        mix = nt.nodes.new("ShaderNodeMixShader")
+        nt.links.new(wire.outputs["Fac"], mix.inputs[0])
+        nt.links.new(fill.outputs[0], mix.inputs[1])
+        nt.links.new(line.outputs[0], mix.inputs[2])
+        nt.links.new(mix.outputs[0], nt.nodes.new("ShaderNodeOutputMaterial").inputs["Surface"])
+    for obj in meshes:
+        if obj.material_slots:
+            for slot in obj.material_slots:
+                slot.material = mat
+        else:
+            obj.data.materials.append(mat)
+    print(f"FLATFORM_OVERRIDE {kind}", flush=True)
+
+
 def render_to(path):
     bpy.context.scene.render.filepath = path
     bpy.ops.render.render(write_still=True)
@@ -961,15 +1041,20 @@ def main():
     rig = json.loads(args.rig) if args.rig else {}
     lighting = {**LIGHTING, **rig.get("lighting", {})}
     glass = {**GLASS, **rig.get("glass", {})}
-    env = json.loads(args.environment) if args.environment and args.look != "transparent" else None
-    if args.look == "transparent":
+    effect = json.loads(args.effect) if args.effect else {}
+    blueprint = effect.get("override") == "blueprint"
+    env = json.loads(args.environment) if args.environment and args.look != "transparent" and not blueprint else None
+    if blueprint:
+        world(1.0, hex_linear(BLUEPRINT))
+    elif args.look == "transparent":
         build_transparent()
     elif env:
         build_environment(env)
         lighting = env_lighting(lighting, env["light"]["sun"])
     else:
         build_ring_studio(float(s["reflection"]))
-    apply_rig(lighting)
+    if not blueprint:  # blueprint is all flat emission: no lights to set
+        apply_rig(lighting)
     pivot, meshes, size, sphere = import_car(args.glb, s)
     if args.pose:
         arms = apply_pose(args.glb, json.loads(args.pose), pivot)
@@ -978,9 +1063,16 @@ def main():
     apply_glass(meshes, glass)
     if args.materials and os.path.exists(args.materials):
         with open(args.materials, encoding="utf-8") as f:
-            apply_materials(meshes, json.load(f))
+            spec = json.load(f)
+        apply_materials(meshes, spec)
+        apply_hidden(meshes, spec)
+    if effect.get("override") in ("clay", "blueprint"):
+        override_materials(meshes, effect["override"])
+    if float(effect.get("explode") or 0) > 0:
+        explode([o for o in meshes if not o.hide_render], size, min(1.0, float(effect["explode"])))
     setup_render(width, height, args.look, args.samples)
-    apply_look(json.loads(args.scenelook) if args.scenelook else None, meshes)
+    if not blueprint:
+        apply_look(json.loads(args.scenelook) if args.scenelook else None, meshes)
     profile = json.loads(args.profile) if args.profile else None
     if profile:
         apply_profile(bpy.context.scene, meshes, profile)

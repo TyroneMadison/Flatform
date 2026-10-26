@@ -1,16 +1,19 @@
-// Compose · Render: the render area under the scene (it was its own Render tab before v0.6). Renders the composed
-// scene to the handoff folder. Every render you start goes into the queue tray and runs one at a time.
+// Compose · Render: the Render tool's card (v3). Pick one type (lib/render-types.js), press Run. The older controls
+// (what to render, looks, light rig, engine, file types, folder) live under More settings and ride along with every
+// type. Every render you start goes into the queue tray and runs one at a time.
 // In-app renderer: the same Three.js studio, offscreen at full size, turning only the car 5° per frame.
 // Blender renderer (optional): render/blender_turntable.py writes the frames; sprites are made here either way.
 // A render belongs to the car it started on and keeps going if you leave Compose; the top-bar light follows it.
 import { mountExport } from './compose-video.js';
-import { $, $$, esc, state, api, send, toast, findModel, fileUrl, upsert, refresh, native, announce, providerOf, FORMATS, setRenderLight, go } from '../app.js';
+import { $, $$, esc, state, api, send, toast, findModel, fileUrl, upsert, refresh, native, announce, providerOf, FORMATS, setRenderLight, go, pickDock } from '../app.js';
 import { statusLight, taskLabel, resultFile, nextTask, waitingCount, trimQueue, STATUS_TEXT } from '../lib/render-status.js';
 import { icon } from '../lib/icons.js';
 import * as P from '../lib/pipeline.js';
 import { Studio, defaultScene, kelvinColor } from '../lib/studio.js';
 import { tennogenApplies, tennogenCard, onTennogen, onTennogenSubmit, tennogenGate } from '../lib/tennogen-ui.js';
 import { makeSheets as makeSheetSet, downscale, toBlob } from '../lib/sheets.js';
+import { RENDER_TYPES, typeOf, defaultOption, planRun, cleanExtras } from '../lib/render-types.js';
+import { applyEffect, styled, poster, vertical } from '../lib/render-effects.js';
 
 let root;
 let m; // the car on screen
@@ -22,6 +25,7 @@ let hooks = {};
 const CELL = 64; // preview cell width
 const LOOK_KEYS = Object.keys(P.LOOKS); // showroom, studio (the composed scene), transparent
 let rigTimer;
+let pick = { type: 'picture', option: null, extras: {} }; // the type card picked, its option and a Render idea's extras
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sep = () => (state.settings?.platform === 'win32' ? '\\' : '/');
@@ -40,7 +44,16 @@ export function mountRender(el, model, h = {}) {
   opts ||= freshOpts();
   pickIntent(intent);
   if (!running()) opts.renderer = state.settings?.renderer === 'blender' && blenderReady() ? 'blender' : 'three';
-  el.innerHTML = `<div class="rowhead ra-head"><h2 class="ph2">${icon('film', 18)} Render</h2><span class="sub">Pick what you want below, then press the orange button. Finished renders go to your handoff folder and show up in Library.</span></div>
+  el.innerHTML = `<div class="ra-types" id="raTypes" role="radiogroup" aria-label="What to make"></div>
+  <div class="ra-opts" id="raOpts"></div>
+  <div class="renderbar">
+    <div><b id="rbTitle">Ready to render</b><span id="rbSub" aria-live="polite"></span></div>
+    <div class="pbar big" role="progressbar" aria-label="Render progress" aria-valuemin="0" aria-valuemax="100" id="rbBar"><i style="width:0"></i></div>
+    <div class="rb-act" id="rbAct"></div>
+  </div>
+  <button class="btn pri big ra-run" type="button" data-act="run" id="raRun" title="Start making it. You can keep working while it renders."></button>
+  <div id="raIdeasSlot"></div>
+  <details class="ra-settings" id="raMore"><summary title="What to render, looks, render light, engine, file types and the folder renders are saved in">More settings</summary>
   <div class="export">
     <div class="ex-left" id="left"></div>
     <div class="ex-mid">
@@ -54,40 +67,37 @@ export function mountRender(el, model, h = {}) {
       <div class="sheet-meta"><span>${P.COLUMNS} columns × ${P.spriteGrid(P.FRAMES).rows} rows</span><span>Frame 000 is front ¾</span><span>Web copies at 512 and 256 px, WebP + PNG</span></div>
       <div class="rowhead sheethead"><h2 class="label">180° half turn · detail page</h2><span class="sub">Cut from the same ${P.FRAMES} frames, no extra rendering</span></div>
       <div class="sheet"><canvas id="sheet180" aria-label="Preview of the 180° sprite sheet. It fills in frame by frame while rendering."></canvas></div>
-      <div class="renderbar">
-        <div><b id="rbTitle">Ready to render</b><span id="rbSub" aria-live="polite"></span></div>
-        <div class="pbar big" role="progressbar" aria-label="Render progress" aria-valuemin="0" aria-valuemax="100" id="rbBar"><i style="width:0"></i></div>
-        <div class="rb-act" id="rbAct"></div>
-      </div>
     </div>
     <aside class="ex-right" id="right"></aside>
-  </div>`;
+  </div></details>`;
   // The area sits inside Compose: its clicks and slider moves are its own, not the scene composer's.
-  const own = (fn) => (e) => { e.stopPropagation(); fn(e); };
+  const own = (fn) => (e) => { if (e.target.closest?.('#renderIdeas')) return; e.stopPropagation(); fn(e); }; // the ideas are Compose's
   el.addEventListener('click', own(onClick));
   el.addEventListener('change', own(onChange));
   el.addEventListener('submit', own(onSubmit));
   el.addEventListener('input', own(onInput));
+  renderTypes();
   renderLeft();
   renderRight();
   renderBar();
   resetPreview();
-  mountExport(el, m, { track });
+  mountExport($('#raMore', el), m, { track });
   if (intent) requestAnimationFrame(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }));
 }
 
-// 'still' or 'turntable' (the S and T keys, Library's Render): tick that in What to render.
+// 'still' or 'turntable' (the S and T keys, Library's Render): pick Picture or Spin video.
 function pickIntent(intent) {
-  if (intent === 'still') Object.assign(opts, { still: true, t360: false, t180: false });
-  if (intent === 'turntable') Object.assign(opts, { t360: true, t180: true });
+  if (intent === 'still') { Object.assign(opts, { still: true, t360: false, t180: false }); pick = { type: 'picture', option: null, extras: {} }; }
+  if (intent === 'turntable') { Object.assign(opts, { t360: true, t180: true }); pick = { type: 'spin', option: 'full', extras: {} }; }
 }
 /** The S and T keys in Compose: pick a still or a turntable and bring the Render button into view. */
 export function showRenderIntent(intent) {
   if (!root?.isConnected || !opts) return;
   pickIntent(intent);
+  renderTypes();
   renderLeft();
   root.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  toast(`${intent === 'still' ? 'Still picture' : '360° turntable'} picked. Press the orange Render button to start.`, 'info');
+  toast(`${intent === 'still' ? 'Picture' : 'Spin video'} picked. Press Run to start.`, 'info');
 }
 
 function freshOpts() {
@@ -108,11 +118,14 @@ export function resetRenderOptions() {
   return () => apply(before.opts || freshOpts(), before.lighting, before.glass);
 }
 
-/** A render idea (lib/render-ideas.js) ticks what to render: { still, t360, t180, showroom, studio, transparent }. */
-export function pickRender(patch) {
+/** A render idea (lib/render-ideas.js) ticks what to render ({ still, t360, t180, showroom, studio, transparent }) and
+ * picks its type card, option and extras (poster title, exploded parts, clay or blueprint, phone 9:16). */
+export function pickRender(patch, idea = {}) {
   if (!opts) return;
   Object.assign(opts, patch);
-  if (root?.isConnected) renderLeft();
+  if (idea.type) pick = { type: idea.type, option: idea.option ?? defaultOption(idea.type), extras: { ...(idea.extras || {}) } };
+  if (pick.extras.poster === '') pick.extras.poster = m?.name || '';
+  if (root?.isConnected) { renderTypes(); renderLeft(); }
 }
 
 export function updateRender() {
@@ -123,6 +136,32 @@ export function updateRender() {
 }
 
 // ---- panels ----
+// The type cards (Picture, Spin video ...), the picked type's options and a Render idea's extras, and the Run button.
+const EXTRA_TEXT = { poster: 'Title text on top', vertical: 'Tall 9:16 for phones', explode: 'Parts pulled apart', override: 'Clay or blueprint' };
+function renderTypes() {
+  const box = $('#raTypes', root);
+  if (!box) return;
+  const t = typeOf(pick.type);
+  pick.option ??= defaultOption(t.id);
+  const cards = RENDER_TYPES.map((x) => `<button class="ra-type" type="button" role="radio" aria-checked="${x.id === t.id}" data-rtype="${x.id}" title="${esc(x.desc)}"><span class="rt-top"><b>${esc(x.label)}</b><span class="rt-time">${esc(x.time)}</span></span><small>${esc(x.desc)}</small></button>`).join('');
+  if (box.dataset.html !== cards) { box.dataset.html = cards; box.innerHTML = cards; }
+  const ex = pick.extras;
+  const chips = [
+    ...(t.options ? [`<div class="chips" role="radiogroup" aria-label="${esc(t.label)} options">${t.options.map(([k, label, tip]) => `<button class="chip" type="button" role="radio" data-ropt="${k}" aria-checked="${k === pick.option}" title="${esc(tip)}">${esc(label)}</button>`).join('')}</div>`] : []),
+    ...(ex.effect?.override ? [`<div class="chips" role="radiogroup" aria-label="Clay or blueprint"><button class="chip" type="button" role="radio" data-rover="clay" aria-checked="${ex.effect.override === 'clay'}" title="One plain matte clay colour all over">Clay</button><button class="chip" type="button" role="radio" data-rover="blueprint" aria-checked="${ex.effect.override === 'blueprint'}" title="White lines on blueprint blue">Blueprint</button></div>`] : []),
+    ...(ex.poster != null ? [`<label class="field ra-title" title="The big words on the poster"><span>Poster title</span><input class="inp" id="raTitle" data-rtitle maxlength="60" value="${esc(ex.poster)}" placeholder="${esc(m?.name || 'Your title')}"></label>`] : []),
+    ...Object.entries({ poster: ex.poster != null, vertical: ex.vertical, explode: ex.effect?.explode > 0, override: Boolean(ex.effect?.override) }).filter(([, on]) => on).map(([k]) => `<button class="chip on" type="button" data-rdrop="${k}" title="Take this idea off: render without it">${EXTRA_TEXT[k]} ✕</button>`),
+  ];
+  const html = chips.join('');
+  const o = $('#raOpts', root);
+  if (o.dataset.html !== html && !o.contains(document.activeElement?.id === 'raTitle' ? document.activeElement : null)) { o.dataset.html = html; o.innerHTML = html; }
+  const run = $('#raRun', root);
+  const label = t.id === 'spin' && pick.option === 'photos' ? 'Open photo frames' : `${running() ? 'Add to queue' : 'Run'} ${t.label}`;
+  const runHtml = `${icon('film')}<span>${esc(label)}</span>`;
+  if (run.dataset.html !== runHtml) { run.dataset.html = runHtml; run.innerHTML = runHtml; }
+  run.title = running() ? 'Something is rendering: this waits in the queue and starts next' : `Start: ${t.desc}. You can keep working while it renders.`;
+}
+
 function renderLeft() {
   const busy = running(); // options stay open while rendering: the next render waits in the queue
   const card = (key, title, desc, tip) => `<label class="oc" title="${tip}"><input type="checkbox" data-opt="${key}" ${opts[key] ? 'checked' : ''}><span class="cb">${icon('check', 12)}</span><div><b>${title}</b><span class="d">${desc}</span></div></label>`;
@@ -215,7 +254,6 @@ function renderRight() {
     <button class="btn ghostbtn wide" type="button" data-act="folder" title="Pick the folder renders are saved in" ${busy ? 'disabled' : ''}><span>${dir ? 'Change folder' : 'Choose folder'}</span></button>
     <form class="field pathform" id="folderForm" hidden><label for="folderIn">Folder</label><input class="inp mono" id="folderIn" name="outputRoot" value="${esc(s.outputRoot || s.suggestedOutputRoot || '')}" spellcheck="false" title="The full path of the folder"><button class="btn ghostbtn" type="submit" title="Use this folder">Save</button></form>
     <div class="cta">
-      <button class="btn pri" type="button" data-act="render" title="${busy ? 'Something is rendering: this waits in the queue and starts next' : 'Start rendering what you picked on the left'}">${icon('film')}<span>${busy ? 'Add to queue' : 'Render to handoff folder'}</span></button>
       <button class="btn ghostbtn" type="button" data-act="open" title="Open the handoff folder on this computer" ${native && (m.renders?.outDir || s.outputRoot) ? '' : 'disabled'}>${icon('folder')}<span>Open folder</span></button>
     </div>
     <details class="ra-more"><summary title="What ends up in the handoff folder">What’s in the folder</summary>
@@ -272,10 +310,12 @@ function renderBar() {
   const bar = root?.isConnected && $('#rbBar', root);
   if (!bar) return;
   const pct = job?.done && !job.error && !job.cancelled ? 100 : light.pct;
+  bar.closest('.renderbar').hidden = !job; // the progress shows once something renders
+  renderTypes(); // Run becomes "Add to queue" while one renders
   $('#rbTitle', root).textContent = !job ? 'Ready to render'
     : job.done ? `${other ? `${job.model.name}: ` : ''}${job.error ? 'Render stopped' : job.cancelled ? 'Render cancelled' : 'Render finished'}`
       : `Rendering ${other ? job.model.name : ''} ${job.renderer === 'blender' ? 'in Blender' : 'in Flatform'}${job.paused ? ' · paused' : ''}`.replace(/\s+/g, ' ');
-  $('#rbSub', root).textContent = !job ? (outDir() ? 'Saves into the handoff folder on the right' : 'Choose a handoff folder first')
+  $('#rbSub', root).textContent = !job ? ''
     : job.error || (running() ? `${job.phaseText || ''} · ${light.text.split(' · ').slice(1).join(' · ')}` : job.phaseText) || '';
   bar.setAttribute('aria-valuenow', pct);
   bar.firstElementChild.style.width = `${pct}%`;
@@ -333,6 +373,14 @@ async function onClick(e) {
   if (await onTennogen(e, m, redrawLeft)) return;
   const t = e.target.closest('button');
   if (!t) return;
+  if (t.dataset.rtype) { pick = { type: t.dataset.rtype, option: defaultOption(t.dataset.rtype), extras: {} }; renderTypes(); } // a Render idea's extras belong to the type it picked
+  if (t.dataset.ropt) { pick.option = t.dataset.ropt; renderTypes(); }
+  if (t.dataset.rover) { pick.extras.effect = { ...pick.extras.effect, override: t.dataset.rover }; renderTypes(); }
+  if (t.dataset.rdrop) {
+    const k = t.dataset.rdrop;
+    if (k === 'explode' || k === 'override') { if (pick.extras.effect) delete pick.extras.effect[k]; if (!Object.keys(pick.extras.effect || {}).length) delete pick.extras.effect; } else delete pick.extras[k];
+    renderTypes();
+  }
   if (t.dataset.preview && !(running() && onScreen())) { previewLook = t.dataset.preview; resetPreview(); }
   if (t.dataset.act === 'rig-reset') { saveRig('lighting', P.DEFAULT_LIGHTING); renderLeft(); }
   if (t.dataset.look) { opts[t.dataset.look] = !opts[t.dataset.look]; renderLeft(); }
@@ -350,7 +398,7 @@ async function onClick(e) {
     } else { $('#folderForm', root).hidden = false; $('#folderIn', root).focus(); }
   }
   if (act === 'open') native?.openPath(m.renders?.outDir || state.settings.outputRoot).catch(() => native.openPath(state.settings.outputRoot)).catch((err) => toast(err.message));
-  if (act === 'render') enqueue();
+  if (act === 'run') run();
   if (act === 'clear-tray') { queue = queue.filter((q) => ['waiting', 'running'].includes(q.status)); renderRight(); }
   if (t.dataset.remove) { queue = queue.filter((q) => q.id !== t.dataset.remove || q.status !== 'waiting'); renderRight(); renderBar(); }
   if (t.dataset.reveal) reveal(queue.find((q) => q.id === t.dataset.reveal));
@@ -371,6 +419,7 @@ function onChange(e) {
 // Sliders update their own text while dragging; the panel is not redrawn so the thumb keeps focus.
 function onInput(e) {
   const t = e.target;
+  if (t.dataset.rtitle !== undefined) { pick.extras.poster = t.value; return; }
   if (t.dataset.glass === 'tint') { t.nextElementSibling.textContent = t.value; saveRig('glass', { tint: t.value }); return; }
   if (!t.dataset.rig) return;
   const v = Number(t.value);
@@ -429,15 +478,35 @@ function makeSheets(look, turns) {
 }
 
 
-// "Render to handoff folder": checks the picks, then lines the render up in the queue tray.
-async function enqueue() {
-  const looks = LOOK_KEYS.filter((l) => opts[l]);
-  if (!state.settings?.outputRoot) return toast('Choose a handoff folder first');
-  if (!looks.length && (opts.still || opts.t360 || opts.t180)) return toast('Pick at least one look');
-  if (!opts.t360 && !opts.t180 && !opts.still && !opts.models) return toast('Pick something to render');
+// Run: the picked type becomes one or more tasks (render-types.js planRun), laid over the More settings options.
+async function run() {
+  const plan = planRun(pick.type, pick.option, { paint: m.scene?.paint, cameraMove: Boolean(m.scene?.cameraPath?.on), extras: cleanExtras(pick.extras) });
+  if (plan.go === 'spin') return go(`#/spin/${m.id}`);
+  if (plan.error) return toast(plan.error, 'info', plan.fix ? [{ label: plan.fix === 'camera' ? 'Open Camera' : 'Open Look', title: 'Go to the tool that sets this up', run: () => pickDock(plan.fix) }] : []);
+  if (!state.settings?.outputRoot) { // a sensible default: the suggested folder, said out loud, changeable under More settings
+    const dir = state.settings?.suggestedOutputRoot;
+    if (!dir) return toast('Choose a folder for renders first: open More settings below.');
+    await saveFolder(dir);
+    if (!state.settings?.outputRoot) return;
+    toast(`Renders go to ${dir}. Change it under More settings.`, 'info');
+  }
   if (!(await tennogenGate(m))) { redrawLeft(); return; } // TennoGen names and sizes, for Warframe models with a texture folder
-  const snap = { ...opts, formats: new Set(opts.formats), yaw: stillYaw(m) }; // the still uses the angle on screen now
-  queue = trimQueue([...queue, { id: crypto.randomUUID(), model: m, opts: snap, label: taskLabel(snap), status: 'waiting' }]);
+  let overnight = null;
+  if (plan.overnight) {
+    try { overnight = await send('/api/overnight', 'POST', { modelId: m.id, ...plan.overnight }); } catch (e) { return toast(e.message); }
+    toast(`${plan.tasks.length} renders lined up for tonight. Leave Flatform open; it keeps the computer awake until they are done.`, 'info');
+  }
+  for (const t of plan.tasks) enqueue({ ...t.patch, ...(overnight && { job: t.job }) }, t.label);
+}
+
+// Checks one task's picks, then lines it up in the queue tray.
+function enqueue(patch = {}, label = null) {
+  const o = { ...opts, ...patch };
+  const looks = LOOK_KEYS.filter((l) => o[l]);
+  if (!looks.length && (o.still || o.t360 || o.t180)) return toast('Pick at least one look under More settings');
+  if (!o.t360 && !o.t180 && !o.still && !o.models) return toast('Pick something to render under More settings');
+  const snap = { ...o, formats: new Set(opts.formats), yaw: stillYaw(m) }; // the still uses the angle on screen now
+  queue = trimQueue([...queue, { id: crypto.randomUUID(), model: m, opts: snap, label: label || taskLabel(snap), status: 'waiting' }]);
   if (running()) toast(`Added to the queue. It starts when the current render is done.`, 'info');
   renderRight();
   renderBar();
@@ -471,6 +540,7 @@ async function start(task) {
   const model = findModel(task.model.id) || task.model;
   task.status = 'running';
   job = { model, opts: o, task, yaw: o.yaw, renderer: o.renderer, frame: 0, total: 0, paused: false, cancelled: false, done: false };
+  if (o.job) overnightMark(task, 'running');
   if (root?.isConnected) { renderLeft(); renderRight(); }
   renderBar();
   try {
@@ -483,6 +553,7 @@ async function start(task) {
       if (job.renderer === 'blender') await renderBlender(slug, looks, turns, frames, manifests);
       else await renderInApp(slug, looks, turns, frames, manifests);
     }
+    const extra = await afterRender(slug, looks, turns, started.outDir);
     progress('Writing the handoff files', job.total, job.total);
     const version = state.settings?.version;
     if (turns.length) {
@@ -494,7 +565,8 @@ async function start(task) {
     await put('HANDOFF.md', new Blob([P.handoffText({ slug, name: model.name, looks: turns.length ? looks : [], turns, stills, models, renderer: job.renderer, version })]));
     upsert(await api(`/api/models/${model.id}`)); // the Library picks up the new poster and badges from this
     job.done = true;
-    Object.assign(task, { status: 'done', outDir: started.outDir, file: resultFile({ slug, still: o.still, t360: o.t360, t180: o.t180, looks, yaw: job.yaw }) });
+    Object.assign(task, { status: 'done', outDir: started.outDir, file: extra || resultFile({ slug, still: o.still, t360: o.t360, t180: o.t180, looks, yaw: job.yaw }) });
+    if (o.job) overnightMark(task, 'done');
     progress(`Saved to ${started.outDir}`, job.total, job.total);
     announce(`${model.name}: render finished`);
     toast(`${model.name} is rendered. It's in Library and your handoff folder.`, 'ok', [
@@ -505,6 +577,7 @@ async function start(task) {
     job.done = true;
     task.status = job.cancelled ? 'cancelled' : 'failed';
     if (!job.cancelled) { job.error = task.error = e.message; toast(e.message); }
+    if (o.job) overnightMark(task, job.cancelled ? 'cancelled' : 'failed', e.message);
   }
   refresh();
   if (root?.isConnected) { renderLeft(); renderRight(); }
@@ -535,8 +608,9 @@ async function renderInApp(slug, looks, turns, frames, manifests) {
       studio.resize(width, height, ss);
       studio.setRig(state.settings || {});
       progress(`${P.LOOKS[look].label} · loading the scene`, done, total);
-      await studio.setState(sceneFor(model, look));
+      await studio.setState({ ...sceneFor(model, look), ...(job.opts.paint && { paint: job.opts.paint }) });
       await studio.load(fileUrl(model, model.glb));
+      if (job.opts.effect && !applyEffect(studio, job.opts.effect) && job.opts.effect.explode) toast('This model is one piece, so there are no parts to pull apart. It renders whole.', 'info');
       const sheets = turns.length ? makeSheets(look, turns) : null;
       // Up to 4 frame uploads in flight. Every upload is kept so a failed one fails the render.
       const uploads = [];
@@ -587,7 +661,8 @@ async function renderInApp(slug, looks, turns, frames, manifests) {
 
 async function renderBlender(slug, looks, turns, frames, manifests) {
   const { model } = job;
-  await send(`/api/renders/${model.id}/blender`, 'POST', { looks, frames, ...(job.opts.still && { still: job.yaw }) });
+  const o = job.opts;
+  await send(`/api/renders/${model.id}/blender`, 'POST', { looks, frames, ...(o.still && { still: job.yaw }), ...(o.effect && { effect: o.effect }), ...(o.paint && { paint: o.paint }) });
   for (;;) {
     await sleep(700);
     const b = await api(`/api/renders/${model.id}/blender`);
@@ -618,6 +693,64 @@ async function renderBlender(slug, looks, turns, frames, manifests) {
     await sheets.write(poster);
     await writeManifests(slug, look, turns, 'blender', manifests);
   }
+}
+
+// After the frames, on the finished PNGs so both engines get it: painted or cartoon, the poster title, colour names
+// on the file, the 9:16 crop and the video. Returns the main file it made (relative to the handoff folder), or null.
+async function afterRender(slug, looks, turns, outDir) {
+  const o = job.opts;
+  const src = (rel) => `/api/renders/${job.model.id}/file?path=${encodeURIComponent(rel)}&t=${Date.now()}`;
+  const png = async (canvas) => toBlob(canvas, 'image/png');
+  const named = (rel, tag) => rel.replace(/\.png$/, `_${tag}.png`);
+  let file = null;
+  const tag = [o.suffix, o.effect?.override, o.effect?.explode && 'exploded'].filter(Boolean).join('_'); // colours and effects keep their own files
+  if (o.still) {
+    for (const look of looks) {
+      await checkpoint();
+      let rel = `stills/${P.stillName(slug, look, job.yaw)}`;
+      if (tag) { const out = named(rel, tag); await put(out, await (await fetch(src(rel))).blob()); rel = out; }
+      if (o.style) {
+        progress(`${P.LOOKS[look].label} · drawing it ${o.style === 'cel' ? 'as a cartoon' : 'as a painting'}`, job.total, job.total);
+        const out = named(rel, o.style === 'cel' ? 'cartoon' : 'painted');
+        await put(out, await png(await styled(src(rel), o.style)));
+        rel = out;
+      }
+      if (o.poster != null) { const out = named(rel, 'poster'); await put(out, await png(await poster(src(rel), o.poster || job.model.name))); rel = out; }
+      file ||= rel;
+    }
+  }
+  if (o.video && turns.length) {
+    const look = looks.includes('studio') ? 'studio' : looks[0];
+    const frames = P.turnFrames(Math.max(...turns));
+    let dir = `frames/${look}`;
+    if (o.vertical) {
+      dir = `frames/${look}-phone`;
+      for (let i = 0; i < frames; i++) {
+        await checkpoint();
+        await put(`${dir}/${P.framePath(slug, look, i).split('/').pop()}`, await png(await vertical(src(P.framePath(slug, look, i)))));
+        progress(`Cutting the tall phone version · frame ${P.pad3(i + 1)} of ${P.pad3(frames)}`, i + 1, frames);
+      }
+    }
+    progress('Making the video', job.total, job.total);
+    const name = [slug, look, o.video, tag].filter(Boolean).join('_');
+    try {
+      const r = await send('/api/video', 'POST', { modelId: job.model.id, frames: dir, pattern: `${slug}_%03d.png`, name, outDir, format: 'mp4', resolution: o.vertical ? 'vertical' : '1080p', fps: 24, quality: 'good', seconds: 0 });
+      file = r.output.split(/[\\/]/).pop();
+    } catch (e) { toast(`The spin frames are saved, but the video could not be made: ${e.message}`, 'info'); }
+  }
+  return file;
+}
+
+// Overnight list jobs (overnight.mjs): the server keeps the computer awake while any wait, counts tries and puts a
+// failed one back in line; this page runs them, so a job back in line goes back in the queue tray too.
+async function overnightMark(task, status, error) {
+  try {
+    const view = await send(`/api/overnight/jobs/${encodeURIComponent(task.opts.job)}`, 'PATCH', { status, error });
+    if (status === 'failed' && view.jobs?.find((j) => j.id === task.opts.job)?.status === 'queued') {
+      queue = trimQueue([...queue, { ...task, id: crypto.randomUUID(), status: 'waiting', error: null }]);
+      pump();
+    }
+  } catch { /* the list was cleared: the render itself still counts */ }
 }
 
 async function writeManifests(slug, look, turns, renderer, manifests) {
