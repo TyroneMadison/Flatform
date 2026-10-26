@@ -459,3 +459,13 @@
 .adjust summary { cursor: pointer; font: 600 15px var(--display); color: var(--accent-hi); }
 .adjust .field { margin-top: 12px; }
 .spin .renderbar { display: block; }
+
+/* ---- Compose, Test rig (full window over Compose) ---- */
+.tr-wrap { position: fixed; inset: 38px 0 0 0; z-index: 900; background: var(--surface-1); }
+.tr-cv { display: block; width: 100%; height: 100%; cursor: crosshair; }
+.tr-state { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); padding: 6px 16px; border-radius: 999px; background: rgba(5, 4, 4, .7); border: 1px solid var(--line-4); font: 600 15px var(--display); color: var(--accent-hi); pointer-events: none; }
+.tr-keys { position: absolute; left: 16px; bottom: 16px; margin: 0; padding: 10px 12px; list-style: none; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; background: rgba(5, 4, 4, .7); border: 1px solid var(--line-4); border-radius: 10px; font-size: 12px; color: var(--soft); pointer-events: none; }
+.tr-keys li { display: contents; }
+.tr-keys kbd { font: 600 11.5px var(--mono); color: var(--text); padding: 1px 6px; border: 1px solid var(--line-4); border-radius: 5px; justify-self: start; }
+.tr-exit { position: absolute; top: 16px; right: 16px; }
+.tr-hint { position: absolute; right: 16px; bottom: 16px; max-width: 300px; padding: 8px 12px; border-radius: 10px; background: rgba(5, 4, 4, .7); border: 1px solid var(--line-4); font-size: 12.5px; color: var(--soft); }

@@ -42,13 +42,13 @@ export function mirrorPose(bones) {
 
 // --- bones in three.js ---
 const worldPos = (o) => o.getWorldPosition(new THREE.Vector3());
-function setWorldQuat(bone, qWorld) {
+export function setWorldQuat(bone, qWorld) {
   const pq = bone.parent ? bone.parent.getWorldQuaternion(new THREE.Quaternion()) : new THREE.Quaternion();
   bone.quaternion.copy(pq.invert().multiply(qWorld));
   bone.updateMatrixWorld(true);
 }
 // Turn a bone (about its own head) so a world direction `from` points along `to`.
-function aim(bone, from, to) {
+export function aim(bone, from, to) {
   const q = new THREE.Quaternion().setFromUnitVectors(from.clone().normalize(), to.clone().normalize());
   setWorldQuat(bone, q.multiply(bone.getWorldQuaternion(new THREE.Quaternion())));
 }
