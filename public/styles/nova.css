@@ -134,3 +134,6 @@ html.presenting #view { position: fixed; inset: 0; padding: 0; margin: 0; z-inde
 .hv-act { display: grid; gap: 6px; justify-items: start; }
 .sh-off { display: grid; gap: 10px; justify-items: start; max-width: 640px; }
 .sh-setup { display: grid; gap: 10px; width: 100%; }
+/* Big targets (mock-up): main choices on the new screens are 44px tall, row buttons 36px. */
+.share .seg .chip, .ft-side .seg .chip { min-height: 44px; padding: 0 18px; font-size: 15px; }
+.usage .btn.sm, .share .btn.sm, .pl-list .btn.sm { min-height: 36px; padding: 0 14px; }
