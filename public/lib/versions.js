@@ -28,3 +28,18 @@ export function sliderKey(t, key, shift = false) {
 }
 /** Same frame index in both versions (frame counts may differ), so flipping keeps the angle. */
 export const pairFrame = (i, a, b) => [a.files[i % a.files.length], b.files[Math.round((i / a.files.length) * b.files.length) % b.files.length]];
+
+// Plain names for what a render's settings hold (scene keys, the light rig, glass).
+const NAMES = {
+  preset: 'Place', backdrop: 'Place', paint: 'Colours', decals: 'Stickers', extras: 'Added things', motion: 'Pose',
+  camera: 'Camera', lens: 'Camera', view: 'Camera', orbit: 'Camera', path: 'Camera move', bookmarks: 'Camera',
+  key: 'Light', fill: 'Light', rim: 'Light', matchLighting: 'Light', lighting: 'Light', look: 'Look', glass: 'Glass',
+  x: 'Position', y: 'Position', turn: 'Position', scale: 'Size', sameSize: 'Size', flip: 'Position', snap: 'Position',
+  reflection: 'Ground', shadow: 'Ground', mirror: 'Shape',
+};
+/** "Place and Colours" style list of what changed between two versions' settings, or '' when nothing did. */
+export function changedNames(a, b) {
+  const flat = (v) => ({ ...(v?.scene || {}), lighting: v?.lighting, glass: v?.glass });
+  const names = [...new Set(diffSettings(flat(a), flat(b)).map((d) => NAMES[d.key.split('.')[0]] || 'Other settings'))];
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0] || '';
+}

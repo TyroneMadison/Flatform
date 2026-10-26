@@ -4,11 +4,14 @@ import { PRESETS as THEMES, normalizeTheme, resolveTheme, applyTheme, contrast, 
 import { $, esc, state, api, send, toast, refresh, native, fmt, fmtBalance, saveKey, confirmDialog, arrowRadios, refreshUpdate, refreshSpend, topUp } from '../app.js';
 import { PROVIDERS } from '../lib/engines.js';
 import { icon } from '../lib/icons.js';
+import { displayVersion } from '../lib/version.js';
+import { blenderStatus } from '../lib/render-status.js';
 import { PRESETS } from '../lib/studio.js';
 import { EXTRA, EXTRA_HTML, wireExtra } from './settings-extra.js';
 
-const SCENES = Object.entries(PRESETS).map(([k, p]) => [k, k === 'showroom' ? 'Showroom (default)' : k === 'miami' ? 'Miami street at night (your HDRI)' : p.label]);
-const SECTIONS = [['providers', 'Providers'], ['spend', 'Spend'], ['rendering', 'Rendering'], ['output', 'Output folder'], ['appearance', 'Appearance'], ['history', 'History'], ...EXTRA, ['about', 'About']];
+const SCENES = Object.entries(PRESETS).map(([k, p]) => [k, k === 'white-cyc-studio' ? 'White Cyc Studio (default)' : k === 'miami' ? 'Miami street at night (your HDRI)' : p.label]);
+// The tabs, in plain words (v3): Accounts, Look, Rendering, Folders, Version history, Usage, Shortcuts, Backup, Plugins, About.
+const SECTIONS = [['providers', 'Accounts'], ['appearance', 'Look'], ['rendering', 'Rendering'], ['output', 'Folders'], ['history', 'Version history'], ['spend', 'Usage'], ...EXTRA, ['about', 'About and updates']];
 const RELEASES = 'https://github.com/TyroneMadison/Flatform/releases';
 const results = {}; // provider → { ok, text } from the last Test or key change
 let root;
@@ -23,7 +26,7 @@ export function mount(el, { id }) {
   el.innerHTML = `<h1 class="ph">Settings</h1>
   <p class="sub">Providers and keys. Paste a key once; Flatform encrypts it on this computer.</p>
   <div class="set">
-    <nav class="sn" aria-label="Settings sections">${SECTIONS.map(([k, label]) => `<a href="#/settings/${k}"${k === section ? ' class="on" aria-current="page"' : ''}>${label}</a>`).join('')}</nav>
+    <nav class="sn" aria-label="Settings sections">${SECTIONS.map(([k, label]) => `<a href="#/settings/${k}" title="${label}"${k === section ? ' class="on" aria-current="page"' : ''}>${label}</a>`).join('')}</nav>
     <section class="settings" id="settings"></section>
   </div>`;
   el.addEventListener('click', onClick);
@@ -105,6 +108,7 @@ async function onClick(e) {
       if (file) save({ blenderPath: file });
     } else showField('blenderField');
   }
+  if (act === 'blender-find') save({ blenderPath: '' }); // forget the picked one and look in the usual places
   if (act === 'theme') { const theme = { preset: t.dataset.value, custom: {} }; applyTheme(theme); save({ theme }); }
   if (act === 'theme-reset') { applyTheme(undefined); save({ theme: { preset: 'dark', custom: {} } }); }
   if (act === 'git-repo') {
@@ -246,12 +250,14 @@ function renderingHtml() {
   return `<div class="card glass"><h2 class="label">Rendering</h2>
     <div class="field"><span class="flabel" id="rendererLabel">Renderer</span>
       <div class="chips seg" role="radiogroup" aria-labelledby="rendererLabel">
-        <button class="chip" type="button" role="radio" aria-checked="${s.renderer !== 'blender' || !b?.found}" data-act="renderer" data-value="three">In-app</button>
-        <button class="chip" type="button" role="radio" aria-checked="${s.renderer === 'blender' && Boolean(b?.found)}" data-act="renderer" data-value="blender" ${b?.found ? '' : 'disabled'}>Blender (Cycles)</button>
+        <button class="chip" type="button" role="radio" aria-checked="${s.renderer !== 'blender' || !b?.found}" data-act="renderer" data-value="three" title="Renders inside Flatform. Quick, and needs nothing else.">In-app</button>
+        <button class="chip" type="button" role="radio" aria-checked="${s.renderer === 'blender' && Boolean(b?.found)}" data-act="renderer" data-value="blender" ${b?.found ? '' : 'disabled'} title="${b?.found ? 'Renders in Blender. Slower, more realistic light.' : 'Needs Blender. Click Browse below to show Flatform where it is.'}">Blender (Cycles)</button>
       </div></div>
-    <div class="field"><span class="flabel">Blender</span>
-      <div class="inp ${b?.found ? 'mono' : 'warn'}" title="${esc(b?.path || '')}">${b?.found ? esc(b.path) : 'Not found · install Blender 4.x to render'}</div>
-      <button class="btn sec" type="button" data-act="blender">${icon('folder')}<span>Locate Blender</span></button></div>
+    <div class="field"><span class="flabel">Blender location</span>
+      <div class="inp ${b?.found ? '' : 'warn'}" id="blenderStatus" role="status" title="${esc(b?.found ? b.path : 'Flatform looked in the usual places and did not find Blender. Click Browse and pick blender.exe.')}">${esc(blenderStatus(b))}</div>
+      <button class="btn sec" type="button" data-act="blender" title="Pick the Blender program (blender.exe) yourself">${icon('folder')}<span>Browse</span></button>
+      <button class="btn ghostbtn" type="button" data-act="blender-find" title="Look again in the usual places: your Blender folder, Program Files, Steam and PATH">Find again</button></div>
+    ${b?.found ? `<p class="fine mono" title="Where Flatform runs Blender from">${esc(b.path)}</p>` : ''}
     ${pathForm('blenderField', 'blenderPath', 'Blender path', s.blenderPath, s.platform === 'win32' ? 'C:\\Program Files\\Blender Foundation\\Blender 4.2\\blender.exe' : '/Applications/Blender.app')}
     <div class="field"><label class="flabel" for="defaultScene">Default scene</label>
       <select class="inp" id="defaultScene" name="defaultScene">${SCENES.map(([k, l]) => `<option value="${k}" ${s.defaultScene === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
@@ -275,7 +281,7 @@ function updateStatus() {
   const u = state.update;
   if (checking) return 'Checking…';
   const at = u?.checkedAt ? ` · last checked ${new Date(u.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
-  if (u?.newer) return `<b>Flatform ${esc(u.latest)} is ready</b><a class="btn sm pri" href="${esc(u.downloadUrl)}" target="_blank" rel="noopener">${icon('download')}<span>Download</span></a>`;
+  if (u?.newer) return `<b>Flatform ${esc(displayVersion(u.latest))} is ready</b><a class="btn sm pri" href="${esc(u.downloadUrl)}" target="_blank" rel="noopener">${icon('download')}<span>Download</span></a>`;
   if (u?.failed) return `Couldn't check right now${at}`;
   return u?.checkedAt ? `✓ You're up to date${at}` : 'Not checked yet';
 }
@@ -286,10 +292,11 @@ function appearanceHtml() {
   const ratio = contrast(c.text, c.bg);
   return `<div class="card glass"><h2 class="label">Theme</h2>
     <p class="fine">Changes the app's look only. Models, scenes, materials and renders never change.</p>
-    <div class="chips" role="radiogroup" aria-label="Theme">${Object.entries(THEMES).map(([k, p]) => `<button class="chip" type="button" role="radio" aria-checked="${th.preset === k}" data-act="theme" data-value="${k}"><span class="swatch" style="background:${p.primary}"></span>${esc(p.label)}</button>`).join('')}</div>
+    <div class="chips" role="radiogroup" aria-label="Theme">${Object.entries(THEMES).map(([k, p]) => `<button class="chip" type="button" role="radio" aria-checked="${th.preset === k}" data-act="theme" data-value="${k}"><span class="tswatch" style="background:${p.primary}"></span>${esc(p.label)}</button>`).join('')}</div>
     ${['primary', 'secondary', 'accent'].map((k) => `<div class="field"><span class="flabel">${k[0].toUpperCase() + k.slice(1)}</span><input class="inp" type="color" data-theme-color="${k}" value="${c[k]}" aria-label="${k} color"></div>`).join('')}
     <p class="fine">Text contrast ${ratio.toFixed(1)}:1${ratio >= AAA ? ' (meets WCAG AAA)' : ''}</p>
-    <button class="btn ghostbtn" type="button" data-act="theme-reset">Reset to Flatform Dark</button>
+    <button class="btn ghostbtn" type="button" data-act="theme-reset" title="Go back to the standard dark look">Reset to Flatform Dark</button>
+    <label class="tg" title="Stops moving effects and makes every animation instant. Also on when your computer asks for less motion."><span>Reduce motion<small>No pulsing, spinning or sliding</small></span><input class="sw" type="checkbox" role="switch" id="reduceMotion" ${document.body.classList.contains('rm') ? 'checked' : ''}></label>
   </div>`;
 }
 
@@ -314,7 +321,7 @@ function historyHtml() {
 function aboutHtml() {
   const s = state.settings;
   return `<div class="card glass"><h2 class="label">Updates</h2>
-    <div class="field"><span class="flabel">Version</span><div class="inp">Flatform ${esc(s.version)}</div>
+    <div class="field"><span class="flabel">Version</span><div class="inp">Flatform ${esc(displayVersion(s.version))}</div>
       <a class="btn ghostbtn" href="${RELEASES}" target="_blank" rel="noopener">${icon('external')}<span>Releases</span></a></div>
     <div class="field"><span class="flabel">Latest</span><span class="ures" role="status">${updateStatus()}</span>
       <button class="btn ghostbtn" type="button" data-act="check-update">${icon('retry')}<span>Check for updates</span></button></div>

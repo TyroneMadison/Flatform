@@ -35,13 +35,16 @@ export function mount(el, { id }) {
   const provider = state.settings?.provider || 'tripo';
   try { setup = normalize({ ...(model && p.setup?.engine ? p.setup : savedSetup(provider)), mode: p.mode }); } catch { setup = presetConfig(provider, 'balanced', p.mode); }
   openGroup = null;
-  el.innerHTML = `${stepper('generate', model)}
-  <section class="setup">
-    <div class="su-left" id="suLeft"></div>
-    <aside class="su-panel glass" aria-label="Generation setup">
+  el.innerHTML = `
+  <section class="setup v3">
+    <aside class="su-panel card" aria-labelledby="suRecipe">
+      <h2 class="su-title" id="suRecipe">Recipe</h2>
       <div class="su-scroll" id="suPanel"></div>
-      <div class="foot" id="suFoot"></div>
     </aside>
+    <div class="su-center">
+      <div class="su-left" id="suLeft"></div>
+      <div class="su-ready card"><h2>Ready to build</h2><p class="muted" id="suReadyLine"></p><div class="foot" id="suFoot"></div></div>
+    </div>
     <input type="file" id="suPick" accept="image/png,image/jpeg,image/heic,image/heif,.heic,.heif" multiple hidden>
   </section>`;
   el.addEventListener('click', onClick);
@@ -81,6 +84,9 @@ function render() {
   put('#suLeft', leftHtml());
   if (!dragging) put('#suPanel', panelHtml());
   put('#suFoot', footHtml());
+  const photo = setup.mode === 'views' ? pending().views.front : singlePhotos()[0];
+  const preset = PRESETS[setup.provider].find((x) => x.id === matchPreset(setup))?.name || 'Custom';
+  $('#suReadyLine', root).textContent = `${photo ? photo.name : 'No photo yet'} · ${preset} recipe`;
   const main = $('#suMain', root);
   if (main) main.onload = () => { const d = $('#suDims', root); if (d) d.textContent = ` · ${main.naturalWidth} × ${main.naturalHeight}`; };
 }
@@ -258,7 +264,7 @@ function footHtml() {
   if (PROVIDERS[provider].local) { // free: no key, no balance
     const why = !n ? (setup.mode === 'views' ? 'Add the front view' : 'Add a photo') : setup.mode === 'views' && VIEWS.filter((v) => p.views[v]).length < 2 ? 'Add at least one more view' : '';
     const line = [n > 1 && `${n} models`, why, a && !a.ready && 'one-time download needed, see Settings', 'runs on your graphics card'].filter(Boolean).join(' · ');
-    return `<div class="cost" role="status"><b>Free</b><span>${esc(line)}</span></div><button class="btn pri gen" type="button" data-act="generate"${why ? ' disabled' : ''}>Generate</button>`;
+    return `<div class="cost" role="status"><b>Free</b><span>${esc(line)}</span></div><button class="btn pri gen big" type="button" data-act="generate"${why ? ' disabled' : ''} title="${why || 'Make the 3D model on this computer'}">Generate 3D model</button>`;
   }
   const noKey = state.settings?.keys?.[provider] === 'none' || a?.hasKey === false;
   const balance = a?.hasKey && a.balance != null ? Number(a.balance) : null;
@@ -269,8 +275,8 @@ function footHtml() {
     why,
     noKey ? `no ${PROVIDERS[provider].name} key yet` : a?.error ? 'balance unavailable' : balance != null ? `${short ? 'not enough · ' : ''}balance ${fmtBalance(balance)}` : 'balance …',
   ].filter(Boolean).join(' · ');
-  const button = noKey ? `<button class="btn pri gen" type="button" data-act="key">${icon('key')}<span>Add key</span></button>`
-    : `<button class="btn pri gen" type="button" data-act="generate"${why ? ' disabled' : ''}>Generate</button>`; // short: Generate asks first
+  const button = noKey ? `<button class="btn pri gen big" type="button" data-act="key" title="Connect your account first: it takes a minute">${icon('key')}<span>Add key</span></button>`
+    : `<button class="btn pri gen big" type="button" data-act="generate"${why ? ' disabled' : ''} title="${why || 'Send the photo and recipe and make the 3D model'}">Generate 3D model</button>`; // short: Generate asks first
   return `<div class="cost" role="status"><b>${total} credits</b><span class="${short ? 'bad' : ''}">${esc(line)}</span></div>${button}`;
 }
 

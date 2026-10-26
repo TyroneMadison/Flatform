@@ -6,9 +6,11 @@ import { $, $$, esc, state, api, send, toast, go, findModel, upsert, fileUrl, th
 import { icon } from '../lib/icons.js';
 
 const FILTERS = [['all', 'All'], ['ready', 'Ready'], ['generating', 'Generating'], ['failed', 'Failed'], ['rendered', 'Rendered'], ['needs', 'Needs render']];
+// A model counts as rendered once it has a turntable or a still from Compose's render area.
+const hasRender = (m) => isRendered(m) || Boolean(m.renders?.stills?.length);
 const MATCH = {
   all: () => true, ready: (m) => m.status === 'ready', generating: isGenerating, failed: (m) => m.status === 'failed',
-  rendered: isRendered, needs: (m) => m.status === 'ready' && !isRendered(m),
+  rendered: hasRender, needs: (m) => m.status === 'ready' && !hasRender(m),
 };
 let root;
 let filter = 'all';
@@ -48,7 +50,7 @@ export function mount(el) {
   el.addEventListener('click', (e) => {
     const q = e.target.closest('[data-quick]')?.dataset.quick;
     if (q === 'import') { go('#/drop'); setTimeout(openPicker, 50); }
-    if (q === 'render' || q === 'batch' || q === 'tenno') { const id = selectedId || state.models[0]?.id; if (!id) return toast('Add a model first', 'info'); go(q === 'tenno' ? `#/compose/${id}` : `#/render/${id}`); }
+    if (q === 'render' || q === 'batch' || q === 'tenno') { const id = selectedId || state.models[0]?.id; if (!id) return toast('Add a model first', 'info'); if (q === 'render') state.renderIntent = 'turntable'; go(q === 'tenno' ? `#/compose/${id}` : `#/compose/${id}/render`); }
   });
   el.addEventListener('click', onClick);
   el.addEventListener('keydown', (e) => {
@@ -102,8 +104,8 @@ async function onClick(e) {
 function card(m) {
   const img = thumbOf(m);
   const poster = Boolean(m.renders?.poster);
-  const badges = m.status !== 'ready' ? '' : isRendered(m)
-    ? renderedTurns(m).map((t) => `<em>${t}</em>`).join('')
+  const badges = m.status !== 'ready' ? '' : hasRender(m)
+    ? `${renderedTurns(m).map((t) => `<em title="Has a ${t}° turntable">${t}</em>`).join('')}${m.renders?.stills?.length ? '<em title="Has a still picture">Still</em>' : ''}`
     : '<em class="dim">Not rendered</em>';
   return `<article class="lc glass${m.id === selectedId ? ' on' : ''}">
     <button class="lc-select" type="button" data-select="${m.id}" aria-pressed="${m.id === selectedId}"><span class="sr-only">Select ${esc(m.name)}</span></button>
@@ -128,7 +130,7 @@ function side(m) {
   if (!m) return '<p class="muted">Select a model to see what you can do with it.</p>';
   const ready = m.status === 'ready';
   const rendered = isRendered(m) ? `rendered ${renderedTurns(m).join(' and ')}` : 'not rendered yet';
-  const sub = [statusText(m), engineLabel(m), `${m.versions.length} version${m.versions.length > 1 ? 's' : ''}`, ready && rendered].filter(Boolean).join(' Â· ');
+  const sub = [statusText(m), engineLabel(m), `${m.versions.length} version${m.versions.length > 1 ? 's' : ''}`, ready && rendered].filter(Boolean).join(' · ');
   const tripo = providerOf(m) === 'tripo';
   return `
     <div class="ls-th"><div class="stage ${m.renders?.poster ? 's-ring' : 's-clear'}">${m.renders?.poster ? '' : '<div class="checker"></div>'}${thumbOf(m) ? `<img class="thumb${m.renders?.poster ? '' : ' contain'}" src="${thumbOf(m)}" alt="${esc(m.name)}">` : ''}</div></div>
@@ -137,7 +139,7 @@ function side(m) {
     <p class="sub">${esc(sub)}</p>
     <div class="grp">
       ${ready ? `<a class="btn pri" href="#/compose/${m.id}">${icon('scene')}<span>Open in scene composer</span></a>
-      <a class="btn sec" href="#/render/${m.id}">${icon('film')}<span>${isRendered(m) ? 'Render again' : 'Render'}</span></a>` : ''}
+      <a class="btn sec" href="#/compose/${m.id}/render" title="Open Compose at its render options">${icon('film')}<span>${isRendered(m) ? 'Render again' : 'Render'}</span></a>` : ''}
       ${isGenerating(m) ? `<a class="btn sec" href="#/generate/${m.id}">${icon('eye')}<span>Show progress</span></a>` : ''}
       ${m.status === 'failed' ? `<button class="btn pri" type="button" data-act="retry" data-id="${m.id}">${icon('retry')}<span>Retry</span></button>` : ''}
       <a class="btn ghostbtn" href="#/model/${m.id}">${icon('eye')}<span>Model page</span></a>

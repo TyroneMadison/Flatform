@@ -1,5 +1,5 @@
 // Sprite sheets from frames, in the page (canvas): high-quality downscale, a light sharpen, and sheet assembly.
-// Used by the Render step (Flatform's own web/ layout) and the Spin set screen (the Dud Rents layout).
+// Used by Compose's render area (Flatform's own web/ layout) and the Spin set screen (the Dud Rents layout).
 import * as P from './pipeline.js';
 
 export const toBlob = (canvas, type, quality) => new Promise((ok, fail) => canvas.toBlob((b) => (b ? ok(b) : fail(new Error(`Could not encode ${type}`))), type, quality));

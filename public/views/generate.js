@@ -5,69 +5,45 @@ import { $, esc, state, route, stepper, findModel, fileUrl, sourceType, stagesOf
   removeQueued, retryQueued, retryModel, creditsText, engineLabel, providerOf, savedSetup, setupLabel, costOf, isGenerating, go, busy,
   accountOf, confirmDialog, fmtBalance } from '../app.js';
 import { PROVIDERS } from '../lib/engines.js';
+import { ringDash, timeLeft } from '../lib/stage.js';
 import { icon } from '../lib/icons.js';
 
 let root;
 let model;
 let shownReady = false;
-let observer;
-
-export function unmount() { observer?.disconnect(); }
+export function unmount() {}
 
 export function mount(el, { id }) {
   root = el;
   model = findModel(id);
   shownReady = model?.status === 'ready';
-  el.innerHTML = `${stepper('generate', model)}
-  <section class="genwrap">
-    <div class="gen-left">
-      <figure class="srcphoto glass">
-        <div class="photo">${model?.source ? `<img src="${fileUrl(model, model.source)}" alt="Source photo of ${esc(model.name)}">` : ''}</div>
-        <figcaption class="cap"><b>${model?.views ? 'Front view' : 'Source photo'}</b><span>${model ? `${esc(model.name)} · ${sourceType(model.source)}${model.views ? ` · ${Object.keys(model.views).length} views` : ''}` : 'Nothing selected'}</span></figcaption>
-      </figure>
-      <div class="stages glass">
-        <h2 class="label">Progress</h2>
+  // v3: one card in the middle with a big ring, the time left and Run in background; the queue floats on the right.
+  el.innerHTML = `
+  <section class="genwrap v3">
+    <div class="gencard card forming">
+      <div class="genring-wrap" role="progressbar" aria-label="3D model progress" aria-valuemin="0" aria-valuemax="100" id="pbar">
+        <svg class="ring genring" viewBox="0 0 36 36" aria-hidden="true"><circle class="t" cx="18" cy="18" r="15"/><circle class="p" id="genP" cx="18" cy="18" r="15" pathLength="100" stroke-dasharray="0 100"/></svg>
+        ${model?.source ? `<img class="genthumb" src="${fileUrl(model, model.source)}" alt="Your photo of ${esc(model.name)}">` : ''}
+      </div>
+      <h2 id="stageName" aria-live="polite"></h2>
+      <p class="muted" id="fbNote"></p>
+      <div class="facts" id="facts"></div>
+      <details class="genmore"><summary title="Each step the 3D model goes through">Steps</summary>
         <ol class="stl" id="stages"></ol>
         <p class="fine">${model && providerOf(model) === '3daistudio'
           ? '3D AI Studio keeps results for 24 hours and allows 3 requests a minute, so Flatform checks twice a minute and saves the model the moment it is ready.'
           : "Tripo's links expire after 5 minutes. Flatform saves the model locally the moment it's ready."}</p>
-      </div>
+        <p class="fine">${model ? `${esc(model.name)} · ${sourceType(model.source)}${model.views ? ` · ${Object.keys(model.views).length} views` : ''} · ${esc(engineLabel(model))}` : ''}</p>
+      </details>
     </div>
-    <div class="forming glass">
-      <div class="fhud tl"><span class="pulse" aria-hidden="true"></span><span id="fhudText">Generating 3D model</span></div>
-      <div class="fhud tr">${model ? esc(engineLabel(model)) : ''}</div>
-      <div class="fstage-wrap">${model?.source ? `
-        <div class="fstage" id="fstage">
-          <img class="fghost" src="${fileUrl(model, model.source)}" alt="">
-          <img class="freveal" src="${fileUrl(model, model.source)}" alt="">
-          <div class="fwire"></div><div class="fdots"></div><div class="fscan"></div>
-        </div>` : `<p class="muted">Drop a photo to start a model.</p>`}
-      </div>
-      <div class="fbottom">
-        <div class="bigpct" id="bigpct" aria-hidden="true"></div>
-        <div class="fb2"><b id="stageName" aria-live="polite"></b><div class="pbar big" role="progressbar" aria-label="Generation progress" aria-valuemin="0" aria-valuemax="100" id="pbar"><i></i></div><span id="fbNote"></span></div>
-        <div class="facts" id="facts"></div>
-      </div>
-    </div>
-    <aside class="queue glass" aria-label="Queue">
+    <aside class="queue card" aria-label="Queue">
       <h2 class="label">Queue</h2>
       <div class="qlist" id="qlist"></div>
       <p class="fine" id="credits"></p>
-      <button class="qadd" type="button" id="qadd">${icon('plus')}<span>Drop more photos to queue them<small id="qaddSetup"></small></span></button>
+      <button class="qadd" type="button" id="qadd" title="Choose more photos. Each one becomes its own 3D model with the same recipe.">${icon('plus')}<span>Drop more photos to queue them<small id="qaddSetup"></small></span></button>
     </aside>
   </section>`;
 
-  const img = $('.fghost', el);
-  const fit = () => {
-    const box = $('.fstage-wrap', el);
-    if (!img?.naturalWidth || !box) return;
-    const ratio = img.naturalWidth / img.naturalHeight;
-    const w = Math.min(box.clientWidth, box.clientHeight * ratio);
-    Object.assign($('#fstage', el).style, { width: `${w}px`, height: `${w / ratio}px` });
-  };
-  img?.addEventListener('load', fit);
-  observer = new ResizeObserver(fit);
-  observer.observe($('.fstage-wrap', el));
   const add = $('#qadd', el);
   add.addEventListener('click', () => openPicker({ quick: true }));
   add.addEventListener('dragover', (e) => { e.preventDefault(); add.classList.add('hot'); });
@@ -114,24 +90,22 @@ export function update() {
       const cls = i < stage ? 'done' : i === stage && !failed ? 'on' : '';
       return `<li class="${cls}"><b>${i < stage ? icon('check', 12) : ''}</b>${s}${i === stage && failed ? ' <span class="st fail">· failed</span>' : ''}</li>`;
     }).join('');
-    $('#bigpct', root).innerHTML = `${pct}<small>%</small>`;
-    $('#stageName', root).textContent = failed ? statusText(m) : m.status === 'ready' ? 'Saved to your library' : `${STAGES[stage]} · ${pct}%`;
+    $('#stageName', root).textContent = failed ? 'The 3D model could not be made' : m.status === 'ready' ? 'Your 3D model is ready' : stage <= 1 ? 'Waiting for its turn' : `Building your 3D model · ${pct}%`;
     $('#stageName', root).className = failed ? 'st fail' : '';
     $('#pbar', root).setAttribute('aria-valuenow', pct);
-    $('#pbar i', root).style.width = `${pct}%`;
-    $('#fhudText', root).textContent = failed ? 'Generation failed' : m.status === 'ready' ? '3D model ready' : 'Generating 3D model';
-    $('#fbNote', root).textContent = failed ? `Retry sends the same photos and setup to ${PROVIDERS[providerOf(m)].name} again as a new job.`
-      : m.status === 'ready' ? 'Check it from every side before you place it in a scene.' : 'You can keep working. This job runs in the background.';
-    $('#fstage', root)?.style.setProperty('--p', `${m.status === 'ready' ? 100 : Math.max(4, pct)}%`);
+    $('#genP', root).setAttribute('stroke-dasharray', ringDash(pct));
+    $('#fbNote', root).textContent = failed ? `${statusText(m)}. Retry sends the same photos and recipe to ${PROVIDERS[providerOf(m)].name} again.`
+      : m.status === 'ready' ? 'Opening it in Scene and render…' : `${timeLeft(pct, Date.now() - Date.parse(m.versions?.find((x) => x.n === m.activeVersion)?.created_at || m.created_at))}. You can keep working.`;
     root.querySelector('.forming').classList.toggle('done', m.status === 'ready');
-    const facts = failed ? `<button class="btn pri" type="button" data-act="retry" data-id="${m.id}">${icon('retry')}<span>Retry</span></button>`
-      : m.status === 'ready' ? `<a class="btn pri" href="#/compose/${m.id}">${icon('scene')}<span>Open in Compose</span></a>`
-        : '<a class="btn sec" href="#/library">Run in background</a>';
+    const facts = failed ? `<button class="btn pri" type="button" data-act="retry" data-id="${m.id}" title="Send the same photos and recipe again">${icon('retry')}<span>Retry</span></button>`
+      : m.status === 'ready' ? `<a class="btn pri" href="#/compose/${m.id}" title="Put your model in a scene and make pictures">${icon('scene')}<span>Open in Scene and render</span></a>`
+        : '<a class="btn sec" href="#/library" title="Go on with something else. It keeps building and tells you when it is ready.">Run in background</a>';
     if ($('#facts', root).dataset.html !== facts) { $('#facts', root).dataset.html = facts; $('#facts', root).innerHTML = facts; }
     // Move on to Review by itself when the model you're watching finishes.
     if (m.status === 'ready' && !shownReady) { shownReady = true; setTimeout(() => { if (route.name === 'generate' && route.id === m.id) go(`#/compose/${m.id}`); }, 1200); }
   } else {
     const sending = state.queue.find((q) => q.status === 'uploading');
+    $('#fbNote', root).textContent = '';
     $('#stageName', root).textContent = sending ? `Sending ${sending.name} to ${PROVIDERS[sending.setup.provider].name}…`
       : state.queue.length ? 'Waiting to send…' : 'Nothing is generating right now';
   }

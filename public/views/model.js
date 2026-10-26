@@ -71,7 +71,7 @@ function settingsSection(v) {
 function rendersSection() {
   const r = m.renders;
   if (!isRendered(m) && !r?.stills?.length) {
-    return `<p class="muted">Not rendered yet.</p>${m.status === 'ready' ? `<a class="btn pri" href="#/render/${m.id}">${icon('film')}<span>Render</span></a>` : ''}`;
+    return `<p class="muted">Not rendered yet.</p>${m.status === 'ready' ? `<a class="btn pri" href="#/compose/${m.id}/render" title="Open Compose at its render options">${icon('film')}<span>Render</span></a>` : ''}`;
   }
   const looks = Object.keys(LOOKS).filter((l) => [360, 180].some((t) => r[`${l}${t}`]));
   return `${r.poster ? `<img class="mp-poster" src="${fileUrl(m, r.poster)}" alt="Rendered poster of ${esc(m.name)}">` : ''}
@@ -80,7 +80,7 @@ function rendersSection() {
       ${r.stills?.length ? `<dt>Stills</dt><dd>${r.stills.length}</dd>` : ''}
       <dt>Folder</dt><dd class="mono">${esc(r.outDir || '')}</dd>${r.at ? `<dt>Rendered</dt><dd>${esc(new Date(r.at).toLocaleString())}</dd>` : ''}</dl>
     <div class="mp-act">${native && r.outDir ? `<button class="btn ghostbtn" type="button" data-act="open">${icon('folder')}<span>Open folder</span></button>` : ''}
-      <a class="btn sec" href="#/render/${m.id}">${icon('film')}<span>Render again</span></a></div>`;
+      <a class="btn sec" href="#/compose/${m.id}/render" title="Open Compose at its render options">${icon('film')}<span>Render again</span></a></div>`;
 }
 
 function page() {
@@ -96,7 +96,7 @@ function page() {
     <section class="mp-sec glass"><h2 class="label">Drop</h2>${dropSection(v)}</section>
     <section class="mp-sec glass"><h2 class="label">Prompt and settings</h2>${settingsSection(v)}</section>
     <section class="mp-sec glass"><div class="rowhead"><h2 class="label">Compose</h2>${ready ? `<a class="btn pri sm" href="#/compose/${m.id}">${icon('scene', 14)}<span>Open in Compose</span></a>` : ''}</div>
-      ${ready ? `<p class="sub">${esc(PRESETS[scene.preset]?.label || scene.preset)}${scene.preset === 'showroom' && scene.modeled ? ' (modeled room)' : ''} · turn ${Math.round(scene.turn)}°</p>
+      ${ready ? `<p class="sub">${esc(PRESETS[scene.preset]?.label || scene.preset)} · turn ${Math.round(scene.turn)}°</p>
       <div class="mp-view"><canvas id="mcv" aria-label="${esc(m.name)} in its scene"></canvas></div>` : '<p class="muted">The model is not ready yet.</p>'}</section>
     <section class="mp-sec glass"><h2 class="label">Rendered outputs</h2>${rendersSection()}</section>`;
 }

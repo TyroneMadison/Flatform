@@ -164,6 +164,20 @@ export function pieceMaterial(piece, original, paint, cached) {
 // Does a piece record change how it looks (so it needs its own material)?
 export const painted = (p) => Boolean(p && (p.material || p.slot || (p.colors && Object.keys(p.colors).length) || p.region));
 
+// "Select similar" in the inspector card: the other pieces that started with the same material (by name when it has
+// one), so one colour change can reach all of them. pieces: listPieces(). Returns keys, the clicked piece first.
+export function similarPieces(pieces, key) {
+  const matOf = (p) => [].concat(p.mesh.userData.material || p.mesh.material)[p.group ?? 0];
+  const me = pieces.find((p) => p.key === key);
+  if (!me) return [];
+  const m0 = matOf(me);
+  const same = (p) => { const m = matOf(p); return m === m0 || Boolean(m0?.name && m?.name === m0.name); };
+  return [key, ...pieces.filter((p) => p.key !== key && same(p)).map((p) => p.key)];
+}
+
+// A hidden piece's face group (Hide in the inspector card): drawn with nothing. A hidden whole mesh is just not visible.
+const HIDDEN = new THREE.MeshBasicMaterial({ visible: false });
+
 // Applies paint.pieces to the model: painted pieces get their physical material, the rest keep what they have.
 export function applyPaint(model, paint, cache) {
   for (const p of listPieces(model)) {
@@ -171,11 +185,12 @@ export function applyPaint(model, paint, cache) {
     const o = p.mesh;
     const current = [].concat(o.material);
     const original = [].concat(o.userData.material);
-    if (!painted(rec)) continue;
+    if (p.group == null) o.visible = !rec?.hidden;
+    if (!painted(rec) && !(rec?.hidden && p.group != null)) continue;
     const idx = p.group ?? 0;
     const orig = original[Math.min(idx, original.length - 1)];
-    const mat = pieceMaterial({ ...rec, name: rec.name || p.name }, orig, paint, cache.get(p.key));
-    cache.set(p.key, mat);
+    const mat = rec.hidden ? HIDDEN : pieceMaterial({ ...rec, name: rec.name || p.name }, orig, paint, cache.get(p.key));
+    if (!rec.hidden) cache.set(p.key, mat);
     if (p.group == null && !Array.isArray(o.material)) o.material = mat;
     else {
       const list = Array.isArray(o.material) ? [...current] : o.geometry.groups.map((g) => current[Math.min(g.materialIndex, current.length - 1)]);
@@ -190,8 +205,8 @@ export function pickPiece(model, camera, ndcX, ndcY) {
   const ray = new THREE.Raycaster();
   ray.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
   const meshes = [];
-  model.traverse((o) => { if (o.isMesh) meshes.push(o); });
-  const hit = ray.intersectObjects(meshes, false)[0];
+  model.traverse((o) => { if (o.isMesh && o.visible) meshes.push(o); }); // a hidden part can't be clicked: what is behind it can
+  const hit = ray.intersectObjects(meshes, false).find((h) => [].concat(h.object.material)[h.face?.materialIndex ?? 0]?.visible !== false);
   if (!hit) return null;
   const pieces = listPieces(model).filter((p) => p.mesh === hit.object);
   if (pieces.length === 1 && pieces[0].group == null) return pieces[0].key;

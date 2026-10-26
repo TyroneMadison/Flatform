@@ -18,18 +18,22 @@ import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUnifo
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { GroundedSkybox } from 'three/addons/objects/GroundedSkybox.js';
+import { Sky } from 'three/addons/objects/Sky.js';
 import { HorizontalBlurShader } from 'three/addons/shaders/HorizontalBlurShader.js';
 import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 import { normalizeDecals, decalMaterialParams, decalUrl } from './decals.js';
-import { mergeLook, effectsFor, hdriUrl, lookNeedsRebuild } from './look.js';
+import { mergeLook, effectsFor, hdriUrl, lookNeedsRebuild, hdriGround } from './look.js';
+import { buildEnvironment } from './env3d.js';
+import { envScale, skyRotation } from './environments.js';
 import { Post, PathTraced, TONE } from './post.js';
 import { applyPaint, regroup, pickPiece, listPieces } from './paint.js';
 import { applyMotion } from './rig.js';
 import { mirrorAttributes, depthRange, boneWeights, heat } from './model-tools.js';
 import { samplePath, skyAt, normalizePath } from './camera-path.js';
-import { STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, PLATES, plateUrl, plateThumb, plateCamera, CAR_LENGTH, hfovOf, isCarShape, modelScale, fitDistance, frameOrbit } from './pipeline.js';
+import { STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, ENVIRONMENTS, envThumb, envCamera, letterbox, CAR_LENGTH, hfovOf, isCarShape, modelScale, fitDistance, frameOrbit } from './pipeline.js';
 
 RectAreaLightUniformsLib.init();
 
@@ -43,13 +47,13 @@ export const CAMERAS = {
   low: { label: 'Low hero', turn: 30, elevation: 2.5, lens: 35, height: 'low' },
 };
 // 'ring' was called 'gold' before v0.4; the server renames it in saved scenes and settings.
-// Showroom comes first: it is the default scene and Dud Rents' house look. Backplate scenes (PLATES in pipeline.js)
-// put a fixed photo behind the car; the rest are built in 3D.
+// White Cyc Studio comes first: it is the default scene. Environments (environments.js) are real 3D places in
+// metres; the rest are built here.
 export const PRESETS = {
-  ...Object.fromEntries(Object.entries(PLATES).map(([key, p]) => [key, { label: p.label, note: p.note, plate: true, thumb: plateThumb(key) }])),
+  ...Object.fromEntries(Object.entries(ENVIRONMENTS).map(([key, p]) => [key, { label: p.label, note: p.note, env: true, thumb: envThumb(key) }])),
+  cyclorama: { label: 'White cyclorama', note: 'Seamless white, soft top light' },
   ring: { label: 'Escalade ring studio', note: 'Reflective floor · coral ring · side light bars' },
   transparent: { label: 'Transparent', note: 'RGBA PNG with soft contact shadow' },
-  cyclorama: { label: 'White cyclorama', note: 'Seamless white, soft top light' },
   miami: { label: 'Miami street at night', note: 'Add your Miami HDRI' },
   custom: { label: 'Your backdrop or HDRI', note: 'Upload a JPG, PNG, EXR or HDR' },
 };
@@ -64,12 +68,12 @@ const MATCHED = {
 
 export function defaultScene(settings = {}) {
   return {
-    preset: settings.defaultScene && settings.defaultScene !== 'transparent' ? settings.defaultScene : 'showroom',
-    modeled: false, // Showroom only: the modeled room instead of the photo
+    preset: settings.defaultScene && settings.defaultScene !== 'transparent' ? settings.defaultScene : 'white-cyc-studio',
+    modeled: false, // v0.5 Showroom option (modeled room instead of the photo); since v3 the room is always modeled
     backdrop: null, x: 0, y: 0, snap: true, turn: 30, scale: 1, sameSize: true,
     camera: 'front34', lens: 50, matchLighting: true, key: 1.3, fill: 0.3, rim: 1.4,
     reflection: 0.7, shadow: 0.5, autoOrient: true, center: true, flip: false,
-    // Camera view mode. 'car': the preset above (matched to the photo, eye level), unchanged since v0.4. 'free': an
+    // Camera view mode. 'car': the preset above (an environment's own eye-level camera), unchanged since v0.4. 'free': an
     // orbit camera, kept in orbit = { position, target } so renders use it too. fit: 'all' after "Frame all" in car view.
     view: 'car', orbit: null, fit: 'footprint',
     // v0.5: the scene look (look.js: background, HDRI, lights, AO, tone mapping, effects) and the paint project
@@ -83,7 +87,6 @@ export const lookOf = (preset) => (preset === 'transparent' || preset === 'showr
 const FILL = { wide: 0.7, square: 0.84 };
 
 // Light colour for a colour temperature in kelvin (Tanner Helland's fit of the blackbody curve), as sRGB 0-1.
-const kelvinHex = (k) => new THREE.Color().setRGB(...kelvinColor(k), THREE.SRGBColorSpace);
 export function kelvinColor(k) {
   const t = k / 100;
   const r = t <= 66 ? 255 : 329.698727446 * (t - 60) ** -0.1332047592;
@@ -173,9 +176,13 @@ function glassMaterial(glass) {
 }
 export const aspectOf = (preset) => (preset === 'transparent' ? 1 : 4 / 3);
 const needsBackdrop = (preset) => preset === 'miami' || preset === 'custom';
-// The plate whose camera a scene uses (the modeled showroom keeps the photo's camera, so the toggle doesn't jump).
-const plateOf = (s) => PLATES[s.preset] || null;
-const usesPhoto = (s) => Boolean(PLATES[s.preset]) && !(s.preset === 'showroom' && s.modeled);
+const envOf = (s) => ENVIRONMENTS[s.preset] || null;
+// Where the key light points from: azimuth 0 = from the camera, negative = camera left; elevation above the floor.
+const sunDir = (azimuth, elevation) => {
+  const az = THREE.MathUtils.degToRad(azimuth);
+  const el = THREE.MathUtils.degToRad(elevation);
+  return new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el));
+};
 
 // Glossy dark floor: a planar mirror softened by a small blur and faded with distance ("roughness blend").
 const FloorShader = {
@@ -222,16 +229,17 @@ const FloorShader = {
     }`,
 };
 
-// Floor reflection over a photo: only the mirrored car, blurred and faded, laid over the plate's own floor.
+// Floor reflection laid over an environment's own floor: the mirrored scene, blurred and faded out by `reach` metres.
 const GlossShader = {
   name: 'FlatformGloss',
-  uniforms: { ...FloorShader.uniforms },
+  uniforms: { ...FloorShader.uniforms, reach: { value: 4.5 } },
   vertexShader: FloorShader.vertexShader,
   fragmentShader: /* glsl */`
     uniform sampler2D tDiffuse;
     uniform float strength;
     uniform float blur;
     uniform vec2 texel;
+    uniform float reach;
     varying vec4 vUv;
     varying vec3 vWorld;
     #include <logdepthbuf_pars_fragment>
@@ -246,7 +254,7 @@ const GlossShader = {
         total += k;
       }
       sum /= total;
-      float fade = 1.0 - smoothstep(1.0, 4.5, length(vWorld.xz));
+      float fade = 1.0 - smoothstep(reach * 0.22, reach, length(vWorld.xz));
       gl_FragColor = vec4(sum.rgb / max(sum.a, 0.001), sum.a * strength * fade);
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
@@ -285,24 +293,6 @@ function ringEnvironment() {
   const ring = new THREE.Mesh(new THREE.TorusGeometry(3.3, 0.08, 8, 96), emissive(RING, 2));
   ring.rotation.x = Math.PI / 2;
   ring.position.y = 0.05;
-  env.add(ring);
-  return env;
-}
-
-// What the paint reflects in the showroom: a dark room, a big ceiling softbox, two light bars, a front softbox.
-function showroomEnvironment() {
-  const env = new THREE.Scene();
-  const room = new THREE.Mesh(new THREE.BoxGeometry(30, 12, 30), new THREE.MeshBasicMaterial({ color: 0x050505, side: THREE.BackSide }));
-  room.position.y = 5;
-  env.add(room);
-  const add = (geo, mat, x, y, z, rx = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.x = rx; env.add(m); };
-  add(new THREE.PlaneGeometry(10, 6), emissive('#fffaf2', 4), 0, 8, 0, Math.PI / 2);
-  add(new THREE.BoxGeometry(0.4, 6, 0.4), emissive('#ffffff', 7), -7, 3, -3);
-  add(new THREE.BoxGeometry(0.4, 6, 0.4), emissive('#ffffff', 7), 7, 3, -3);
-  add(new THREE.PlaneGeometry(8, 2.5), emissive('#fff6ea', 0.7), 0, 2.2, 11);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(3.3, 0.05, 8, 96), emissive(GOLD, 1.2));
-  ring.rotation.x = Math.PI / 2;
-  ring.position.y = 0.03;
   env.add(ring);
   return env;
 }
@@ -382,6 +372,20 @@ class ContactShadow {
 }
 
 // A vertical two-colour gradient as a background texture (cached by its colours).
+// The floor of an HDRI room: solid in the middle, fading out into the projected ground (alphaMap reads green).
+function fadeTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+  grad.addColorStop(0, '#fff');
+  grad.addColorStop(0.55, '#fff');
+  grad.addColorStop(1, '#000');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(c);
+}
+
 const gradients = {};
 function gradientTexture(top, bottom) {
   const key = `${top}:${bottom}`;
@@ -404,7 +408,10 @@ function gradientTexture(top, bottom) {
 function disposeTree(obj) {
   obj.traverse((o) => {
     o.geometry?.dispose();
-    for (const m of [].concat(o.material || [])) m.dispose();
+    for (const m of [].concat(o.material || [])) {
+      for (const k of ['map', 'roughnessMap', 'normalMap', 'alphaMap']) m[k]?.dispose(); // a room floor's textures
+      m.dispose();
+    }
   });
   obj.dispose?.();
 }
@@ -421,7 +428,8 @@ export class Studio {
     this.camera = new THREE.PerspectiveCamera(30, 4 / 3, 0.1, 400);
     this.pivot = new THREE.Group(); // turns for the turntable
     this.stage = new THREE.Group(); // the preset's props
-    this.scene.add(this.pivot, this.stage);
+    this.extras = new THREE.Group(); // things dropped in from the shelf (shelf.js), in real-world metres like the place
+    this.scene.add(this.pivot, this.stage, this.extras);
     this.shadow = new ContactShadow();
     this.scene.add(this.shadow.group);
     this.lights = { key: new THREE.DirectionalLight(0xfff3e2), fill: new THREE.DirectionalLight(0xdfe8ff), rim: new THREE.DirectionalLight(0xffffff) };
@@ -437,7 +445,7 @@ export class Studio {
     key.shadow.normalBias = 0.02;
     key.shadow.radius = 3;
     this.scene.add(...Object.values(this.lights));
-    this.rig = { lighting: DEFAULT_LIGHTING, glass: DEFAULT_GLASS }; // the Render step's light rig and glass
+    this.rig = { lighting: DEFAULT_LIGHTING, glass: DEFAULT_GLASS }; // the render area's light rig and glass
     this.pmrem = new THREE.PMREMGenerator(this.renderer);
     this.envs = {};
     this.builds = 0; // a newer preset wins over one that is still loading its HDRI
@@ -452,7 +460,7 @@ export class Studio {
   }
 
   env(name) {
-    this.envs[name] ||= this.pmrem.fromScene({ ring: ringEnvironment, showroom: showroomEnvironment }[name]?.() || new RoomEnvironment(), 0.04).texture;
+    this.envs[name] ||= this.pmrem.fromScene({ ring: ringEnvironment }[name]?.() || new RoomEnvironment(), 0.04).texture;
     return this.envs[name];
   }
 
@@ -497,7 +505,7 @@ export class Studio {
     return pickPiece(this.model, this.camera, (x / this.width) * 2 - 1, -(y / this.height) * 2 + 1);
   }
 
-  // The Render step's light rig and glass ({ lighting, glass } as saved in settings). Missing parts keep defaults.
+  // The render area's light rig and glass ({ lighting, glass } as saved in settings). Missing parts keep defaults.
   setRig({ lighting, glass } = {}) {
     const next = { lighting: { ...DEFAULT_LIGHTING, ...lighting }, glass: { ...DEFAULT_GLASS, ...glass } };
     const glassChanged = JSON.stringify(next.glass) !== JSON.stringify(this.rig.glass);
@@ -532,13 +540,56 @@ export class Studio {
     const prev = this.state;
     this.state = { ...prev, ...next };
     const lookRebuild = lookNeedsRebuild(prev.look, this.state.look);
-    if (!this.built || prev.preset !== this.state.preset || prev.backdrop !== this.state.backdrop || Boolean(prev.modeled) !== Boolean(this.state.modeled) || lookRebuild) await this.buildPreset();
+    if (!this.built || prev.preset !== this.state.preset || prev.backdrop !== this.state.backdrop || lookRebuild) await this.buildPreset();
     this.applyModel();
     this.applyLights();
     this.applyCamera();
     if (JSON.stringify(prev.paint) !== JSON.stringify(this.state.paint)) this.applyPaint();
     this.applyDecals();
     await this.applyLook();
+    await this.applyExtras();
+  }
+
+  // Shelf items (scene.extras): each file loads once, then is cloned. A person is sized to 1.8 m tall, a car to
+  // CAR_LENGTH long, a prop keeps its own size; all stand on the floor at their spot.
+  async applyExtras() {
+    const list = this.state.extras || [];
+    const key = JSON.stringify(list);
+    if (key === this.extrasKey) return;
+    this.extrasKey = key;
+    this.extraFiles ||= new Map();
+    const objs = await Promise.all(list.map(async (x) => {
+      if (!this.extraFiles.has(x.src)) {
+        const draco = new DRACOLoader().setDecoderPath('/vendor/three/examples/jsm/libs/draco/gltf/');
+        this.extraFiles.set(x.src, new GLTFLoader().setDRACOLoader(draco).setMeshoptDecoder(MeshoptDecoder).loadAsync(x.src).then((g) => g.scene).finally(() => draco.dispose()));
+      }
+      const file = await this.extraFiles.get(x.src).catch(() => null);
+      const o = file && cloneSkinned(file); // a rigged person needs its skeleton cloned too
+      if (!o) return null;
+      const size = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());
+      if (x.group === 'characters' && size.y > 0) o.scale.setScalar(1.8 / size.y);
+      if (x.group === 'cars') o.scale.setScalar(CAR_LENGTH / Math.max(size.x, size.z, 1e-6));
+      const box = new THREE.Box3().setFromObject(o);
+      const holder = new THREE.Group();
+      o.position.set(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2);
+      holder.add(o);
+      holder.position.set(x.at[0], 0, x.at[1]);
+      holder.rotation.y = THREE.MathUtils.degToRad(x.turn || 0);
+      holder.traverse((m) => { if (m.isMesh) { m.castShadow = m.receiveShadow = true; m.layers.enable(1); } });
+      return holder;
+    }));
+    if (key !== this.extrasKey) return; // a newer list won while these loaded
+    this.extras.clear(); // the clones share the cached files' geometry, so nothing is disposed here
+    for (const o of objs) if (o) this.extras.add(o);
+    this.ptDirty = true;
+  }
+  // The floor point (real-world metres, [x, z]) under a canvas point (CSS px), for dropping shelf items.
+  floorPoint(x, y) {
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2((x / this.width) * 2 - 1, -(y / this.height) * 2 + 1), this.camera);
+    const p = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3());
+    const k = this.extras.scale.x || 1;
+    return p ? [p.x / k, p.z / k] : null;
   }
 
   // Decals (decals.js): projected onto every mesh they touch, so they wrap over curves. They live in a group beside
@@ -642,16 +693,35 @@ export class Studio {
         this.scene.environment = env;
         this.scene.environmentRotation.set(0, THREE.MathUtils.degToRad(h.rotation), 0);
         this.scene.environmentIntensity *= h.intensity;
-        if (h.background) {
-          this.scene.background = tex;
-          this.scene.backgroundRotation.set(0, THREE.MathUtils.degToRad(h.rotation), 0);
-          this.scene.backgroundBlurriness = h.blur;
-          this.scene.backgroundIntensity = h.intensity;
-        }
+        if (h.background) this.showDome(tex, h);
       } catch { this.message = 'Could not load that HDRI'; }
-    } else { this.scene.environmentRotation.set(0, 0, 0); this.scene.backgroundBlurriness = 0; this.scene.backgroundIntensity = 1; }
+    } else this.scene.backgroundBlurriness = 0; // rotation and intensity: clearStage resets them, the environment sets its sky's
+    if (!h.file || !h.background) this.hideDome();
     this.applyRig(look.lights);
     this.applyEffects();
+  }
+
+  // A place HDRI shown around the car: projected onto a dome with a real floor at the height it was shot from
+  // (look.js hdriGround), so its ground is at the car's scale and turns with the camera. It replaces the
+  // environment's geometry while it shows; the environment's lights stay.
+  showDome(tex, h) {
+    const [height, radius] = hdriGround(h.file);
+    if (this.dome?.userData.key !== `${height}:${radius}`) {
+      this.hideDome();
+      this.dome = new GroundedSkybox(tex, height, radius);
+      this.dome.userData.key = `${height}:${radius}`;
+      this.dome.position.y = height - 0.01;
+      this.scene.add(this.dome);
+    }
+    this.dome.material.map = tex;
+    this.dome.material.color.setScalar(h.intensity ?? 1);
+    this.dome.rotation.y = THREE.MathUtils.degToRad(h.rotation || 0);
+    if (this.envGroup) this.envGroup.visible = false;
+    this.ptDirty = true;
+  }
+  hideDome() {
+    if (this.dome) { this.scene.remove(this.dome); this.dome.geometry.dispose(); this.dome.material.dispose(); this.dome = null; this.ptDirty = true; }
+    if (this.envGroup) this.envGroup.visible = true;
   }
 
   async hdri(file) {
@@ -671,7 +741,7 @@ export class Studio {
     if (lights.preset === 'match') {
       for (const [k, l] of Object.entries(L)) { l.visible = true; l.color.setHex(this.baseRig[k].color); }
       L.rim.position.fromArray(this.baseRig.rim.position);
-      this.applyLights(); // key colour and the key/fill places come from the scene and the Render step's rig
+      this.applyLights(); // key colour and the key/fill places come from the scene and the render area's rig
       L.key.castShadow = true;
       L.key.shadow.radius = 3;
       return;
@@ -745,13 +815,13 @@ export class Studio {
       try {
         const { env, tex } = await this.hdri(file);
         this.scene.environment = env;
-        if (h.background) this.scene.background = tex;
+        if (h.background && this.dome) this.dome.material.map = tex;
         this.skyFile = file;
       } catch { this.message = 'Could not load that HDRI'; }
     }
     const rot = THREE.MathUtils.degToRad((h.rotation || 0) + k.rotation);
     this.scene.environmentRotation.set(0, rot, 0);
-    if (h.background) { this.scene.backgroundRotation.set(0, rot, 0); this.scene.backgroundIntensity = (h.intensity ?? 1) * Math.max(0.02, k.dim); }
+    if (h.background && this.dome) { this.dome.rotation.y = rot; this.dome.material.color.setScalar((h.intensity ?? 1) * Math.max(0.02, k.dim)); }
     this.dimBase ??= this.scene.environmentIntensity;
     this.scene.environmentIntensity = this.dimBase * Math.max(0.02, k.dim);
   }
@@ -772,7 +842,8 @@ export class Studio {
     const box = new THREE.Box3();
     const size = new THREE.Vector3();
     const measure = () => { this.pivot.updateMatrixWorld(true); box.setFromObject(m); return box.getSize(size); };
-    if (s.autoOrient && measure().x > size.z) m.rotation.y = -Math.PI / 2; // scans lie along X, nose on +X: turn it to +Z
+    // Car scans lie along X, nose on +X: turn it to +Z. A person in a T-pose is wide too, but already faces the camera.
+    if (s.autoOrient && this.kind !== 'humanoid' && measure().x > size.z) m.rotation.y = -Math.PI / 2;
     if (s.flip) m.rotation.y += Math.PI; // a scan can't tell its nose from its tail
     measure();
     this.carLike = isCarShape(size); // tall models (humanoids) are never size-locked, see pipeline.js modelScale
@@ -785,7 +856,15 @@ export class Studio {
     this.applyYaw();
     this.carHeight = size.y;
     this.carSize = size.clone();
-    if (s.motion) applyMotion(this, s.motion, this.clipTime ?? null); // motion.js: stance, pose, clip frame
+    // motion.js: stance, pose, clip frame. The model's kind (humanoid or car, set by the page) wins over the scene's.
+    if (s.motion) applyMotion(this, { ...s.motion, type: this.kind || s.motion.type }, this.clipTime ?? null);
+    if (s.motion?.pose && s.snap && this.kind === 'humanoid' && this.clipTime == null) { // a kneel stands on the floor too
+      this.pivot.updateMatrixWorld(true);
+      m.position.y -= box.setFromObject(m, true).min.y; // precise: the posed (skinned) vertices
+    }
+    // The place round the model at the model's real size: a car is 4.6 m long, a person 1.8 m tall.
+    this.stage.scale.setScalar(ENVIRONMENTS[s.preset] ? envScale(size, this.kind || (this.carLike ? 'car' : 'humanoid')) : 1);
+    this.extras.scale.copy(this.stage.scale); // shelf items are in the same real-world metres as the place
     this.applyMirror();
   }
 
@@ -901,23 +980,23 @@ export class Studio {
   applyLights() {
     const s = this.state;
     const rig = this.rig.lighting;
-    // A photo scene's light is matched to its photo; the rig then moves and tints it from there.
-    const plate = usesPhoto(s) ? plateOf(s).light : null;
-    const k = !s.matchLighting ? s : plate || MATCHED[needsBackdrop(s.preset) ? 'backdrop' : s.preset] || MATCHED.showroom;
-    const sun = plate?.sun || { azimuth: DEFAULT_LIGHTING.azimuth, elevation: DEFAULT_LIGHTING.elevation, kelvin: DEFAULT_LIGHTING.kelvin };
+    // An environment's light is matched to the place; the rig then moves and tints it from there.
+    const place = envOf(s)?.light || null;
+    const k = !s.matchLighting ? s : place || MATCHED[needsBackdrop(s.preset) ? 'backdrop' : s.preset] || MATCHED.showroom;
+    const sun = place?.sun || { azimuth: DEFAULT_LIGHTING.azimuth, elevation: DEFAULT_LIGHTING.elevation, kelvin: DEFAULT_LIGHTING.kelvin };
     this.lights.key.intensity = k.key * rig.key;
     this.lights.fill.intensity = k.fill * rig.fill;
     this.lights.rim.intensity = k.rim * rig.rim;
-    this.scene.environmentIntensity = (plate?.env ?? 1) * rig.rim; // the rim slider also sets how much the scene shows in the paint
+    this.scene.environmentIntensity = (place?.env ?? 1) * rig.rim; // the rim slider also sets how much the scene shows in the paint
     const kelvin = THREE.MathUtils.clamp(sun.kelvin + rig.kelvin - DEFAULT_LIGHTING.kelvin, 1500, 12000);
     this.lights.key.color.setRGB(...kelvinColor(kelvin), THREE.SRGBColorSpace);
     const az = THREE.MathUtils.degToRad(sun.azimuth + rig.azimuth - DEFAULT_LIGHTING.azimuth); // 0 = from the camera, negative = camera left
     const el = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(sun.elevation + rig.elevation - DEFAULT_LIGHTING.elevation, 3, 88));
     this.lights.key.position.set(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)).multiplyScalar(12);
     this.lights.fill.position.set(-Math.sin(az) * 9, 3, Math.cos(az) * 9); // low, on the other side of the camera
-    if (this.floor) this.floor.material.uniforms.strength.value = plate ? plate.reflection * s.reflection / 0.7 : s.reflection * (s.preset === 'showroom' ? 0.55 : 0.75);
-    this.shadow.plane.material.opacity = plate ? plate.shadow : this.state.preset === 'ring' ? 0.85 : 0.7;
-    if (this.catcher) this.catcher.material.opacity = (plate?.shadow ?? 0.7) * 0.45;
+    if (this.floor) this.floor.material.uniforms.strength.value = place ? place.reflection * s.reflection / 0.7 : s.reflection * (s.preset === 'showroom' ? 0.55 : 0.75);
+    this.shadow.plane.material.opacity = place ? place.shadow : this.state.preset === 'ring' ? 0.85 : 0.7;
+    if (this.catcher) this.catcher.material.opacity = (place?.shadow ?? 0.7) * 0.45;
   }
 
   // Frames the car for the look (4:3 studio or 1:1 transparent) and fits that frame inside the canvas.
@@ -927,7 +1006,7 @@ export class Studio {
     if (this.tracing) this.pt?.cameraMoved();
     if (s.view === 'free') return this.applyFreeCamera();
     if (this.controls) this.controls.enabled = false;
-    if (plateOf(s)) return this.applyPlateCamera(plateOf(s).cam);
+    if (envOf(s)) return this.applyEnvCamera(envOf(s).cam);
     const preset = CAMERAS[s.camera] || CAMERAS.front34;
     const aspect = aspectOf(s.preset);
     const hfov = hfovOf(s.lens);
@@ -947,24 +1026,23 @@ export class Studio {
     this.fitFrame(Math.tan(hfov / 2) / aspect, aspect, dr.near, Math.max(dr.far, distance * 6));
   }
 
-  // A photo scene: the camera the photo was taken with (pipeline.js plateCamera), fitted inside the canvas like
-  // the 4:3 looks. Lens and camera presets don't apply; the photo decides them.
-  applyPlateCamera(cal) {
+  // An environment: its eye-level camera (pipeline.js envCamera), fitted inside the canvas like the 4:3 looks.
+  // Lens and camera presets don't apply; the place decides them.
+  applyEnvCamera(cal) {
     const aspect = 4 / 3;
-    const cam = plateCamera(cal, aspect);
+    const cam = envCamera(cal, aspect);
     const target = new THREE.Vector3(...cam.target);
     this.camera.position.set(...cam.position);
     this.camera.lookAt(target);
     this.target = target;
     const tanV = Math.tan(THREE.MathUtils.degToRad(cam.vfov) / 2);
     this.fitFrame(tanV, aspect, 0.1, 200);
-    if (this.state.fit === 'all' && this.model) {
-      // "Frame all": the photo's camera aims at the floor, not the model, so pull back along its own line of
-      // sight until every corner of the model projects inside the frame (at most 10× the photo's distance).
+    if ((this.state.fit === 'all' || this.kind === 'humanoid' || this.carLike === false) && this.model) {
+      // "Frame all" (always for a tall model, a person): the room's camera aims at the floor, not the model, so pull
+      // back along its own line of sight until every corner of the model projects inside the frame (at most 10×).
       for (let k = 0; k < 40 && !this.framesModel(0.92); k++) this.camera.position.sub(target).multiplyScalar(1.06).add(target);
       this.camera.updateMatrixWorld();
     }
-    this.coverBackground();
   }
 
   // Whether the model's whole bounding box projects inside the look's frame (ndc ±limit).
@@ -985,7 +1063,7 @@ export class Studio {
   // Free roam: the orbit camera (state.orbit), through the look's frame so what sits inside the safe area renders.
   applyFreeCamera() {
     const s = this.state;
-    const aspect = plateOf(s) ? 4 / 3 : aspectOf(s.preset);
+    const aspect = envOf(s) ? 4 / 3 : aspectOf(s.preset);
     if (!s.orbit) { // first time: start exactly where the car view camera is
       s.view = 'car';
       this.applyCamera();
@@ -1006,7 +1084,7 @@ export class Studio {
   // The look's frame (its aspect) inside the canvas: fov from the frame's vertical half-angle tangent, letterboxed.
   fitFrame(tanV, aspect, near, far) {
     const view = this.width / this.height;
-    this.camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(view >= aspect ? tanV : (tanV * aspect) / view));
+    this.camera.fov = letterbox(tanV, aspect, view);
     this.camera.aspect = view;
     this.camera.near = near;
     this.camera.far = far;
@@ -1037,7 +1115,7 @@ export class Studio {
   }
 
   // "Frame all": the whole model in view with a little padding. Free roam moves the orbit camera back along its
-  // own line of sight; car view keeps the preset's angle and photo camera but pulls back until the model fits.
+  // own line of sight; car view keeps the preset's angle and eye-level camera but pulls back until the model fits.
   // Returns the scene fields that changed, for saving.
   frameAll() {
     const sphere = this.sphere();
@@ -1045,7 +1123,7 @@ export class Studio {
     const s = this.state;
     if (s.view === 'free') {
       if (!s.orbit) this.applyFreeCamera();
-      s.orbit = frameOrbit({ center: sphere.center.toArray(), radius: sphere.radius }, s.orbit.position, hfovOf(s.lens), plateOf(s) ? 4 / 3 : aspectOf(s.preset));
+      s.orbit = frameOrbit({ center: sphere.center.toArray(), radius: sphere.radius }, s.orbit.position, hfovOf(s.lens), envOf(s) ? 4 / 3 : aspectOf(s.preset));
     } else s.fit = 'all';
     this.applyCamera();
     return s.view === 'free' ? { orbit: s.orbit } : { fit: s.fit };
@@ -1070,9 +1148,16 @@ export class Studio {
     for (const o of [...this.stage.children]) { this.stage.remove(o); disposeTree(o); }
     this.floor = null;
     this.catcher = null;
+    this.envGroup = null;
+    this.rain = null;
+    this.hideDome();
+    this.skyTarget?.dispose();
+    this.skyTarget = null;
     this.scene.background = null;
     this.scene.environment = null;
     this.scene.backgroundRotation.set(0, 0, 0);
+    this.scene.environmentRotation.set(0, 0, 0);
+    this.scene.backgroundIntensity = 1;
     this.backdropTexture?.dispose();
     this.backdropTexture = null;
     this.backdropEnv?.dispose();
@@ -1085,8 +1170,7 @@ export class Studio {
     this.built = true;
     this.clearStage();
     const p = this.state.preset;
-    if (usesPhoto(this.state)) await this.buildPlate(p, build);
-    else if (p === 'showroom') this.buildShowroom();
+    if (ENVIRONMENTS[p]) await this.buildEnv(p, build);
     else if (p === 'ring') this.buildRing();
     else if (p === 'cyclorama') this.buildCyclorama();
     else if (needsBackdrop(p)) await this.buildBackdrop(build);
@@ -1137,121 +1221,89 @@ export class Studio {
     overhead.lookAt(0, 0, -0.6);
   }
 
-  // b) Showroom, modeled (the fallback to the photo): matte near-black room, dark glossy floor, a thin warm-gold
-  // ring inset in the floor, two tall white LED bars in the back corners, a big ceiling softbox.
-  buildShowroom() {
+  // b) Environments (environments.js): the place is geometry around the car in metres, so it turns with the
+  // camera and keeps its real size whatever the window's shape. The key light's shadow lands on an invisible
+  // catcher, the contact shadow on top; shiny floors get a soft blurred reflection of the whole scene.
+  async buildEnv(slug, build) {
     const add = (o) => { this.stage.add(o); return o; };
-    this.scene.background = new THREE.Color(0x09090a);
-    this.scene.environment = this.env('showroom');
-    const w = Math.round(this.width * this.renderer.getPixelRatio());
-    const h = Math.round(this.height * this.renderer.getPixelRatio());
-    this.floor = add(new Reflector(new THREE.PlaneGeometry(80, 80), { color: 0x0b0a0a, textureWidth: w, textureHeight: h, clipBias: 0.003, shader: FloorShader }));
-    this.floor.rotation.x = -Math.PI / 2;
-    this.floor.material.uniforms.texel.value.set(1 / w, 1 / h);
-    this.floor.material.uniforms.blur.value = 3; // dark and glossy, a little soft
-    const wall = add(new THREE.Mesh(new THREE.PlaneGeometry(60, 24), new THREE.MeshStandardMaterial({ color: 0x100f0f, roughness: 0.9 })));
-    wall.position.set(0, 12, -8);
-    const ring = add(new THREE.Mesh(new THREE.TorusGeometry(3.3, 0.014, 12, 320), emissive(GOLD, 1.5)));
-    ring.rotation.x = Math.PI / 2;
-    ring.position.y = 0.008;
-    const halo = add(new THREE.Mesh(new THREE.RingGeometry(3.0, 3.6, 320, 1), glowMaterial('ring', GOLD, 0.06, 0.25, 3.3)));
-    halo.rotation.x = -Math.PI / 2;
-    halo.position.y = 0.006;
-    // Two tall white LED bars in the back corners, as in the reference photo (same camera as the photo).
-    for (const x of [-4.8, 4.8]) {
-      const bar = add(new THREE.Mesh(new THREE.BoxGeometry(0.1, 2.6, 0.1), emissive('#ffffff', 3.5)));
-      bar.position.set(x, 1.3, -4.2);
-      const glow = add(new THREE.Mesh(new THREE.PlaneGeometry(1.0, 2.9), glowMaterial('bar', '#ffffff', 0.14, 0.35)));
-      glow.position.set(x, 1.3, -4.25);
-      const light = add(new THREE.RectAreaLight(0xffffff, 4, 0.3, 2.6));
-      light.position.set(x, 1.3, -4);
-      light.lookAt(0, 0.8, 0);
-    }
-    // The big ceiling softbox: a lit panel in the ceiling, seen across the top of the frame.
-    const softbox = add(new THREE.Mesh(new THREE.PlaneGeometry(9, 5), emissive('#f4f7ff', 1.3)));
-    softbox.rotation.x = Math.PI / 2;
-    softbox.position.set(0, 6, -5.5);
-    const ceiling = add(new THREE.Mesh(new THREE.PlaneGeometry(60, 30), new THREE.MeshBasicMaterial({ color: 0x050505 })));
-    ceiling.rotation.x = Math.PI / 2;
-    ceiling.position.set(0, 6.02, 0);
-    const overhead = add(new THREE.RectAreaLight(kelvinHex(6500), 3.2, 8, 5));
-    overhead.position.set(0, 4.5, -0.6);
-    overhead.lookAt(0, 0, -0.6);
-  }
-
-  // Photo scenes: the plate stays fixed behind the car (only the car turns). The car sits on the photo's floor
-  // with a shadow catcher, the contact shadow and, on shiny floors, a soft reflection of the car alone.
-  async buildPlate(slug, build) {
-    const add = (o) => { this.stage.add(o); return o; };
-    const { light } = PLATES[slug];
-    const showroom = slug === 'showroom';
-    this.scene.environment = showroom ? this.env('showroom') : this.env('room');
-    // The key light's shadow, caught on an invisible floor.
+    const e = ENVIRONMENTS[slug];
+    const group = await buildEnvironment(e, { loadGlb: async (file) => (await new GLTFLoader().loadAsync(`/env/${encodeURIComponent(file)}`)).scene });
+    if (build !== this.builds) { disposeTree(group); return; }
+    this.envGroup = add(group);
+    this.rain = group.getObjectByName('rain') || null; // Night City Rain: falls while the view draws (animating)
+    const { light } = e;
+    add(new THREE.HemisphereLight(...light.sky));
     this.catcher = add(new THREE.Mesh(new THREE.PlaneGeometry(40, 40).rotateX(-Math.PI / 2), new THREE.ShadowMaterial({ opacity: light.shadow * 0.45, depthWrite: false })));
     this.catcher.receiveShadow = true;
     this.catcher.position.y = 0.002;
-    const [sky, ground, ambient] = light.sky;
-    add(new THREE.HemisphereLight(sky, ground, ambient));
     if (light.reflection > 0) {
       const w = Math.round(this.width * this.renderer.getPixelRatio());
       const h = Math.round(this.height * this.renderer.getPixelRatio());
-      this.floor = add(new Reflector(new THREE.PlaneGeometry(40, 40), { textureWidth: w, textureHeight: h, clipBias: 0.003, shader: GlossShader }));
+      this.floor = add(new Reflector(new THREE.PlaneGeometry(60, 60), { textureWidth: w, textureHeight: h, clipBias: 0.003, shader: GlossShader }));
       this.floor.rotation.x = -Math.PI / 2;
       this.floor.position.y = 0.001;
-      this.floor.material.transparent = true;
-      this.floor.material.depthWrite = false;
+      Object.assign(this.floor.material, { transparent: true, depthWrite: false });
       this.floor.material.uniforms.texel.value.set(1 / w, 1 / h);
-      this.floor.material.uniforms.blur.value = showroom ? 2.5 : 1.5;
+      this.floor.material.uniforms.blur.value = 2;
+      this.floor.material.uniforms.reach.value = 14;
       const mirror = this.floor.onBeforeRender;
-      this.floor.onBeforeRender = (...args) => { // mirror the car only, never the photo
-        const bg = this.scene.background;
+      this.floor.onBeforeRender = (...args) => { // the contact shadow is not mirrored
         const shadow = this.shadow.plane.visible;
-        this.scene.background = null;
         this.shadow.plane.visible = false;
         mirror.apply(this.floor, args);
-        this.scene.background = bg;
         this.shadow.plane.visible = shadow;
       };
     }
-    if (showroom) {
-      // Matched to the reference: cool overhead softbox, white bars in the back corners, the gold ring's glow
-      // from underneath, little ambient.
-      const overhead = add(new THREE.RectAreaLight(kelvinHex(6500), 3.2, 8, 5));
-      overhead.position.set(0, 6.3, -0.6);
-      overhead.lookAt(0, 0, -0.6);
-      for (const x of [-4.8, 4.8]) {
-        const bar = add(new THREE.RectAreaLight(0xffffff, 5, 0.3, 3));
-        bar.position.set(x, 1.5, -4.2);
-        bar.lookAt(0, 0.8, 0);
-      }
-      const glow = add(new THREE.RectAreaLight(light.glow[0], light.glow[1], 6.6, 6.6));
-      glow.position.set(0, 0.01, 0);
-      glow.lookAt(0, 1, 0);
-    }
-    let tex;
-    try {
-      tex = await new THREE.TextureLoader().loadAsync(plateUrl(slug));
-    } catch {
-      if (build !== this.builds) return;
-      // No plate on disk: keep the lights and camera so a render still works, on a plain dark background.
-      this.scene.background = new THREE.Color(slug === 'white-cyc-studio' ? 0xeceef1 : 0x0b0a09);
-      this.message = `Backplate ${slug}.jpg is missing · showing a plain background`;
-      return;
-    }
-    if (build !== this.builds) { tex.dispose(); return; }
-    tex.colorSpace = THREE.SRGBColorSpace;
-    this.backdropTexture = tex;
-    this.scene.background = tex;
-    if (!showroom && slug !== 'white-cyc-studio') {
-      // Reflections that match the photo: the plate itself, wrapped round as a rough environment.
-      const envTex = tex.clone();
-      envTex.mapping = THREE.EquirectangularReflectionMapping;
-      envTex.needsUpdate = true;
-      this.backdropEnv = this.pmrem.fromEquirectangular(envTex);
-      envTex.dispose();
+    await this.applySky(e, build);
+  }
+
+  // The sky (open sky at infinity around the geometry, never a print behind it) and what the paint reflects.
+  async applySky(e, build) {
+    const { sky } = e;
+    const deg = THREE.MathUtils.degToRad;
+    if (sky.color) this.scene.background = new THREE.Color(sky.color);
+    else if (sky.hdri) {
+      try {
+        const { tex, env } = await this.hdri(`builtin:${sky.hdri}`);
+        if (build !== this.builds) return;
+        this.scene.background = tex;
+        this.scene.environment = env;
+        this.scene.backgroundRotation.set(0, deg(skyRotation(e)), 0);
+        this.scene.environmentRotation.set(0, deg(skyRotation(e)), 0);
+        this.scene.backgroundIntensity = sky.intensity ?? 1;
+      } catch { this.scene.background = new THREE.Color(e.light.sky[0]); this.message = `Sky ${sky.hdri}.hdr is missing`; }
+    } else if (sky.sun) {
+      // Procedural daylight from the place's sun, rendered once into a cube: a real sky that turns with the view.
+      const s = new Sky();
+      s.scale.setScalar(450000);
+      const u = s.material.uniforms;
+      u.sunPosition.value.copy(sunDir(e.light.sun.azimuth, e.light.sun.elevation));
+      u.turbidity.value = 6;
+      u.rayleigh.value = 2;
+      const scene = new THREE.Scene().add(s);
+      this.skyTarget = new THREE.WebGLCubeRenderTarget(512, { type: THREE.HalfFloatType });
+      new THREE.CubeCamera(1, 1e6, this.skyTarget).update(this.renderer, scene);
+      s.geometry.dispose();
+      s.material.dispose();
+      this.scene.background = this.skyTarget.texture;
+      this.scene.backgroundIntensity = 0.5; // ponytail: hand-set sky exposure; match it to Blender's Sky Texture if they drift
+      this.backdropEnv = this.pmrem.fromCubemap(this.skyTarget.texture);
       this.scene.environment = this.backdropEnv.texture;
     }
-    this.coverBackground();
+    if (e.reflect) {
+      try {
+        const { env } = await this.hdri(`builtin:${e.reflect}`);
+        if (build !== this.builds) return;
+        this.scene.environment = env;
+      } catch { this.scene.environment = this.env('room'); }
+    } else if (sky.color) {
+      // Reflections of the place itself: its geometry and lights captured from just above the floor.
+      const capture = new THREE.Scene();
+      capture.background = this.scene.background;
+      capture.add(this.envGroup.clone(), new THREE.HemisphereLight(...e.light.sky));
+      this.backdropEnv = this.pmrem.fromScene(capture, 0.04, 0.1, 1000, { position: new THREE.Vector3(0, 1, 0) });
+      this.scene.environment = this.backdropEnv.texture;
+    }
   }
 
   // c) White cyclorama: floor curving up into the back wall, soft top light.
@@ -1321,12 +1373,11 @@ export class Studio {
     }
   }
 
-  // Fits a flat background photo to the frame like a print (cover), and lines it up with the frame inside the
-  // canvas: in the composer the canvas is wider or taller than the frame, and a plate must stay matched to the
-  // camera. Outside the frame the photo's edges are stretched.
+  // Fits your own flat background photo (custom backdrop, look background image) to the frame like a print
+  // (cover), lined up with the frame inside the canvas. Built-in environments are 3D and never use this.
   coverBackground() {
     const tex = this.scene.background;
-    if (!tex?.isTexture || !tex.image) return;
+    if (!tex?.isTexture || !tex.image || tex.mapping !== THREE.UVMapping) return; // skies and HDRIs are not prints
     const { x, y, width: fw, height: fh } = this.frameRect;
     const frame = fw / fh;
     const img = tex.image.width / tex.image.height;
@@ -1347,7 +1398,11 @@ export class Studio {
     });
   }
 
+  // True while the scene moves on its own (rain), so views keep drawing frames.
+  get animating() { return Boolean(this.rain); }
+
   render() {
+    this.rain?.userData.update(performance.now() / 1000);
     if (this.model) this.shadow.update(this.renderer, this.scene, this.state.shadow);
     this.shadow.plane.visible = Boolean(this.model);
     if (this.tracing && this.pt?.tracer && !this.ptDirty && !this.ptBusy) { if (this.pt.renderSample() || this.pt.done) return; }
@@ -1363,6 +1418,7 @@ export class Studio {
     for (const m of this.pieceMats.values()) m.dispose();
     this.clearStage();
     if (this.model) disposeTree(this.model);
+    for (const p of this.extraFiles?.values() || []) p.then(disposeTree, () => {});
     for (const t of Object.values(this.envs)) t.dispose();
     this.shadow.dispose();
     this.pmrem.dispose();

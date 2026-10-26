@@ -5,7 +5,14 @@ import { applyTheme } from './lib/theme.js';
 import { PROVIDERS, ENGINES, VIEWS, normalize, presetConfig, matchPreset, PRESETS } from './lib/engines.js';
 import { estimate } from './lib/pricing.js';
 import { isModelFile, importModel } from './lib/importer.js';
-import { installHotkeys } from './lib/hotkeys.js';
+import { installHotkeys, loadKeys } from './lib/hotkeys.js';
+import { SHORTCUTS, worksOn, keyOf } from './lib/shortcuts.js';
+import { blenderLight, accountLight } from './lib/render-status.js';
+import { installPalette } from './lib/palette.js';
+import { timeAgo } from './lib/session.js';
+import { displayVersion } from './lib/version.js';
+import { journey, dockFor, stepOf, isSheet, SHEETS, DEFAULT_TOOL, ringDash } from './lib/stage.js';
+import { updateNotice, lowNotice } from './lib/notices.js';
 
 export const $ = (s, root = document) => root.querySelector(s);
 export const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -26,7 +33,12 @@ export const state = {
   lastId: null, // model last opened in a flow screen
   spend: null, // GET /api/spend: totals, daily series, per-model costs, balances and low-balance flags per provider
   workspace: 'car', // 'car' or 'warframe': stamped on models created or imported from a home screen
+  recents: [], // the last few scenes worked on, newest first: [{ id, at, frame }] (session.mjs)
+  mode: localStorage.getItem('flatform.mode') === 'warframe' ? 'warframe' : 'car', // the Car / Warframe switch in the top bar
+  tool: { ...DEFAULT_TOOL }, // the dock tool picked in each step
+  humanoid: false, // the model in Scene has a skeleton: the dock shows Pose instead of Car parts
 };
+state.workspace = state.mode;
 
 export async function api(path, opts = {}) {
   const res = await fetch(path, opts);
@@ -36,13 +48,25 @@ export async function api(path, opts = {}) {
 }
 export const send = (path, method, data) => api(path, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
 
-export function toast(msg, kind = 'error') {
-  const t = $('#toast');
-  t.textContent = msg;
-  t.className = kind;
-  t.hidden = false;
-  clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => { t.hidden = true; }, 6000);
+// actions: [{ label, title, run }] buttons after the message (the "render done" toast has Open and Show in folder).
+// kind: 'error', 'info' or 'ok' (a green border and a check that draws itself). Toasts stack under the top bar.
+export function toast(msg, kind = 'error', actions = []) {
+  const box = $('#toasts');
+  const t = document.createElement('div');
+  t.className = `toast t-${kind}`;
+  t.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  if (kind === 'ok') t.insertAdjacentHTML('beforeend', '<svg class="tcheck" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg>');
+  t.append(Object.assign(document.createElement('span'), { textContent: msg }));
+  const kill = () => { t.classList.add('out'); setTimeout(() => t.remove(), 220); };
+  for (const a of actions) {
+    const b = document.createElement('button');
+    Object.assign(b, { type: 'button', className: 'btn sm ghostbtn', textContent: a.label, title: a.title || a.label });
+    b.addEventListener('click', () => { kill(); a.run(); });
+    t.append(b);
+  }
+  box.append(t);
+  while (box.children.length > 3) box.firstElementChild.remove();
+  setTimeout(kill, kind === 'ok' ? 8000 : actions.length ? 15000 : kind === 'info' ? 4000 : 6000);
 }
 export const announce = (msg) => { $('#live').textContent = msg; };
 
@@ -306,10 +330,10 @@ export function openKeyDialog(provider = state.settings?.provider || 'tripo') {
   keyProvider = provider;
   const p = PROVIDERS[provider];
   $('#keyTitle').textContent = provider === 'tripo' ? 'Connect your Tripo account' : 'Connect 3D AI Studio';
-  $('#keyLink').href = p.keyUrl;
-  $('#keyLink').textContent = provider === 'tripo' ? 'developers.tripo3d.com/en/keys' : 'the 3D AI Studio API dashboard';
+  $('#keyLink').href = p.keyUrl; // "Where do I find this?" opens the page that makes the key
+  $('#keyLink').title = `Opens ${provider === 'tripo' ? 'developers.tripo3d.com/en/keys' : 'the 3D AI Studio dashboard'}, where you make and copy your key`;
   $('#keyTo').textContent = p.name;
-  $('#keyInput').placeholder = p.keyHint || 'Paste your API key';
+  $('#keyInput').placeholder = p.keyHint || 'Paste your key';
   $('#keyError').textContent = '';
   if (!$('#keyDialog').open) $('#keyDialog').showModal();
 }
@@ -335,7 +359,7 @@ export async function refreshAccount(provider = state.settings?.provider || 'tri
 }
 
 // ---- updates: the server asks GitHub (a few seconds after it starts, then every 6 hours); the page shows the result ----
-let laterAt; // "Later" hides the banner until GitHub answers again, or the app starts again
+let toldUpdate; // the version whose toast already showed this session; "Update ready" in the top bar stays until skipped
 // check: ask GitHub now (Settings → Check for updates) instead of reading the server's last answer.
 export async function refreshUpdate(check = false) {
   try {
@@ -346,48 +370,50 @@ export async function refreshUpdate(check = false) {
   showUpdate();
   refresh();
 }
-function showUpdate() {
-  const u = state.update;
-  const bar = $('#update');
-  const show = Boolean(u?.newer && !u.skipped && u.checkedAt !== laterAt);
-  if (show) {
-    $('#updateTitle').textContent = `Flatform ${u.latest} is ready`;
-    $('#updateNote').textContent = u.notes;
-    $('#updateDownload').href = u.downloadUrl; // checked by the server: only github.com/TyroneMadison/Flatform/ links
-    if (bar.hidden) announce(`Flatform ${u.latest} is ready to download`);
-  } else if (bar.contains(document.activeElement)) $('#view').focus();
-  bar.hidden = !show;
+// A newer Flatform: a toast once (Download, Later, Skip this version) and an "Update" pill in the top bar that shows
+// the toast again. Skip this version hides both.
+function showUpdate(force = false) {
+  const n = updateNotice(state.update, displayVersion);
+  $('#updatePill').hidden = !n;
+  if (!n) return;
+  $('#updatePill .tb-l').textContent = n.pill;
+  $('#updatePill').title = `${n.title}. Click to see what is new and download it.`;
+  if (toldUpdate === n.version && !force) return;
+  toldUpdate = n.version;
+  announce(`${n.title} to download`);
+  toast(`${n.title}. ${n.note}`, 'info', [
+    { label: 'Download', title: 'Open the download page for the new version', run: () => window.open(state.update.downloadUrl, '_blank', 'noopener') },
+    { label: 'Later', title: 'Hide this. The Update button in the top bar stays until you install it.', run: () => {} },
+    { label: 'Skip this version', title: 'Do not ask about this version again', run: skipUpdate },
+  ]);
 }
-function updateLater() {
-  laterAt = state.update?.checkedAt;
+async function skipUpdate() {
+  try { state.update = await send('/api/update/skip', 'POST', { version: state.update.latest }); } catch (e) { toast(e.message); }
   showUpdate();
+  refresh();
 }
 
 // ---- spend: the ledger summary (Settings → Spend) and a banner when a balance is under its alert ----
 // Top up opens the provider's billing page: through main.mjs in the app, a plain new tab in `npm run web`.
 export const topUp = (service) => (native?.openBilling ? native.openBilling(service).catch((e) => toast(e.message))
   : window.open(PROVIDERS[service].billingUrl, '_blank', 'noopener'));
-let lowLater = false; // "Later" hides the banner until Flatform starts again
+let toldLow = false; // the low balance toast shows once per session; the account dot stays amber until topped up
 export async function refreshSpend() {
   try { state.spend = await api('/api/spend'); } catch { return; }
   showLow();
   refresh();
 }
-function showLow() {
-  const low = Object.entries(state.spend?.services || {}).filter(([, s]) => s.low);
-  const bar = $('#lowBalance');
-  if (low.length && !lowLater) {
-    const [service, s] = low[0];
-    $('#lowTitle').textContent = `${PROVIDERS[service].name} balance is low`;
-    $('#lowNote').textContent = [`${fmt(s.balance)} credits left, under your alert of ${fmt(s.threshold)}`,
-      s.daysLeft != null && `about ${s.daysLeft} days at this pace`, low.length > 1 && `${PROVIDERS[low[1][0]].name} is low too`].filter(Boolean).join(' · ');
-    $('#lowTopUp').dataset.service = service;
-    if (bar.hidden) announce($('#lowTitle').textContent);
-  }
-  bar.hidden = !low.length || lowLater;
+function showLow(force = false) {
+  const n = lowNotice(state.spend, PROVIDERS, fmt);
+  if (!n || (toldLow && !force)) return n;
+  toldLow = true;
+  announce(n.title);
+  toast(`${n.title}. ${n.note}`, 'info', [
+    { label: 'Top up', title: 'Open the page where you buy more credits', run: () => topUp(n.service) },
+    { label: 'Later', title: 'Hide this. The amber dot in the top bar stays until you top up.', run: () => {} },
+  ]);
+  return n;
 }
-$('#lowTopUp').addEventListener('click', (e) => topUp(e.target.dataset.service));
-$('#lowLater').addEventListener('click', () => { lowLater = true; showLow(); });
 
 // ---- files opened with Flatform (desktop app: "Open with", a second launch) go to the Drop flow ----
 native?.onOpenFiles?.(async (paths) => {
@@ -398,65 +424,133 @@ native?.onOpenFiles?.(async (paths) => {
   if (files.length) addFiles(files); // photos to the setup screen, 3D models straight into Compose
 });
 
-// ---- the frame: rail, title bar status, flow tabs ----
-// Plain tabs, every one clickable at any time: Generate opens this car's progress (or the queue), Compose and
-// Render this car or the last ready one.
-const FLOW = [['drop', 'Drop'], ['generate', 'Generate'], ['compose', 'Compose'], ['render', 'Render']];
-export function stepper(active, m) {
-  const ready = m?.status === 'ready' ? m : focusModel();
-  const hrefOf = (key) => (key === 'drop' ? '#/drop' : key === 'generate' ? (m ? `#/generate/${m.id}` : '#/generate')
-    : ready ? `#/${key}/${ready.id}` : '#/library');
-  return `<nav class="flowtabs" aria-label="Steps">${FLOW.map(([key, label]) => (key === active
-    ? `<a class="ftab on" href="${hrefOf(key)}" aria-current="page">${label}</a>`
-    : `<a class="ftab" href="${hrefOf(key)}">${label}</a>`)).join('')}</nav>`;
-}
+// ---- the frame: the top bar, the step trail at the bottom and the tool dock on the left (lib/stage.js) ----
+// The trail is drawn once for every screen, so screens no longer draw their own step tabs.
+export const stepper = () => '';
 
 export function focusModel() {
   const ready = (m) => m?.status === 'ready' && m;
   return ready(findModel(route.id)) || ready(findModel(state.lastId)) || state.models.find((m) => m.status === 'ready');
 }
 
+// Where each step of the trail goes: Photo, the 3D model being made (or set up), and the Scene and Finish of the
+// model on screen (or the last ready one).
+function stepHrefs() {
+  const ready = focusModel();
+  const here = findModel(route.id);
+  const making = here && here.status !== 'ready' ? here : state.models.find(isGenerating);
+  return {
+    photo: '#/drop',
+    model: making ? `#/generate/${making.id}` : state.pending.photos.length || state.pending.views.front ? '#/setup' : ready ? `#/generate/${ready.id}` : '#/setup',
+    scene: ready ? `#/compose/${ready.id}` : '#/library',
+    finish: ready ? `#/finish/${ready.id}` : '#/library',
+  };
+}
 function renderFrame() {
-  const target = focusModel();
-  const links = [
-    ['New', 'plus', '#/drop', ['drop', 'setup', 'generate']],
-    ['Warframe', 'cube', '#/warframe', ['warframe']],
-    ['Library', 'library', '#/library', ['library', 'model']],
-    ['Scenes', 'scene', target ? `#/compose/${target.id}` : '#/library', ['compose']],
-    ['Renders', 'film', target ? `#/render/${target.id}` : '#/library', ['render']],
-    ['Spin set', 'retry', target ? `#/spin/${target.id}` : '#/spin', ['spin']],
-    ['Finish', 'check', target ? `#/finish/${target.id}` : '#/library', ['finish']],
-    ['Share', 'external', target ? `#/share/${target.id}` : '#/share', ['share']],
-    ['Usage', 'eye', '#/usage', ['usage']],
-    ['Settings', 'settings', '#/settings', ['settings']],
-  ];
-  const html = links.map(([label, ic, href, names]) => {
-    const on = names.includes(route.name);
-    return `<a class="ri ${on ? 'on' : ''}" href="${href}"${on ? ' aria-current="page"' : ''}>${icon(ic, 20)}<span>${label}</span></a>`;
-  }).join('');
-  if ($('#railLinks').innerHTML !== html) $('#railLinks').innerHTML = html;
-  // The default provider's connection.
+  const sheet = isSheet(route.name);
+  document.body.dataset.screen = route.name;
+  document.body.dataset.step = stepOf(route.name) || '';
+  document.body.dataset.mode = state.mode;
+  document.body.toggleAttribute('data-sheet', sheet);
+  $('#sheetClose').hidden = !sheet;
+  if (sheet) $('#sheetClose').title = `Close ${SHEETS[route.name]} and go back (Esc)`;
+  // The step trail.
+  const trail = journey(route.name, stepHrefs()).map((s, i) => `${i ? '<span class="jbar" aria-hidden="true"></span>' : ''}<a class="jstep ${s.state}" href="${s.href}" title="${esc(s.tip)}"${s.state === 'current' ? ' aria-current="step"' : ''}><b aria-hidden="true">${s.state === 'done' ? icon('check', 14) : s.n}</b><span>${esc(s.label)}</span></a>`).join('');
+  if ($('#journey').innerHTML !== trail) $('#journey').innerHTML = trail;
+  $('#journey').hidden = route.name === 'preview';
+  renderDock();
+  // The Car / Warframe switch.
+  $$('#modeSeg [data-mode]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.mode === state.mode)));
+  // The default provider's connection, and Blender.
   const provider = state.settings?.provider || 'tripo';
   const { name } = PROVIDERS[provider];
   const a = state.accounts[provider];
-  const text = !a ? `Connecting to ${name}` : a.error ? `${name} unreachable` : a.hasKey ? `${name} connected` : `No ${name} API key`;
-  $('#accountStatus').textContent = `${text}${state.settings ? ` · v${state.settings.version}` : ''}`;
-  $('#railAccount .dot').className = `dot ${!a ? 'wait' : a.hasKey && !a.error ? 'ok' : ''}`;
-  $('#railAccount .acctname').textContent = provider === 'tripo' ? 'Tripo' : '3D AI';
-  $('#railAccount').title = text;
-  $('#railAccount').setAttribute('aria-label', `${text}. Open settings`);
+  for (const [id, l, label] of [['blenderLight', blenderLight(state.blender), 'Blender · GPU'], ['accountStatus', accountLight(name, a), name]]) {
+    const el = $(`#${id}`);
+    el.title = `${l.text}. ${l.tip}`;
+    el.setAttribute('aria-label', `${l.text}. ${l.tip}`);
+    if (id === 'blenderLight' && el.dataset.busy === 'true') continue; // blinking while a render runs (setRenderLight)
+    const low = id === 'accountStatus' && lowNotice(state.spend, PROVIDERS, fmt);
+    if (low) { el.title = low.dot; el.setAttribute('aria-label', low.dot); }
+    const html = `<span class="dot ${low ? 'low' : l.ok ? 'ok' : l.ok == null ? 'wait' : ''}"></span><span class="tb-l">${esc(label)}</span>`;
+    if (el.innerHTML !== html) el.innerHTML = html;
+  }
+  const test = Boolean(state.settings?.testMode); // Flatform Test (mock services, its own data)
+  $('#testBtn').hidden = !test;
+  if (test) document.title = 'Flatform Test';
+  const hm = focusModel();
+  $('#historyBtn').href = hm ? `#/history/${hm.id}` : '#/history';
+  $('#appVersion').textContent = state.settings ? `${test ? 'Flatform Test · mocks · ' : ''}Version ${displayVersion(state.settings.version)}` : '';
+}
+
+// The dock: the tools for the step on screen. A screen with an onDock(id) handles the pick (Scene shows that tool's
+// card); the others scroll to the part of the screen the tool names.
+const DOCK_TARGETS = { recipe: '#suPresetK', photos: '#suLeft', check: '#health', compare: '#fCompare' };
+function renderDock() {
+  const step = stepOf(route.name);
+  const tools = route.name === 'compose' && findModel(route.id)?.status !== 'ready' ? [] : dockFor(step, { humanoid: state.humanoid });
+  const on = state.tool[step];
+  const html = tools.map(([id, ic, label, tip]) => `<button class="dk" type="button" data-dock="${id}" aria-pressed="${id === on}" title="${esc(tip)}">${icon(ic, 22)}<span>${esc(label)}</span></button>`).join('');
+  const dock = $('#dock');
+  if (dock.innerHTML !== html) dock.innerHTML = html;
+  dock.hidden = !tools.length;
+}
+export function pickDock(id) {
+  const step = stepOf(route.name);
+  if (!step) return;
+  if (id === 'share' || id === 'history') { const m = focusModel(); return go(m ? `#/${id}/${m.id}` : `#/${id}`); }
+  state.tool[step] = id;
+  renderDock();
+  if (current?.onDock) return current.onDock(id);
+  if (DOCK_TARGETS[id]) $(`#view ${DOCK_TARGETS[id]}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+/** Scene tells the frame whether its model has a skeleton (Pose) or not (Car parts). */
+export function setHumanoid(on) {
+  if (state.humanoid === on) return;
+  state.humanoid = on;
+  if (on && state.tool.scene === 'carparts') state.tool.scene = 'pose';
+  if (!on && state.tool.scene === 'pose') state.tool.scene = 'carparts';
+  renderDock();
+}
+
+// The top bar's render pill: { light, pct, text, tip } from lib/render-status.js. Click it to open the render queue.
+// While a render runs the Blender · GPU dot blinks; when one finishes the window title says so for a moment.
+export function setRenderLight(l, modelId) {
+  const b = $('#renderLight');
+  if (!b) return;
+  const was = b.dataset.light;
+  b.dataset.light = l.light;
+  b.dataset.id = modelId || '';
+  b.title = `${l.tip}. Click to see the render queue.`;
+  b.setAttribute('aria-label', `${l.text}. ${l.tip}`);
+  b.querySelector('.p').setAttribute('stroke-dasharray', ringDash(l.light === 'done' ? 100 : l.pct));
+  b.querySelector('.rl-t').textContent = l.text;
+  const blender = $('#blenderLight');
+  const busy = l.light === 'busy';
+  blender.dataset.busy = String(busy);
+  if (busy) blender.querySelector('.dot').className = 'dot busy';
+  else if (was === 'busy') renderFrame();
+  if (l.light === 'done' && was !== 'done') {
+    document.title = '✓ Render done · Flatform';
+    setTimeout(() => { document.title = state.settings?.testMode ? 'Flatform Test' : 'Flatform'; }, 8000);
+    if (globalThis.Notification?.permission === 'granted') new Notification('Flatform: render finished', { body: l.text, silent: true });
+  }
 }
 
 // ---- routing ----
-const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings', 'warframe', 'spin', 'preview', 'finish', 'share', 'usage'];
+const SCREENS = ['drop', 'setup', 'generate', 'compose', 'library', 'model', 'settings', 'warframe', 'spin', 'preview', 'finish', 'share', 'history', 'usage', 'test'];
 export let route = { name: 'drop', id: null };
 let current = null;
 let navToken = 0;
+let lastStep = '#/drop';
 export const go = (hash) => (location.hash === hash ? navigate() : (location.hash = hash));
+export const closeSheet = () => go(lastStep);
 
 async function navigate() {
-  const [, name = 'drop', id = null] = location.hash.match(/^#\/(\w+)(?:\/([\w-]+))?/) || [];
+  const [, name = 'drop', id = null, sub = null] = location.hash.match(/^#\/(\w+)(?:\/([\w-]+))?(?:\/(\w+))?/) || [];
   if (name === 'review') return go(id ? `#/compose/${id}` : '#/library'); // Review was folded into Compose in v0.5
+  if (name === 'render') return go(id ? `#/compose/${id}/render` : '#/library'); // and Render in v0.6: old links land on its render area
+  if (name === 'compose' && sub === 'render') { state.renderIntent ||= 'show'; state.tool.scene = 'render'; } // old Render links open the Render tool
   if (!SCREENS.includes(name)) return go('#/drop');
   if (state.presenting && name !== 'preview') return history.replaceState(null, '', `#/preview/${route.id}`); // client preview stays put until it is ended
   const token = ++navToken;
@@ -465,6 +559,7 @@ async function navigate() {
   try { current?.unmount?.(); } catch (e) { console.error(e); }
   route = { name, id };
   if (id && findModel(id)) state.lastId = id;
+  if (stepOf(name)) lastStep = location.hash; // a sheet's ✕ and Esc go back here
   // A fresh element per screen, so listeners a screen added can never fire on the next one.
   const el = $('#view').cloneNode(false);
   $('#view').replaceWith(el);
@@ -507,15 +602,6 @@ $('#keyForm').addEventListener('submit', async (e) => {
   } catch (err) { $('#keyError').textContent = err.message; }
 });
 $('#keyDialog').addEventListener('close', () => { $('#keyInput').value = ''; });
-// The Download link opens in the browser (the desktop app hands https links to it); the bar's job is then done.
-$('#updateDownload').addEventListener('click', updateLater);
-$('#updateLater').addEventListener('click', updateLater);
-$('#updateSkip').addEventListener('click', async () => {
-  try { state.update = await send('/api/update/skip', 'POST', { version: state.update.latest }); } catch (e) { toast(e.message); }
-  showUpdate();
-  refresh();
-});
-$('#update').addEventListener('keydown', (e) => { if (e.key === 'Escape') updateLater(); });
 $('#filePicker').addEventListener('change', (e) => { addFiles(e.target.files, { quick: e.target.dataset.quick === 'true' }); e.target.value = ''; });
 // Dropping a file outside a drop zone must not open it in the window.
 window.addEventListener('dragover', (e) => e.preventDefault());
@@ -540,7 +626,7 @@ function drawWorkspaces() {
   el.hidden = !ws;
   if (!ws) return;
   const cur = activeWorkspace();
-  el.innerHTML = `<button class="wsbtn" type="button" id="wsBtn" aria-haspopup="menu" aria-expanded="false" title="Workspace (Ctrl+1, Ctrl+2)"><span class="wsico ${esc(cur?.kind)}" aria-hidden="true"></span><span>${esc(cur?.name || 'Workspace')}</span></button>
+  el.innerHTML = `<button class="wsbtn" type="button" id="wsBtn" aria-haspopup="menu" aria-expanded="false" title="Switch project (Ctrl+1 to Ctrl+9)"><span class="wsico ${esc(cur?.kind)}" aria-hidden="true"></span><span>${esc(cur?.name || 'Workspace')}</span></button>
     <div class="wsmenu glass" id="wsMenu" role="menu" hidden>${ws.list.map((w, i) => `<button type="button" role="menuitemradio" aria-checked="${w.id === ws.active}" data-ws="${esc(w.id)}"><span class="wsico ${esc(w.kind)}" aria-hidden="true"></span>${esc(w.name)}${i < 9 ? `<small>Ctrl+${i + 1}</small>` : ''}</button>`).join('')}
     <button type="button" role="menuitem" data-ws-new>+ New workspace</button></div>`;
 }
@@ -573,6 +659,135 @@ window.addEventListener('keydown', (e) => {
   if (w) { e.preventDefault(); switchWorkspace(w.id); }
 });
 
+// ---- auto-save session: recents and "Restore last session" after Flatform closed unexpectedly ----
+// The recents whose model is still in the library: [{ id, at, frame, model }].
+export const recentItems = () => state.recents.map((r) => ({ ...r, model: findModel(r.id) })).filter((r) => r.model?.status === 'ready');
+// Reopens a recent exactly as saved: its scene (kept on the model) and the turntable frame it was on.
+export function openRecent(r) {
+  state.frames[r.id] = r.frame ?? 0;
+  go(`#/compose/${r.id}`);
+}
+// Puts a saved snapshot's scene back on its model and opens it. Returns false when there is nothing to restore.
+async function restoreSnapshot(last) {
+  const m = last && findModel(last.modelId);
+  if (!m) return false;
+  try { upsert(await send(`/api/models/${m.id}`, 'PATCH', { scene: last.scene })); } catch (e) { toast(e.message); return true; }
+  openRecent({ id: m.id, frame: last.frame });
+  toast(`Your last session is back: ${m.name}, saved ${timeAgo(last.at)}.`, 'ok');
+  return true;
+}
+/** Restore last session (the Saved button, Tools, Ctrl+K): the newest auto-save, after a yes. */
+export async function restoreLastSession() {
+  let s;
+  try { s = await api('/api/session?latest'); } catch (e) { return toast(e.message); }
+  const m = s.last && findModel(s.last.modelId);
+  if (!m) return toast('Everything is saved. There is no earlier session to bring back yet.', 'info');
+  const ok = await confirmDialog({ title: 'Restore your last session?', text: `${m.name}, as it was ${timeAgo(s.last.at)}. The scene you have open now is replaced, and Undo brings it back.`, ok: 'Restore last session' });
+  if (ok) restoreSnapshot(s.last);
+}
+async function loadSession() {
+  let s;
+  try { s = await api('/api/session'); } catch { return; }
+  state.recents = s.recents || [];
+  const last = s.crashed && s.last;
+  const m = last && findModel(last.modelId);
+  if (!m) return;
+  $('#restoreNote').textContent = `Your last scene, ${m.name}, was saved ${timeAgo(last.at)}. Open it as it was?`;
+  $('#restoreBar').hidden = false;
+  announce('Flatform closed unexpectedly. You can restore your last session.');
+  const done = () => { $('#restoreBar').hidden = true; send('/api/session/dismiss', 'POST', {}).catch(() => {}); };
+  $('#restoreNo').onclick = done;
+  $('#restoreYes').onclick = async () => { done(); await restoreSnapshot(last); };
+}
+
+// ---- the top bar's buttons ----
+/** The Car / Warframe switch: same steps, the words and a few tools change. Remembered on this computer. */
+export function setMode(mode) {
+  if (mode === state.mode) return;
+  state.mode = state.workspace = mode;
+  localStorage.setItem('flatform.mode', mode);
+  announce(mode === 'warframe' ? 'Warframe mode' : 'Car mode');
+  if (['drop', 'warframe'].includes(route.name)) go('#/drop'); // the Photo step's words change with the mode
+  else refresh();
+}
+const present = () => { const m = focusModel(); return m ? go(`#/preview/${m.id}`) : toast('Make or open a 3D model first, then show it to a client.', 'info'); };
+const shareSheet = () => { const m = focusModel(); go(m ? `#/share/${m.id}` : '#/share'); };
+// Reduce motion: the system setting, or this switch (Settings, Look). Stops loops and makes every animation instant.
+export const reduceMotion = (on) => {
+  if (on != null) localStorage.setItem('flatform.reduceMotion', on ? '1' : '');
+  document.body.classList.toggle('rm', Boolean(localStorage.getItem('flatform.reduceMotion')));
+  return document.body.classList.contains('rm');
+};
+const showTray = (open = null) => { const t = $('#queueTray'); if (t.children.length) t.hidden = open == null ? !t.hidden : !open; return !t.hidden; };
+function wireTopBar(palette) {
+  $$('[data-icon]').forEach((el) => { el.innerHTML = icon(el.dataset.icon, 18); });
+  $('#modeSeg').addEventListener('click', (e) => { const b = e.target.closest('[data-mode]'); if (b) setMode(b.dataset.mode); });
+  $('#modeSeg').addEventListener('keydown', arrowRadios);
+  $('#searchBtn').addEventListener('click', () => palette.open());
+  $('#shareBtn').addEventListener('click', shareSheet);
+  $('#presentBtn').addEventListener('click', present);
+  $('#savedNote').addEventListener('click', restoreLastSession);
+  $('#updatePill').addEventListener('click', () => showUpdate(true));
+  $('#accountStatus').addEventListener('click', () => {
+    if (showLow(true)) return; // low balance: the toast with Top up
+    const provider = state.settings?.provider || 'tripo';
+    return state.accounts[provider]?.hasKey ? go('#/settings/providers') : openKeyDialog(provider);
+  });
+  $('#blenderLight').addEventListener('click', () => (showTray(true) || go('#/settings/rendering')));
+  $('#renderLight').addEventListener('click', () => { if (!showTray()) toast('Nothing in the render queue yet. Start one from Render in Scene and render.', 'info'); });
+  $('#sheetClose').addEventListener('click', closeSheet);
+  $('#dock').addEventListener('click', (e) => { const b = e.target.closest('[data-dock]'); if (b) pickDock(b.dataset.dock); });
+  // Esc closes a sheet (Library, Settings, Share, Usage) when nothing else is open.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !isSheet(route.name) || $('dialog[open]') || e.target.closest?.('input, textarea, select')) return;
+    e.preventDefault();
+    closeSheet();
+  });
+  document.addEventListener('change', (e) => { if (e.target.id === 'reduceMotion') reduceMotion(e.target.checked); });
+  reduceMotion();
+}
+
+// Ctrl+K: recents first, then the main screens, then every shortcut.
+let hotkeys; // { act(id) } once the keys are wired
+function paletteCommands() {
+  const m = focusModel();
+  const recents = recentItems().map((r) => ({ label: r.model.name, hint: `Edited ${timeAgo(r.at)}`, title: `Open ${r.model.name} in Scene and render, as you left it`, thumb: thumbOf(r.model), run: () => openRecent(r) }));
+  const href = stepHrefs();
+  const screens = [
+    ['Go to Photo', 'Step 1 · drop or choose photos', href.photo],
+    ['Go to 3D model', 'Step 2 · recipe and Generate', href.model],
+    ['Go to Scene and render', m ? `Step 3 · ${m.name}` : 'Step 3 · pick a model first', href.scene],
+    ['Go to Finish', 'Step 4 · check, compare and share', href.finish],
+    ['Library', 'Everything you have made', '#/library'],
+    ['Library: renders', 'Finished pictures and spins', '#/library'],
+    ['Usage and spend', 'What you have spent', '#/usage'],
+    ['Settings', 'Accounts, look, folders, updates and shortcuts', '#/settings'],
+    ['Check for updates', 'Settings · About and updates', '#/settings/about'],
+    m && ['Version history', `Older versions of ${m.name}`, `#/model/${m.id}`],
+    m && ['Spin set from photos', 'Photo frames for Dud Rents', `#/spin/${m.id}`],
+  ].filter(Boolean).map(([label, hint, to]) => ({ label, hint, run: () => go(to) }));
+  // The Scene tools, each one click from anywhere.
+  const tools = m ? dockFor('scene', { humanoid: state.humanoid }).map(([id, , label, tip]) => ({ label: `Scene: ${label}`, hint: tip, run: () => { state.tool.scene = id; go(`#/compose/${m.id}`); if (route.name === 'compose') pickDock(id); } })) : [];
+  const actions = [
+    { label: 'Show a client', hint: 'Clean full screen, slow spin', run: present },
+    { label: 'Share links', hint: 'Send someone a link', run: shareSheet },
+    { label: 'Restore last session', hint: 'Bring back your last auto-save', run: restoreLastSession },
+    { label: 'Show render queue', hint: 'Every render waiting or running', run: () => showTray(true) || toast('Nothing in the render queue yet.', 'info') },
+    { label: 'Connect Tripo account', hint: 'Paste your key', run: () => openKeyDialog('tripo') },
+    { label: state.mode === 'car' ? 'Switch to Warframe mode' : 'Switch to Car mode', hint: 'Top bar · Car / Warframe', run: () => setMode(state.mode === 'car' ? 'warframe' : 'car') },
+    { label: reduceMotion() ? 'Turn animations back on' : 'Reduce motion', hint: 'Stops moving effects', run: () => toast(reduceMotion(!reduceMotion()) ? 'Animations are off.' : 'Animations are on.', 'info') },
+  ];
+  // Every shortcut, with its keys. The Scene ones open Scene first when you are somewhere else.
+  const keys = loadKeys().keys;
+  const shortcuts = SHORTCUTS.filter((s) => s.id !== 'palette').map((s) => {
+    const here = worksOn(s, route.name);
+    const k = keyOf(s.id, keys);
+    return { label: s.label, hint: here ? k : `${k} · in Scene`, title: here ? `${s.label} (${k})` : `Opens Scene and render. There, press ${k} for this.`,
+      run: () => (here ? hotkeys.act(s.id) : m ? go(`#/compose/${m.id}`) : toast('Pick a model first.', 'info')) };
+  });
+  return [...recents, ...screens, ...tools, ...actions, ...shortcuts];
+}
+
 // Not top-level await: the screens import this module, so it has to finish loading before they can.
 (async () => {
   const [models, settings, blender] = await Promise.all([api('/api/models'), api('/api/settings'), api('/api/blender')]
@@ -582,15 +797,23 @@ window.addEventListener('keydown', (e) => {
   state.blender = blender;
   applyTheme(settings?.theme);
   await loadWorkspaces();
-  installHotkeys({
+  await loadSession();
+  const palette = installPalette({ commands: paletteCommands });
+  hotkeys = installHotkeys({
     screen: () => route.name,
-    run: (action) => {
+    say: (text) => toast(text, 'info'),
+    run: async (id) => {
       if (state.presenting) return;
+      if (id === 'palette') return palette.open();
       const m = (route.id && findModel(route.id)) || focusModel();
-      if (!m) return toast('Pick a model first.');
-      go(`#/${action === 'preview' ? 'preview' : 'finish'}/${m.id}`);
+      if (id === 'shelf') { const on = state.tool.scene === 'world'; pickDock('world'); return (await import('./views/compose.js')).toggleShelf(on ? undefined : 'shelf'); }
+      if (id === 'share' || id === 'history') return go(m ? `#/${id}/${m.id}` : `#/${id}`);
+      if (!m) return toast('Pick a model first.', 'info');
+      if (id === 'still' || id === 'turntable') { pickDock('render'); return (await import('./views/compose-render.js')).showRenderIntent(id); }
+      go(`#/${id === 'preview' ? 'preview' : 'finish'}/${m.id}`);
     },
   });
+  wireTopBar(palette);
   await navigate();
   refreshAccount();
   setInterval(() => refreshAccount(), 60000);

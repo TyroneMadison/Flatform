@@ -1,7 +1,7 @@
 {
   "name": "flatform",
   "productName": "Flatform",
-  "version": "0.5.0",
+  "version": "1.1.0",
   "description": "Drop a photo, get a 3D car from Tripo or 3D AI Studio, stage it in a studio and render 360/180 turntables for the web",
   "author": "Tyrone Madison",
   "license": "MIT",
@@ -14,7 +14,8 @@
   "scripts": {
     "app": "electron .",
     "web": "node --env-file=.env server.mjs",
-    "test": "node --test test.mjs test/pipeline.test.mjs test/pricing.test.mjs test/providers.test.mjs test/threedai.test.mjs test/updates.test.mjs test/ledger.test.mjs test/camera.test.mjs test/tenno.test.mjs test/look.test.mjs test/infer.test.mjs test/motion.test.mjs test/turntable.test.mjs test/batch.test.mjs test/phase4.test.mjs test/tennogen.test.mjs test/import.test.mjs test/poses.test.mjs test/model-tools.test.mjs test/camera-path.test.mjs test/lighting.test.mjs test/local.test.mjs test/textures.test.mjs test/decals.test.mjs test/templates.test.mjs test/spin.test.mjs test/theme-contrast.test.mjs test/enhance.test.mjs test/groupb.test.mjs test/groupc.test.mjs test/groupd.test.mjs test/groupe.test.mjs",
+    "test": "node --test test.mjs test/pipeline.test.mjs test/pricing.test.mjs test/providers.test.mjs test/threedai.test.mjs test/updates.test.mjs test/ledger.test.mjs test/camera.test.mjs test/tenno.test.mjs test/look.test.mjs test/infer.test.mjs test/motion.test.mjs test/turntable.test.mjs test/batch.test.mjs test/phase4.test.mjs test/tennogen.test.mjs test/import.test.mjs test/poses.test.mjs test/model-tools.test.mjs test/camera-path.test.mjs test/lighting.test.mjs test/local.test.mjs test/textures.test.mjs test/decals.test.mjs test/templates.test.mjs test/spin.test.mjs test/theme-contrast.test.mjs test/enhance.test.mjs test/groupb.test.mjs test/groupc.test.mjs test/groupd.test.mjs test/groupe.test.mjs test/handpose.test.mjs test/testrig.test.mjs test/render-compose.test.mjs test/session.test.mjs test/shortcuts.test.mjs test/versioning.test.mjs test/environments.test.mjs test/undo.test.mjs test/stage.test.mjs test/blender.test.mjs test/v3gaps.test.mjs test/rig.test.mjs test/testapp.test.mjs test/shelf.test.mjs test/history.test.mjs test/share.test.mjs",
+    "test:blender": "node --test --test-concurrency=1 test/blender.integration.test.mjs",
     "dist": "electron-builder --publish never"
   },
   "dependencies": {
@@ -41,6 +42,7 @@
       "ledger.mjs",
       "enhance.mjs",
       "share.mjs",
+      "render-history.mjs",
       "overnight.mjs",
       "plugins.mjs",
       "backup.mjs",
@@ -56,7 +58,9 @@
       "spin.mjs",
       "realism.mjs",
       "handoff.mjs",
+      "session.mjs",
       "preload.cjs",
+      "blender.mjs",
       "public/**/*",
       "package.json",
       "LICENSE",
@@ -65,8 +69,11 @@
     ],
     "extraResources": [
       {
-        "from": "render/blender_turntable.py",
-        "to": "render/blender_turntable.py"
+        "from": "render",
+        "to": "render",
+        "filter": [
+          "*.py"
+        ]
       },
       {
         "from": "node_modules/three/examples/jsm",
@@ -75,6 +82,10 @@
       {
         "from": "public/img/hdri",
         "to": "hdri"
+      },
+      {
+        "from": "public/env",
+        "to": "env"
       },
       {
         "from": "local",
@@ -98,7 +109,8 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "mac": {
       "icon": "build/icon.icns",

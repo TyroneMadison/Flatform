@@ -27,7 +27,7 @@ https://github.com/strukturag/libheif.
 
 ## Studio HDRIs (bundled in `public/img/hdri/`, CC0 1.0)
 
-Seven 1k environment maps from [Poly Haven](https://polyhaven.com), released under
+Nine 1k environment maps from [Poly Haven](https://polyhaven.com), released under
 [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (public domain, no attribution required; credited with thanks).
 
 | File | Source |
@@ -39,6 +39,36 @@ Seven 1k environment maps from [Poly Haven](https://polyhaven.com), released und
 | `garage.hdr` | https://polyhaven.com/a/garage (Greg Zaal) |
 | `goegap_road.hdr` | https://polyhaven.com/a/goegap_road (Greg Zaal) |
 | `white_studio_02.hdr` | https://polyhaven.com/a/white_studio_02 (Grzegorz Wronkowski) |
+| `umhlanga_sunrise.hdr` | https://polyhaven.com/a/umhlanga_sunrise (Greg Zaal) |
+| `shanghai_bund.hdr` | https://polyhaven.com/a/shanghai_bund (Greg Zaal) |
+
+## 3D environments (`public/lib/environments.js`, models bundled in `public/env/`, CC0 1.0)
+
+Every scene (Showroom, White Cyc Studio, Soft studio, Luxury Garage, Golden Hour Coast, Night City Rain, Desert Highway
+Dusk, Modern Villa Driveway) is built by Flatform in code from primitives, plus the CC0 models below. Skies and
+reflections use the CC0 Poly Haven HDRIs listed above (`umhlanga_sunrise` for the coast, `shanghai_bund` for the night
+city, `goegap_road`, `kloofendal_48d_partly_cloudy_puresky`, `garage`, `white_studio_02`, `studio_small_03`); the rain
+is Flatform's own. The models are from [Poly Haven](https://polyhaven.com), released under
+[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (public domain, no attribution required; credited with
+thanks): their 1k glTF, packed into one `.glb` each with the textures reduced to 512 px. Downloaded 2026-10-26. The
+scene picker thumbnails (`public/img/environments/`) are Flatform's own renders of these places
+(`test-app/make-env-thumbs.mjs`).
+
+| File | Place | Source |
+| --- | --- | --- |
+| `painted_wooden_bench.glb` | Golden Hour Coast | https://polyhaven.com/a/painted_wooden_bench (Kirill Sannikov) |
+| `lifebuoy.glb` | Golden Hour Coast | https://polyhaven.com/a/lifebuoy (Hank Kaamura) |
+| `ocean_buoy.glb` | Golden Hour Coast | https://polyhaven.com/a/ocean_buoy (Mateusz Sadek) |
+| `street_lamp_01.glb` | Night City Rain | https://polyhaven.com/a/street_lamp_01 (Josh Dean) |
+| `metal_trash_can.glb` | Night City Rain | https://polyhaven.com/a/metal_trash_can (GurJas Studios) |
+| `utility_box_01.glb` | Night City Rain | https://polyhaven.com/a/utility_box_01 (James Ray Cock) |
+| `namaqualand_boulder_04.glb` | Desert Highway Dusk | https://polyhaven.com/a/namaqualand_boulder_04 (Jenelle van Heerden) |
+| `quiver_tree_02.glb` | Desert Highway Dusk | https://polyhaven.com/a/quiver_tree_02 (Dario Barresi, Rico Cilliers) |
+| `dead_quiver_trunk.glb` | Desert Highway Dusk | https://polyhaven.com/a/dead_quiver_trunk (James Ray Cock, Dario Barresi, Rico Cilliers) |
+| `wild_rooibos_bush.glb` | Desert Highway Dusk | https://polyhaven.com/a/wild_rooibos_bush (James Ray Cock, Jenelle van Heerden) |
+| `planter_box_01.glb` | Modern Villa Driveway | https://polyhaven.com/a/planter_box_01 (James Ray Cock) |
+| `shrub_04.glb` | Modern Villa Driveway | https://polyhaven.com/a/shrub_04 (Rico Cilliers) |
+| `outdoor_table_chair_set_01.glb` | Modern Villa Driveway | https://polyhaven.com/a/outdoor_table_chair_set_01 (James Ray Cock) |
 
 ## Fonts (bundled in `public/fonts/`, SIL Open Font License 1.1)
 

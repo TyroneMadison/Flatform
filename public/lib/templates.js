@@ -3,7 +3,8 @@
 import { mergeLook, lightsFromPreset } from './look.js';
 
 // The scene fields a template sets. Everything else (the model, paint, decals, motion) stays as it is.
-export const TEMPLATE_KEYS = ['preset', 'modeled', 'camera', 'turn', 'lens', 'view', 'orbit', 'fit', 'look', 'matchLighting', 'reflection', 'shadow'];
+// (Old saved templates may still carry 'modeled', the retired "Modeled room" switch: it is not a key, so it is dropped on load.)
+export const TEMPLATE_KEYS = ['preset', 'camera', 'turn', 'lens', 'view', 'orbit', 'fit', 'look', 'matchLighting', 'reflection', 'shadow'];
 const lit = (preset, tweak = {}) => {
   const l = lightsFromPreset(preset);
   for (const [k, v] of Object.entries(tweak)) l[k] = { ...l[k], ...v };
@@ -55,7 +56,7 @@ export function templateScene(scene = {}) {
   }
   if (out.view !== undefined && !['car', 'free'].includes(out.view)) delete out.view;
   if (out.fit !== undefined && !['all', 'footprint'].includes(out.fit)) delete out.fit;
-  for (const k of ['modeled', 'matchLighting']) if (out[k] !== undefined) out[k] = Boolean(out[k]);
+  if (out.matchLighting !== undefined) out.matchLighting = Boolean(out.matchLighting);
   const o = out.orbit;
   if (o !== undefined && !(o === null || (o && [o.position, o.target].every((v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite))))) delete out.orbit;
   if (out.look !== undefined) out.look = out.look && typeof out.look === 'object' && !Array.isArray(out.look) ? mergeLook(out.look) : mergeLook({});

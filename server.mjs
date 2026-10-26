@@ -10,11 +10,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
-import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, PLATES, plateCamera } from './public/lib/pipeline.js';
+import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, ENVIRONMENTS, envCamera } from './public/lib/pipeline.js';
+import { blenderEnvironment } from './public/lib/environments.js';
+import { findBlender as findBlenderOn, blenderVersion, blenderPose } from './blender.mjs';
 import { PROVIDERS, VIEWS, DEFAULT_PROVIDER, normalize, baseSetup, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
 import { estimate } from './public/lib/pricing.js';
 import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
 import { resolveColors, deserializeMaterial, blenderMaterial } from './public/lib/tenno.js';
+import { cleanExtras } from './public/lib/render-types.js';
 import { inferRegions, checkAnthropicKey } from './inference.mjs';
 import { createQueue } from './batch.mjs';
 import { createWorkspaces } from './workspaces.mjs';
@@ -33,10 +36,12 @@ import { createTextureLibrary } from './textures.mjs';
 import { decalKind, DECAL_FILE } from './public/lib/decals.js';
 import { normalizeTemplate } from './public/lib/templates.js';
 import { localEngine as createLocalEngine, downloadWeights, weightsReady, checkCuda, UPSCALER_FILES } from './local.mjs';
-import { loadPoses } from './public/lib/poses.js';
+import { loadPoses, validatePose } from './public/lib/poses.js';
+import { CHECK_IDS } from './public/lib/checklist.js';
 const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
 import { ENHANCE, enhanceBlock } from './enhance.mjs';
-import { createShares } from './share.mjs';
+import { createShares, cleanShareUrl } from './share.mjs';
+import { createRenderHistory } from './render-history.mjs';
 import { planOvernight, morningSummary, awakeGuard, MAX_TRIES } from './overnight.mjs';
 import { runPlugin, pluginStore } from './plugins.mjs';
 import { DEFAULTS as BACKUP_DEFAULTS, checkBackup, runBackup } from './backup.mjs';
@@ -44,6 +49,7 @@ import { createPreviewLock } from './preview.mjs';
 import { disk, clearCache, renderTimes, enhanceSpend } from './usage.mjs';
 import { createSpinService } from './spin.mjs';
 import { identifyCar } from './public/lib/identify.js';
+import { createSession } from './session.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -54,7 +60,9 @@ const MAX_INFER = 4 * 1024 * 1024; // a 256 px PNG of the photo plus its cluster
 const VERSION = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 // The app page may only run its own files (and its inline import map). WebAssembly is for the Draco/Meshopt decoders.
 // GLTFLoader fetches a GLB's embedded textures from blob: URLs (and a .gltf's data: URIs), hence connect-src blob: data:.
-const IMPORT_MAP = readFileSync(path.join(PUBLIC, 'index.html'), 'utf8').match(/<script type="importmap">([\s\S]*?)<\/script>/)[1];
+// The browser hashes the script with its line ends turned into \n (HTML parsing does that), so a Windows checkout
+// with \r\n must hash the same text or the import map is blocked.
+const IMPORT_MAP = readFileSync(path.join(PUBLIC, 'index.html'), 'utf8').match(/<script type="importmap">([\s\S]*?)<\/script>/)[1].replace(/\r\n?/g, '\n');
 const CSP = [
   "default-src 'self'", `script-src 'self' 'wasm-unsafe-eval' 'sha256-${createHash('sha256').update(IMPORT_MAP).digest('base64')}'`,
   "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "worker-src 'self' blob:", "connect-src 'self' blob: data:",
@@ -74,7 +82,7 @@ const BACKDROP_TYPES = ['.jpg', '.jpeg', '.png', '.hdr', '.exr'];
 const FAILED = ['failed', 'cancelled', 'banned'];
 // Global keys work on .ai; .com (the host the docs show) is the China region and rejects global keys.
 const REGIONS = { global: 'https://openapi.tripo3d.ai/v3', china: 'https://openapi.tripo3d.com/v3' };
-const SCENES = [...Object.keys(PLATES), 'ring', 'transparent', 'cyclorama', 'miami', 'custom']; // 'ring' was called 'gold' before v0.4
+const SCENES = [...Object.keys(ENVIRONMENTS), 'ring', 'transparent', 'cyclorama', 'miami', 'custom']; // 'ring' was called 'gold' before v0.4
 // Version fields mirrored at the top level of each library entry, so v0.2 readers and the UI see the active version.
 const VERSION_FIELDS = ['task_id', 'status', 'progress', 'tripo_status', 'glb', 'thumb', 'credits', 'error', 'exports', 'source',
   'provider', 'engine', 'mode', 'views', 'upstream_status', 'note', 'generation', 'file', 'fileName'];
@@ -103,33 +111,7 @@ export function suggestedOutputRoot(platform = process.platform) {
   return platform === 'win32' ? 'E:\\Claude Stuff\\car-360-pipeline\\handoff' : path.join(os.homedir(), 'Flatform', 'handoff');
 }
 
-// Where Blender usually lives. Blender is optional and never bundled. On Windows that is the installer's
-// Program Files folder on any drive, Steam, a portable zip unpacked in the home folder, or anything on PATH.
-export function blenderCandidates(platform = process.platform, env = process.env) {
-  if (platform === 'darwin') return ['/Applications/Blender.app/Contents/MacOS/Blender', path.join(os.homedir(), 'Applications/Blender.app/Contents/MacOS/Blender')];
-  const onPath = String(env.PATH || env.Path || '').split(path.delimiter).filter(Boolean)
-    .map((d) => path.join(d, platform === 'win32' ? 'blender.exe' : 'blender'));
-  if (platform !== 'win32') return [...onPath, '/usr/bin/blender', '/snap/bin/blender'];
-  // Newest version first inside each folder that holds versioned Blender folders.
-  const versions = (base) => {
-    let dirs = [];
-    try { dirs = readdirSync(base).filter((d) => /^blender/i.test(d)); } catch { /* not there */ }
-    return dirs.sort((a, b) => b.localeCompare(a, undefined, { numeric: true })).map((d) => path.join(base, d, 'blender.exe'));
-  };
-  const home = env.USERPROFILE || os.homedir();
-  const drives = [];
-  for (let c = 67; c <= 90; c++) { const d = `${String.fromCharCode(c)}:\\`; if (existsSync(d)) drives.push(d); } // C: to Z:
-  const programFiles = [...new Set([env.ProgramFiles, env['ProgramFiles(x86)'], ...drives.flatMap((d) => [`${d}Program Files`, `${d}Program Files (x86)`])].filter(Boolean))];
-  const steam = [...new Set([env['ProgramFiles(x86)'] && path.join(env['ProgramFiles(x86)'], 'Steam'), ...drives.flatMap((d) => [`${d}SteamLibrary`, `${d}Steam`])].filter(Boolean))];
-  return [
-    ...programFiles.flatMap((p) => versions(path.join(p, 'Blender Foundation'))),
-    ...steam.map((s) => path.join(s, 'steamapps', 'common', 'Blender', 'blender.exe')),
-    ...(env.LOCALAPPDATA ? versions(path.join(env.LOCALAPPDATA, 'Programs')) : []),
-    ...versions(home), ...versions(path.join(home, 'Blender')), // portable zips
-    ...onPath,
-    ...(env.LOCALAPPDATA ? [path.join(env.LOCALAPPDATA, 'Microsoft', 'WindowsApps', 'blender.exe')] : []), // Microsoft Store alias
-  ];
-}
+export { blenderCandidates } from './blender.mjs';
 
 // git with an argv list (no shell), in the project folder from Settings.
 const git = (cwd, args) => new Promise((ok, fail) => execFile('git', args, { cwd, timeout: 30000, maxBuffer: 4 << 20 }, (e, out, err) => (e ? fail(new HttpError(500, (err || e.message).trim().split('\n')[0])) : ok(out))));
@@ -151,10 +133,12 @@ export async function startServer({
   threeDAIBase = THREE_D_AI_BASE,
   rateWindowMs, // default: a minute plus slack, see providers.mjs
   blenderScript = path.join(ROOT, 'render', 'blender_turntable.py'), // the packaged app ships it as a resource file
+  rigScript = path.join(path.dirname(blenderScript), 'blender_autorig.py'), // ships beside it
   // three.js addons (loaders, controls, decoders). electron-builder drops every dependency's examples/ folder,
   // so the packaged app ships this one as a resource file too.
   threeAddons = path.join(THREE, 'examples', 'jsm'),
   hdriDir = path.join(PUBLIC, 'img', 'hdri'), // built-in HDRIs for Blender (a resource file in the packaged app)
+  envDir = path.join(PUBLIC, 'env'), // the environments' bundled CC0 models for Blender (environments.js), likewise
   updateUrl,
   updateDelayMs,
   workspaces = null, // workspaces.mjs; startApp() passes it, tests may leave it out
@@ -168,15 +152,28 @@ export async function startServer({
   keepAwake, // the app passes Electron's powerSaveBlocker on/off while the overnight queue runs
   defaultOutputRoot, // the app passes suggestedOutputRoot(): Send to Dud Rents and renders go there until Tyrone picks another folder
   basePath, // (tests, Sadie's branch) the local base path Generate Spin Set prepares with; realism.mjs stubs it
+  testMode = false, // Flatform Test (main.mjs --flatform-test): the page shows the v3 checklist; the services are mocks
 }) {
   const MODELS = path.join(dataDir, 'models');
   const BACKDROPS = path.join(dataDir, 'backdrops');
   const DECALS = path.join(dataDir, 'decals'); // decal images, named by their SHA-1 so the same file is stored once
   const LIB = path.join(dataDir, 'library.json');
+  const session = createSession({ dir: path.join(dataDir, 'session') }); // auto-save snapshots, crash marker, recents
+  session.start();
   const previewLock = createPreviewLock({ file: path.join(dataDir, 'preview.json') });
-  const shares = createShares({ file: path.join(dataDir, 'shares.json'), baseUrl: () => settings?.share?.baseUrl || null });
+  // Sharing is set up once the share Worker's address and password are saved (Settings, Sharing). Both live in the
+  // encrypted key store ('cloudflare': { workerUrl, adminToken }), never in settings.json.
+  const shareRemote = () => {
+    try { const c = JSON.parse(keyStore.get('cloudflare') || 'null'); return c?.workerUrl && c?.adminToken ? { url: c.workerUrl, token: c.adminToken } : null; } catch { return null; }
+  };
+  const shares = createShares({ file: path.join(dataDir, 'shares.json'), baseUrl: () => settings?.share?.baseUrl || null, remote: shareRemote,
+    files: async (s) => { // the model's own render files only (the poster copy and video kept in its folder)
+      const read = (name) => (name ? readFile(path.join(MODELS, path.basename(String(s.modelId)), path.basename(String(name)))).catch(() => null) : null);
+      return { poster: await read(s.poster), video: await read(s.video) };
+    } });
   const SETTINGS = path.join(dataDir, 'settings.json');
   await mkdir(MODELS, { recursive: true });
+  const history = createRenderHistory({ modelsDir: MODELS });
 
   // Atomic JSON writes, one at a time, so a crash never leaves a half-written file.
   let writing = Promise.resolve();
@@ -192,7 +189,7 @@ export async function startServer({
   const defaults = {
     region: 'global', model, texture: true, pbr: true, provider: DEFAULT_PROVIDER, setups: {},
     localEngine: { weightsDir: '', python: '' }, // '' = <data folder>/local-engine/weights and "python" on PATH
-    renderer: 'three', blenderPath: '', ffmpegPath: '', outputRoot: '', defaultScene: 'showroom', alsoTransparent: true, backdrops: {},
+    renderer: 'three', blenderPath: '', ffmpegPath: '', outputRoot: '', defaultScene: 'white-cyc-studio', alsoTransparent: true, backdrops: {},
     lighting: DEFAULT_LIGHTING, glass: DEFAULT_GLASS,
     studioPresets: {}, // the user's saved scene looks (look.js), by name; the shipped ones live in the page
     updates: { autoCheck: true, skippedVersion: null },
@@ -207,6 +204,8 @@ export async function startServer({
   if (settings.defaultScene === 'gold') settings.defaultScene = 'ring';
   // v0.5: Showroom became the default scene. 'ring' was the old built-in default, so it moves over once.
   if (!settings.scenesV5) Object.assign(settings, { scenesV5: true, ...(settings.defaultScene === 'ring' && { defaultScene: 'showroom' }) });
+  // v0.6: White Cyc Studio became the default scene; Showroom was the default before, so it moves over once.
+  if (!settings.scenesV6) Object.assign(settings, { scenesV6: true, ...(settings.defaultScene === 'showroom' && { defaultScene: 'white-cyc-studio' }) });
   const apiBase = () => fixedApiBase || REGIONS[settings.region] || REGIONS.global;
 
   // ponytail: whole library in one JSON file rewritten on each change; move to SQLite past a few thousand models
@@ -376,9 +375,13 @@ export async function startServer({
       const file = form.get(view);
       if (file && typeof file === 'object') views[view] = await toImage(Buffer.from(await file.arrayBuffer()), file.type);
     }
-    return { setup, views, name: form.get('name'), workspace: workspaceOf(form.get('workspace')) };
+    return { setup, views, name: form.get('name'), workspace: workspaceOf(form.get('workspace')), kind: form.get('kind') };
   }
   const workspaceOf = (w) => (w === 'warframe' ? 'warframe' : 'car');
+  // What a model is, humanoid or car: picked on creation (the form's kind, else the workspace: Warframe makes
+  // humanoids), switchable later. Without one, the page falls back to motion.js detectModelType.
+  const KINDS = ['humanoid', 'car'];
+  const kindOf = (kind, workspace) => (KINDS.includes(kind) ? kind : workspace === 'warframe' ? 'humanoid' : 'car');
 
   // Checks a setup has the photos it needs. views: { front, left, back, right } of { image, type }.
   function checkViews(setup, views) {
@@ -473,6 +476,7 @@ export async function startServer({
     const id = randomUUID();
     const now = new Date().toISOString();
     const m = { id, name: cleanName(form.get('name') || originalName.replace(/\.[^.]+$/, '')), created_at: now, activeVersion: 1, versions: [], workspace: workspaceOf(form.get('workspace')) };
+    m.kind = kindOf(form.get('kind'), m.workspace);
     m.slug = uniqueSlug(m.name, slugsExcept(m));
     await mkdir(path.join(MODELS, m.id), { recursive: true });
     await writeFile(path.join(MODELS, m.id, 'model.glb'), glb);
@@ -493,12 +497,13 @@ export async function startServer({
   }
 
   async function createModel(req, queryName) {
-    const { setup, views, name, workspace } = await readInput(req);
+    const { setup, views, name, workspace, kind } = await readInput(req);
     if (!setup) throw new HttpError(400, 'Add a photo');
     checkViews(setup, views);
     const id = randomUUID();
     const task_id = await submit(setup, views, id);
     const m = { id, name: cleanName(name ?? queryName), created_at: new Date().toISOString(), activeVersion: 1, versions: [], workspace: workspace || 'car' };
+    m.kind = kindOf(kind, m.workspace);
     m.slug = uniqueSlug(m.name, slugsExcept(m));
     await mkdir(path.join(MODELS, m.id), { recursive: true });
     m.versions.push(newVersion(1, setup, task_id, await saveViews(m, 1, views)));
@@ -825,7 +830,7 @@ export async function startServer({
   }
 
   async function patchModel(m, body) {
-    const allowed = ['name', 'activeVersion', 'scene', 'approved', 'workspace', 'tennogen', 'car'];
+    const allowed = ['name', 'activeVersion', 'scene', 'approved', 'workspace', 'tennogen', 'car', 'kind'];
     if ('car' in body) {
       // Car auto-identify's answer, confirmed or edited: { make, model, yearRange, bodyStyle, color }.
       const c = body.car;
@@ -856,6 +861,10 @@ export async function startServer({
     if ('workspace' in body) {
       if (!['car', 'warframe'].includes(body.workspace)) throw new HttpError(400, 'workspace must be car or warframe');
       m.workspace = body.workspace;
+    }
+    if ('kind' in body) {
+      if (!KINDS.includes(body.kind)) throw new HttpError(400, 'kind must be humanoid or car');
+      m.kind = body.kind;
     }
     if ('tennogen' in body) { // the model's TennoGen texture folder and content type, or null
       if (body.tennogen === null) delete m.tennogen;
@@ -1019,7 +1028,7 @@ export async function startServer({
 
   // keys: where each provider's key comes from ('saved', 'env' or 'none'), never the key.
   const settingsView = () => ({
-    ...settings, apiBase: apiBase(), regions: REGIONS, version: VERSION, libraryDir: dataDir,
+    ...settings, apiBase: apiBase(), regions: REGIONS, version: VERSION, libraryDir: dataDir, testMode,
     suggestedOutputRoot: suggestedOutputRoot(), platform: process.platform, keys: keySources(),
     visionKey: keyStore.source('anthropic'), // the car material inference's vision model (saved, env or none)
   });
@@ -1103,14 +1112,17 @@ export async function startServer({
     }
     if (still) m.renders.stills = [...new Set([...(m.renders.stills || []), still[1]])];
     if (sprite || poster || still) await save();
+    if (poster || still) await noteVersion(m, file, still ? 'Picture' : 'Spin video');
   }
+
+  // Version history (render-history.mjs): the render's first picture and the settings that made it.
+  const noteVersion = (m, picture, kind) => history.add(m.id, { picture, pass: m.renders?.at, kind,
+    settings: { scene: m.scene || {}, lighting: settings.lighting, glass: settings.glass } }).catch((e) => console.error(`Version history: ${e.message}`));
 
   // ---- Optional Blender renderer ----
 
   const jobs = new Map(); // model id → running or finished Blender job
-  function findBlender() {
-    return [settings.blenderPath, ...blenderCandidates()].find((p) => p && existsSync(p)) || null;
-  }
+  const findBlender = () => findBlenderOn(settings.blenderPath);
   const jobView = (job) => job && { status: job.status, look: job.look, frame: job.frame, frames: job.frames, looks: job.looks, error: job.error };
 
   function runBlender(job, bin, args) {
@@ -1121,7 +1133,7 @@ export async function startServer({
         windowsHide: true, env: script ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' } : process.env,
       });
       job.child = child;
-      let tail = '';
+      let tail = '', fatal = '';
       let buffered = '';
       const onData = (chunk) => {
         buffered += chunk;
@@ -1130,17 +1142,20 @@ export async function startServer({
         for (const line of lines) {
           const hit = line.match(/^FLATFORM_FRAME (\d+) (\d+)/);
           if (hit) job.frame = Number(hit[1]);
+          else if (/^FLATFORM_ERROR /.test(line)) fatal = line.trim(); // the script's own error beats any later line
           else if (line.trim()) tail = line.trim();
         }
       };
       child.stdout.setEncoding('utf8').on('data', onData);
-      child.stderr.setEncoding('utf8').on('data', (d) => { tail = String(d).trim().split(/\r?\n/).at(-1) || tail; });
+      let errTail = ''; // an uncaught Python error goes to stderr (its warnings too, which are skipped)
+      child.stderr.setEncoding('utf8').on('data', (d) => { errTail = String(d).split(/\r?\n/).filter((l) => /error|exception/i.test(l) && !/warning/i.test(l)).at(-1)?.trim() || errTail; });
       child.on('error', reject);
-      child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(job.status === 'cancelled' ? 'Cancelled' : `Blender stopped (exit ${code}): ${tail}`))));
+      child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(job.status === 'cancelled' ? 'Cancelled' : `Blender stopped (exit ${code}): ${fatal || errTail || buffered.trim() || tail}`))));
     });
   }
 
-  function startBlender(m, { looks = [], frames = FRAMES, still }) {
+  // effect: a Render idea's exploded parts or clay / blueprint (render-types.js). paint: Every colour's repainted body.
+  function startBlender(m, { looks = [], frames = FRAMES, still, effect, paint: paintOverride }) {
     const bin = findBlender();
     if (!bin) throw new HttpError(409, 'Blender not found. Install Blender 4.x or locate it in Settings.');
     if (!m.renders?.outDir) throw new HttpError(409, 'Start the render first');
@@ -1150,23 +1165,33 @@ export async function startServer({
     if (jobs.get(m.id)?.status === 'running') throw new HttpError(409, 'Blender is already rendering this car');
     const v = active(m);
     const sceneFile = path.join(MODELS, m.id, 'scene.json');
-    // Photo scenes: Blender renders the car on a shadow catcher with the plate's camera and light; the page lays
-    // the frames over the plate when it makes the sprites. The Showroom look always uses the showroom plate.
-    const plateArg = (look) => {
-      const preset = look === 'showroom' ? 'showroom' : look === 'transparent' ? null : m.scene?.preset || settings.defaultScene;
-      if (!PLATES[preset]) return [];
-      const modeled = preset === 'showroom' && Boolean(m.scene?.modeled);
-      return ['--plate', JSON.stringify({ slug: preset, modeled, camera: plateCamera(PLATES[preset].cam, 4 / 3), light: PLATES[preset].light })];
+    // 3D environments: Blender builds the same place (environments.js) around the car, with its eye-level camera
+    // and matched light. The Showroom look always uses the showroom.
+    const builtinHdri = (name) => (Object.hasOwn(HDRIS, name) ? path.join(hdriDir, `${name}.hdr`) : null);
+    const envArg = (look) => {
+      const picked = look === 'showroom' ? 'showroom' : look === 'transparent' ? null : m.scene?.preset || settings.defaultScene;
+      const preset = picked === 'cyclorama' ? 'white-cyc-studio' : picked; // Compose's default white cyc, built as the 3D one
+      if (!ENVIRONMENTS[preset]) return [];
+      const glb = (file) => path.join(envDir, path.basename(file));
+      return ['--environment', JSON.stringify(blenderEnvironment(preset, envCamera(ENVIRONMENTS[preset].cam, 4 / 3), { hdri: builtinHdri, glb }))];
     };
     // The scene look (look.js) and the painted pieces' materials (tenno.js), resolved here so the script only applies them.
     const lookJson = mergeLook(m.scene?.look);
     const hdri = lookJson.hdri.file;
-    const hdriPath = hdri ? (hdri.startsWith('builtin:') ? (Object.hasOwn(HDRIS, hdri.slice(8)) ? path.join(hdriDir, `${hdri.slice(8)}.hdr`) : null) : path.join(BACKDROPS, hdri)) : null;
+    const hdriPath = hdri ? (hdri.startsWith('builtin:') ? builtinHdri(hdri.slice(8)) : path.join(BACKDROPS, hdri)) : null;
     const lookArg = ['--scenelook', JSON.stringify(blenderLook(lookJson, { hdriPath }))];
-    const paint = m.scene?.paint;
+    // The Compose pose (preset or Pose by hand) on a rigged character, with the model's own bone names.
+    // A car never gets one; the model's kind (v3) wins over the scene's guess.
+    const pose = m.kind !== 'car' && m.scene?.motion?.pose ? blenderPose(readFileSync(path.join(MODELS, m.id, v.glb)), { ...m.scene.motion, type: m.kind || m.scene.motion.type }) : null;
+    const poseArg = pose ? ['--pose', JSON.stringify(pose)] : [];
+    if (paintOverride !== undefined && (!paintOverride || typeof paintOverride !== 'object' || Array.isArray(paintOverride))) throw new HttpError(400, 'Bad paint');
+    const paint = paintOverride || m.scene?.paint;
+    const fx = cleanExtras({ effect }).effect;
+    const effectArg = fx ? ['--effect', JSON.stringify(fx)] : [];
     const materialsFile = path.join(MODELS, m.id, 'blender-materials.json');
-    const materials = paint?.pieces ? Object.fromEntries(Object.entries(paint.pieces).filter(([, p]) => p.material || p.slot || p.colors || p.region)
-      .map(([key, p]) => [key, { ...blenderMaterial(deserializeMaterial(p.material), resolveColors(paint, p)), slot: p.slot, textured: p.material?.textured !== false && !p.material?.color }])) : {};
+    const materials = paint?.pieces ? Object.fromEntries(Object.entries(paint.pieces).filter(([, p]) => p && (p.material || p.slot || p.colors || p.region || p.hidden))
+      .map(([key, p]) => [key, { ...blenderMaterial(deserializeMaterial(p.material), resolveColors(paint, p)), slot: p.slot, textured: p.material?.textured !== false && !p.material?.color, ...(p.hidden && { hidden: true }) }])) : {};
+    const extrasArg = extrasOf(m);
     const job = { status: 'running', looks, look: looks[0], frame: 0, frames, error: null };
     jobs.set(m.id, job);
     (async () => {
@@ -1181,17 +1206,65 @@ export async function startServer({
           '--look', look, '--frames', String(frames), '--step', String(STEP), '--res', `${width}x${height}`,
           ...(existsSync(sceneFile) ? ['--scene', sceneFile] : []),
           '--rig', JSON.stringify({ lighting: settings.lighting, glass: settings.glass }),
-          ...lookArg, '--materials', materialsFile,
-          ...plateArg(look),
+          ...lookArg, '--materials', materialsFile, ...poseArg, ...effectArg, ...extrasArg, '--kind', m.kind === 'humanoid' ? 'humanoid' : 'car',
+          ...envArg(look),
           ...(still !== undefined ? ['--still', String(still), '--still-out', path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still))] : []),
         ]);
       }
       job.status = 'done';
+      const first = still !== undefined ? path.join(m.renders.outDir, 'stills', stillName(m.slug, looks[0], still))
+        : path.join(m.renders.outDir, 'frames', looks[0], `${m.slug}_000.png`);
+      if (existsSync(first)) await noteVersion(m, first, still !== undefined ? 'Picture' : 'Spin video');
     })().catch((e) => {
       if (job.status === 'running') job.status = 'failed';
       job.error = e.message;
     });
     return jobView(job);
+  }
+
+  // Shelf items (scene.extras, public/lib/shelf.js) as files on this computer: a bundled prop (/env/…) or another
+  // Library model (/files/<id>/<file>). Anything else is dropped, so a scene can never point Blender elsewhere.
+  function extrasOf(m) {
+    const list = (Array.isArray(m.scene?.extras) ? m.scene.extras : []).flatMap((x) => {
+      const src = decodeURIComponent(String(x?.src || ''));
+      const prop = src.match(/^\/env\/([\w.-]+\.glb)$/);
+      const lib = src.match(/^\/files\/([\w-]+)\/([\w.-]+\.glb)$/);
+      const file = prop ? path.join(envDir, prop[1]) : lib && library.some((x) => x.id === lib[1]) ? path.join(MODELS, lib[1], lib[2]) : null;
+      const at = Array.isArray(x.at) ? x.at.map(Number) : [];
+      if (!file || !existsSync(file) || at.length !== 2 || !at.every(Number.isFinite)) return [];
+      return [{ path: file, group: ['characters', 'cars', 'props'].includes(x.group) ? x.group : 'props', at, turn: Number(x.turn) || 0 }];
+    });
+    return list.length ? ['--extras', JSON.stringify(list)] : [];
+  }
+
+  // ---- Free auto-rig (render/blender_autorig.py): a Mixamo-named skeleton, bound with automatic weights, saved
+  // as a new version (rigged.glb). Humanoids only; Blender runs on this computer, nothing is paid for.
+  const rigJobs = new Map(); // model id → { status, error, version }
+  const rigView = (job) => job && { status: job.status, error: job.error, version: job.version };
+  function startRig(m) {
+    if ((m.kind || 'car') !== 'humanoid') throw new HttpError(409, 'Only humanoids are rigged. Set this model to Humanoid first; cars are never rigged.');
+    const v = active(m);
+    if (v.status !== 'ready' || !v.glb) throw new HttpError(409, 'The model is not ready yet');
+    const bin = findBlender();
+    if (!bin) throw new HttpError(409, 'Auto-rig runs in Blender, which was not found. Install Blender 4.x or locate it in Settings.');
+    if (rigJobs.get(m.id)?.status === 'running') throw new HttpError(409, 'Already rigging this model');
+    const n = Math.max(...m.versions.map((x) => x.n)) + 1;
+    const out = n > 1 ? `rigged-v${n}.glb` : 'rigged.glb';
+    const job = { status: 'running', error: null, version: null };
+    rigJobs.set(m.id, job);
+    runBlender(job, bin, ['-b', '-P', rigScript, '--', '--glb', path.join(MODELS, m.id, v.glb), '--out', path.join(MODELS, m.id, out)])
+      .then(async () => {
+        if (!existsSync(path.join(MODELS, m.id, out))) throw new Error('Blender finished without writing the rigged model');
+        const now = new Date().toISOString();
+        m.versions.push({ n, created_at: now, provider: 'rig', status: 'ready', progress: 100, glb: out, thumb: v.thumb, source: v.source,
+          exports: {}, credits: 0, generation: null, rigged: true, note: `Auto-rigged from version ${v.n} in Blender` });
+        m.activeVersion = n;
+        mirror(m);
+        await save();
+        Object.assign(job, { status: 'done', version: n });
+      })
+      .catch((e) => Object.assign(job, { status: 'failed', error: e.message.replace(/^.*FLATFORM_ERROR /, '') }));
+    return rigView(job);
   }
 
   // ---- Spin sets for Dud Rents (spin.mjs): photo imports, Generate Spin Set, Send to Dud Rents ----
@@ -1327,6 +1400,14 @@ export async function startServer({
     }
     if (area === 'local' && !id && method === 'GET') return send(res, 200, await localView());
     if (area === 'local' && id === 'download' && method === 'POST') { startDownload(); return send(res, 202, await localView()); }
+    // Auto-save: Compose's snapshots, "Restore last session" after a crash, and the recents on the home screen.
+    if (area === 'session') {
+      if (!id && method === 'GET') return send(res, 200, { crashed: session.crashed, last: session.crashed || url.searchParams.has('latest') ? await session.latest() : null, recents: await session.recents() });
+      if (id === 'snapshots' && !sub && method === 'POST') {
+        try { return send(res, 201, await session.snapshot(await readJson(req, 2 * 1024 * 1024))); } catch (e) { throw e.status ? e : new HttpError(400, e.message); }
+      }
+      if (id === 'dismiss' && method === 'POST') { session.dismiss(); return send(res, 200, { crashed: false }); }
+    }
     // Your scene templates ("Save current scene as template"), per workspace, in templates.json.
     if (area === 'templates') {
       const w = /^[a-z0-9][a-z0-9-]{0,39}$/.test(url.searchParams.get('workspace') || '') ? url.searchParams.get('workspace') : 'car';
@@ -1497,9 +1578,22 @@ export async function startServer({
     if (area === 'video' && !id && method === 'POST') {
       try { return send(res, 200, await exportVideo(await readJson(req))); } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(e.status || 500, e.message); }
     }
+    // Flatform Test's checklist: pass/fail per item (public/lib/checklist.js), and the sample models seeded for it.
+    if (area === 'test-checklist' && testMode && !id) {
+      const file = path.join(dataDir, 'test-checklist.json');
+      const results = existsSync(file) ? JSON.parse(await readFile(file, 'utf8')) : {};
+      if (method === 'POST') {
+        const { item, result } = await readJson(req, 4096);
+        if (!CHECK_IDS.includes(item) || !['pass', 'fail', null].includes(result)) throw new HttpError(400, 'Unknown item or result');
+        results[item] = result ? { result, at: new Date().toISOString() } : undefined;
+        await writeAtomic(file, results);
+      }
+      const seedFile = path.join(dataDir, 'test-seed.json');
+      return send(res, 200, { results, seed: existsSync(seedFile) ? JSON.parse(await readFile(seedFile, 'utf8')) : {} });
+    }
     if (area === 'blender' && !id && method === 'GET') {
       const found = findBlender();
-      return send(res, 200, { found: Boolean(found), path: found, configured: settings.blenderPath });
+      return send(res, 200, { found: Boolean(found), path: found, version: await blenderVersion(found), configured: settings.blenderPath });
     }
     // TennoGen: check a texture folder, or check and fix it (renames, resizes).
     if (area === 'poses' && !id && method === 'GET') {
@@ -1511,6 +1605,18 @@ export async function startServer({
         }
       }
       return send(res, 200, loadPoses(files));
+    }
+    // Pose by hand: save a pose to <library>/poses/<id>.json so it lists with the presets. A bundled id gets a
+    // "my-" prefix so it never replaces a built-in pose; saving the same name again replaces your own.
+    if (area === 'poses' && !id && method === 'POST') {
+      const pose = (await readJson(req, 64 * 1024)).pose;
+      const errors = validatePose(pose);
+      if (errors.length || pose.kind !== 'humanoid') throw new HttpError(400, `That pose could not be saved: ${errors[0] || 'not a body pose'}`);
+      if (existsSync(path.join(ROOT, 'public', 'poses', `${pose.id}.json`))) pose.id = `my-${pose.id}`.slice(0, 40);
+      const dir = path.join(dataDir, 'poses');
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, `${pose.id}.json`), JSON.stringify(pose, null, 2));
+      return send(res, 200, { ok: true, pose });
     }
     // Named presets saved by the Sadie tools (camera moves, sky playlists, material sets). One small JSON file
     // per kind in the data folder. POST { name, data } saves or replaces, { name, remove: true } deletes.
@@ -1560,6 +1666,19 @@ export async function startServer({
         return send(res, 200, { ok: true });
       }
       if (sub === 'retry' && method === 'POST') return send(res, 200, await retry(m));
+      if (sub === 'history' && !extra && method === 'GET') return send(res, 200, await history.list(m.id));
+      if (sub === 'history' && extra && method === 'POST') { // put a version's settings back: the scene, light rig and glass
+        const v = (await history.list(m.id)).find((x) => String(x.n) === extra);
+        if (!v) throw new HttpError(404, 'No such version');
+        m.scene = structuredClone(v.settings.scene || {});
+        await writeAtomic(path.join(MODELS, m.id, 'scene.json'), m.scene);
+        await save();
+        const rig = Object.fromEntries(['lighting', 'glass'].filter((k) => v.settings[k]).map((k) => [k, v.settings[k]]));
+        const s = Object.keys(rig).length ? await saveSettings(rig) : settingsView();
+        return send(res, 200, { model: m, settings: s });
+      }
+      if (sub === 'rig' && method === 'POST') return send(res, 202, startRig(m));
+      if (sub === 'rig' && method === 'GET') return send(res, 200, rigView(rigJobs.get(id)) ?? null);
       if (sub === 'versions' && method === 'POST') return send(res, 201, await addVersion(req, m));
       if (sub === 'enhance' && method === 'POST') return send(res, 202, await startEnhance(m, (await readJson(req)).kind));
       if (sub === 'enhance' && method === 'GET') { await once(`${id}:enhance`, () => refreshEnhance(m)); return send(res, 200, active(m).enhance ?? null); }
@@ -1570,12 +1689,23 @@ export async function startServer({
       }
     }
 
-    // Share links: mock links until the share worker is deployed (share-worker/README.md). Nothing uploads from here.
+    // Share links: mock links until the share Worker is deployed and set up (SHARE-DEPLOY.md); then links upload to it.
     if (area === 'shares') {
+      if (id === 'setup' && method === 'GET') return send(res, 200, { ready: shares.ready(), url: shareRemote()?.url || null });
+      if (id === 'setup' && method === 'POST') {
+        const body = await readJson(req);
+        let url;
+        try { url = cleanShareUrl(body.url); } catch (e) { throw new HttpError(400, e.message); }
+        const token = String(body.token ?? '').trim();
+        if (token.length < 16) throw new HttpError(400, 'The share password is the long SHARE_TOKEN from setting up the share page (16 characters or more)');
+        keyStore.set('cloudflare', JSON.stringify({ workerUrl: url, adminToken: token }));
+        return send(res, 200, { ready: true, url });
+      }
+      if (id === 'setup' && method === 'DELETE') { keyStore.remove('cloudflare'); return send(res, 200, { ready: false, url: null }); }
       if (!id && method === 'GET') return send(res, 200, await shares.list());
-      if (!id && method === 'POST') { try { return send(res, 201, await shares.create(await readJson(req))); } catch (e) { throw new HttpError(400, e.message); } }
-      if (id && method === 'PATCH') { const s = await shares.setExpiry(id, (await readJson(req)).expiresInDays ?? null); if (!s) throw new HttpError(404, 'No such link'); return send(res, 200, s); }
-      if (id && method === 'DELETE') return send(res, 200, { ok: await shares.remove(id) });
+      if (!id && method === 'POST') { try { return send(res, 201, await shares.create(await readJson(req))); } catch (e) { throw new HttpError(/^Could not make the link/.test(e.message) ? 502 : 400, e.message); } }
+      if (id && method === 'PATCH') { const s = await shares.setExpiry(id, (await readJson(req)).expiresInDays ?? null).catch((e) => { throw new HttpError(502, e.message); }); if (!s) throw new HttpError(404, 'No such link'); return send(res, 200, s); }
+      if (id && method === 'DELETE') return send(res, 200, { ok: await shares.remove(id).catch((e) => { throw new HttpError(502, e.message); }) });
     }
     if (area === 'identify' && !id && method === 'POST') return send(res, 200, await identify(await readJson(req, 64 * 1024)));
     if (area === 'spin') {
@@ -1641,9 +1771,10 @@ export async function startServer({
     ai.limiter.stop();
     updater.stop();
     localInst?.stop?.(); // the TRELLIS service closes with the app
+    session.markClean();
     return new Promise((ok) => server.close(ok));
   };
-  return { server, port: server.address().port, close };
+  return { server, port: server.address().port, close, markClean: session.markClean };
 }
 
 // The app with workspaces: dataDir is the base folder; each workspace runs the server on its own folder.
@@ -1662,7 +1793,7 @@ export async function startApp(opts) {
     await boot(port);
   }
   await boot(opts.port || 0);
-  return { get port() { return cur.port; }, get server() { return cur.server; }, close: () => cur.close(), workspaces };
+  return { get port() { return cur.port; }, get server() { return cur.server; }, close: () => cur.close(), markClean: () => cur.markClean(), workspaces };
 }
 
 // `node server.mjs`: browser version, keys from TRIPO_API_KEY and THREE_D_AI_STUDIO_KEY.
