@@ -1,15 +1,22 @@
 // Compose: the scene composer, and the model's own panel (versions, approve, regenerate, clean up; this used to be
 // the Review step). One Three.js studio, the scene presets (Showroom first), an inspector and a turntable timeline.
 // The scene is saved per model (scene.json next to the model) so a render reproduces it exactly.
-import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy, setupFor, engineLabel } from '../app.js';
+import { createHistory, isUndo, isRedo } from '../lib/history.js';
+import { dimensions, gridSpec, REFERENCES } from '../lib/grid.js';
+import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy, setupFor, engineLabel, activeWorkspace } from '../app.js';
 import { icon } from '../lib/icons.js';
 import { FRAMES, HALF, STEP, pad3, LOOKS, PLATES } from '../lib/pipeline.js';
 import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf } from '../lib/studio.js';
+import { initMotion, renderMotionGroup, onMotionClick, onMotionInput, onMotionChange, stopMotion } from './compose-motion.js';
+import { initPaint, renderPaintGroups, afterRender, onPaintClick, onPaintInput, onPaintChange, selectPiece } from './compose-paint.js';
 
 let root;
 let m;
 let studio;
 let scene;
+const hist = createHistory();
+let lastPush = 0;
+let gridOn = false;
 let frame = 0;
 let mode = 360;
 let tool = 'turn';
@@ -33,7 +40,9 @@ export async function mount(el, { id }) {
     el.innerHTML = `${stepper('compose', m)}<p class="muted">${m ? 'This model is not ready yet.' : 'Pick a model from the library first.'} <a class="link" href="${m ? `#/generate/${m.id}` : '#/library'}">${m ? 'Show progress' : 'Open library'}</a></p>`;
     return;
   }
-  scene = { ...defaultScene(state.settings), ...m.scene };
+  scene = { ...defaultScene(state.settings), ...(activeWorkspace()?.camera === 'free' && { view: 'free' }), ...m.scene }; // Warframe workspaces start in free roam
+  initPaint({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
+  initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   el.innerHTML = `
   <div class="comp-top">${stepper('compose', m)}
     <div class="ctop-act">
@@ -54,6 +63,7 @@ export async function mount(el, { id }) {
         <div class="hud h1" id="hudScene"></div>
         <div class="hud h2" id="hudCam"></div>
         <div class="hud h3" id="hudLook"></div>
+        <div class="hud dims" id="hudDims" hidden></div>
         <div class="hud msg" id="hudMsg" role="status">Loading model…</div>
         <div class="vtool" role="toolbar" aria-label="Viewport tools">
           <button class="vt" type="button" data-tool="move" aria-pressed="false" title="Move the car" aria-label="Move the car">${icon('move')}</button>
@@ -83,10 +93,16 @@ export async function mount(el, { id }) {
         <button class="chip" type="button" data-jump="grp-camera">Camera</button>
         <button class="chip" type="button" data-jump="grp-light">Light</button>
         <button class="chip" type="button" data-jump="grp-ground">Ground</button>
+        <button class="chip" type="button" data-jump="grp-parts">Parts</button>
+        <button class="chip" type="button" data-jump="grp-color">Color</button>
+        <button class="chip" type="button" data-jump="grp-material">Material</button>
+        <button class="chip" type="button" data-jump="grp-scene">Scene</button>
+        <button class="chip" type="button" data-jump="grp-export">Export</button>
       </div>
       <div id="modelGroup"></div>
       <div id="inspector"></div>
       <input type="file" id="betterPhoto" accept="image/png,image/jpeg,image/heic,image/heif,.heic,.heif" hidden>
+      <input type="file" id="lookFile" hidden>
     </aside>
   </section>`;
 
@@ -131,6 +147,9 @@ function onOrbit(orbit, settled) {
 }
 
 export function unmount() {
+  hist.clear();
+  gridOn = false;
+  stopMotion();
   stop();
   observer?.disconnect();
   cancelAnimationFrame(raf);
@@ -156,6 +175,10 @@ function draw() {
     studio.render();
     const f = studio.frameRect;
     Object.assign($('#safe', root).style, { left: `${f.x + 6}px`, top: `${f.y + 6}px`, width: `${f.width - 12}px`, height: `${f.height - 12}px` });
+    if (studio.tracing && !studio.pt?.done) { // progressive path tracing: one sample per frame until done
+      $('#hudLook', root).textContent = `Path traced · ${studio.samples} samples`;
+      draw();
+    }
   });
   renderHud();
 }
@@ -180,7 +203,11 @@ function save() {
   send(`/api/models/${m.id}`, 'PATCH', { scene }).then(upsert).catch((e) => toast(e.message));
 }
 
-async function change(next, { inspector = true } = {}) {
+async function change(next, { inspector = true, fromHistory = false } = {}) {
+  if (!fromHistory && Object.keys(next).length) {
+    if (Date.now() - lastPush > 600) hist.push(scene, Object.keys(next).join(', ')); // one step per burst (a slider drag)
+    lastPush = Date.now();
+  }
   Object.assign(scene, next);
   if (studio) {
     await studio.setState(scene);
@@ -192,6 +219,25 @@ async function change(next, { inspector = true } = {}) {
   if ('autoOrient' in next || 'center' in next) renderModel();
   renderScenes();
   draw();
+  if (gridOn) renderGrid();
+}
+
+async function stepHistory(redo) {
+  const prev = redo ? hist.redo(scene) : hist.undo(scene);
+  if (!prev) return toast(redo ? 'Nothing to redo' : 'Nothing to undo', 'info');
+  for (const k of Object.keys(scene)) if (!(k in prev)) delete scene[k];
+  lastPush = 0;
+  await change(prev, { fromHistory: true });
+  renderGrid();
+}
+const gridUnit = () => state.settings?.gridUnit || 'm';
+function renderGrid() {
+  if (!studio) return;
+  const size = studio.modelSize();
+  if (gridOn && size) studio.setGrid(true, { ...gridSpec(size, gridUnit()), refs: [REFERENCES.human, REFERENCES.car] });
+  else studio.setGrid(false);
+  const el = $('#hudDims', root);
+  if (el) { el.hidden = !gridOn || !size; el.textContent = size ? dimensions(size, gridUnit()).text : ''; }
 }
 
 function frameAll() {
@@ -306,10 +352,17 @@ function renderInspector() {
       ${toggle('matchLighting', 'Match lighting to scene', 'Key, fill and rim follow the studio', s.matchLighting)}
       ${s.matchLighting ? '' : `<div class="lights">${slider('key', 'Key', 0, 3, 0.1, s.key, valueText.key(s.key))}${slider('fill', 'Fill', 0, 3, 0.1, s.fill, valueText.fill(s.fill))}${slider('rim', 'Rim', 0, 3, 0.1, s.rim, valueText.rim(s.rim))}</div>`}
     </div>
+    <div class="grp" id="grp-grid"><h3>Reference grid</h3>
+      <label class="tg"><span>Show grid and scale<small>Person 1.8 m and car 4.5 m for size. Not rendered.</small></span><input class="sw" type="checkbox" role="switch" data-grid="on" ${gridOn ? 'checked' : ''}></label>
+      <div class="chips seg sm" role="radiogroup" aria-label="Units">${[['m', 'Meters'], ['ft', 'Feet']].map(([k, l]) => `<button class="chip" type="button" role="radio" data-unit="${k}" aria-checked="${gridUnit() === k}">${l}</button>`).join('')}</div>
+      <div class="mg-row"><button class="btn sm ghostbtn" type="button" data-act="undo" ${hist.canUndo ? '' : 'disabled'} title="Ctrl+Z">Undo</button><button class="btn sm ghostbtn" type="button" data-act="redo" ${hist.canRedo ? '' : 'disabled'} title="Ctrl+Shift+Z">Redo</button></div>
+      ${hist.canUndo ? `<ol class="histlist fine">${hist.list().slice(0, 8).map((h) => `<li>${esc(h.label)}</li>`).join('')}</ol>` : ''}
+    </div>
     <div class="grp" id="grp-ground"><h3>Ground</h3>
       ${slider('reflection', 'Reflection', 0, 1, 0.01, s.reflection, hasFloor() ? level(s.reflection) : 'n/a', !hasFloor())}
       ${slider('shadow', 'Shadow', 0, 1, 0.01, s.shadow, softness(s.shadow))}
-    </div>`;
+    </div>${renderMotionGroup()}${renderPaintGroups()}`;
+  afterRender();
 }
 
 // The model itself: versions, approve, regenerate and clean up (what the Review step used to hold).
@@ -365,6 +418,8 @@ function bind() {
   el.addEventListener('click', async (e) => {
     const t = e.target.closest('button');
     if (!t) return;
+    if (await onMotionClick(t)) return;
+    if (await onPaintClick(t)) return;
     if (t.dataset.render) { state.renderIntent = t.dataset.render; location.hash = `#/render/${m.id}`; }
     if (t.dataset.version) {
       try { m = upsert(await send(`/api/models/${m.id}`, 'PATCH', { activeVersion: Number(t.dataset.version) })); } catch (err) { return toast(err.message); }
@@ -409,6 +464,8 @@ function bind() {
     if (t.id === 'play') play();
   });
   el.addEventListener('input', (e) => {
+    if (onMotionInput(e.target)) return;
+    if (onPaintInput(e.target)) return;
     const k = e.target.dataset.key;
     if (!k || e.target.type !== 'range') return;
     const v = Number(e.target.value);
@@ -416,7 +473,9 @@ function bind() {
     $(`#v-${k}`, el).textContent = k === 'reflection' && !hasFloor() ? 'n/a' : valueText[k](v);
     change({ [k]: v }, { inspector: false });
   });
-  el.addEventListener('change', (e) => {
+  el.addEventListener('change', async (e) => {
+    if (await onMotionChange(e.target)) return;
+    if (await onPaintChange(e.target)) return;
     const k = e.target.dataset.key;
     if (k && e.target.type === 'checkbox') change({ [k]: e.target.checked, ...(k === 'sameSize' && e.target.checked && { scale: 1 }), ...(k === 'center' && { snap: e.target.checked }) });
     if (e.target.id === 'betterPhoto' && e.target.files[0]) {
@@ -460,6 +519,20 @@ function bind() {
   };
   ticks.addEventListener('keydown', keys);
 
+  // Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y): undo and redo scene edits, except while typing in a text field.
+  el.addEventListener('keydown', (e) => {
+    if (e.target.closest('input[type=text], input[type=search], textarea')) return;
+    if (isUndo(e)) { e.preventDefault(); stepHistory(false); } else if (isRedo(e)) { e.preventDefault(); stepHistory(true); }
+  });
+  // Grid controls live in the inspector.
+  el.addEventListener('click', async (e) => {
+    const u = e.target.closest('[data-unit]');
+    if (u) { try { state.settings = await send('/api/settings', 'POST', { gridUnit: u.dataset.unit }); } catch (err) { toast(err.message); } renderInspector(); renderGrid(); }
+    const a = e.target.closest('[data-act="undo"], [data-act="redo"]');
+    if (a) stepHistory(a.dataset.act === 'redo');
+  });
+  el.addEventListener('change', (e) => { if (e.target.dataset.grid) { gridOn = e.target.checked; renderGrid(); } });
+
   // F frames the whole model, anywhere on the screen but in a text field.
   el.addEventListener('keydown', (e) => {
     if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest('input, textarea, select')) { e.preventDefault(); frameAll(); }
@@ -482,4 +555,13 @@ function bind() {
     }
   });
   cv.addEventListener('pointerup', () => { drag = null; });
+  // A click (not a drag) on the model picks that piece for the Parts, Color and Material groups.
+  let down = null;
+  cv.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; }, true);
+  cv.addEventListener('click', (e) => {
+    if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4 || !studio?.model) return;
+    const r = cv.getBoundingClientRect();
+    const key = studio.pick(e.clientX - r.left, e.clientY - r.top);
+    if (key) { selectPiece(key); $('#grp-parts', el)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+  });
 }

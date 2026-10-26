@@ -7,7 +7,8 @@ import path from 'node:path';
 
 // vision: the optional car auto-identify API key. cloudflare: the share-link credentials as one JSON string
 // ({ accountId, accessKeyId, secretAccessKey, bucket, workerUrl, adminToken }), see share.mjs.
-export const KEY_ENV = { tripo: 'TRIPO_API_KEY', '3daistudio': 'THREE_D_AI_STUDIO_KEY', vision: 'FLATFORM_VISION_KEY', cloudflare: 'FLATFORM_CLOUDFLARE_JSON' };
+// anthropic: the car material inference's vision model.
+export const KEY_ENV = { tripo: 'TRIPO_API_KEY', '3daistudio': 'THREE_D_AI_STUDIO_KEY', vision: 'FLATFORM_VISION_KEY', cloudflare: 'FLATFORM_CLOUDFLARE_JSON', anthropic: 'ANTHROPIC_API_KEY' };
 const LEGACY = { tripo: 'tripo-key.bin' }; // where v0.3 and earlier kept the Tripo key
 
 /**
