@@ -13,7 +13,7 @@ const STEP_OF = { drop: 'photo', warframe: 'photo', setup: 'model', generate: 'm
 export const stepOf = (screen) => STEP_OF[screen] || null;
 
 // Screens that open as a sheet over the stage (Esc or ✕ closes them and goes back to the step you were on).
-export const SHEETS = { library: 'Library', model: 'Library', settings: 'Settings', share: 'Share links', usage: 'Usage' };
+export const SHEETS = { library: 'Library', model: 'Library', settings: 'Settings', share: 'Share links', history: 'Version history', usage: 'Usage', test: 'Test checklist' };
 export const isSheet = (screen) => screen in SHEETS;
 
 /** The trail for a screen. hrefs: { photo, model, scene, finish } links (app.js works them out from the library). */
@@ -36,7 +36,7 @@ const SCENE_TOOLS = (humanoid) => [
 export function dockFor(step, { humanoid = false } = {}) {
   if (step === 'scene') return SCENE_TOOLS(humanoid);
   if (step === 'model') return [['recipe', 'settings', 'Recipe', 'Preset, engine and fine-tune, with the cost'], ['photos', 'image', 'Photos', 'One photo, or front, side and back']];
-  if (step === 'finish') return [['check', 'check', 'Check', 'Check before export and fix what it finds'], ['compare', 'eye', 'Compare', 'Before and after'], ['share', 'external', 'Share', 'Send a link or show a client']];
+  if (step === 'finish') return [['check', 'check', 'Check', 'Check before export and fix what it finds'], ['compare', 'eye', 'Compare', 'Before and after'], ['history', 'retry', 'History', 'Every render of this model, with a before-and-after slider (V)'], ['share', 'external', 'Share', 'Send a link or show a client']];
   return [];
 }
 export const DEFAULT_TOOL = { scene: 'world', model: 'recipe', finish: 'check' };

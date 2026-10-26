@@ -85,12 +85,12 @@ export function mountRender(el, model, h = {}) {
   if (intent) requestAnimationFrame(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }));
 }
 
-// 'still' or 'turntable' (the S and T keys, Library's Render): pick Picture or Spin video.
+// 'still' or 'turntable' (the R and T keys, Library's Render): pick Picture or Spin video.
 function pickIntent(intent) {
   if (intent === 'still') { Object.assign(opts, { still: true, t360: false, t180: false }); pick = { type: 'picture', option: null, extras: {} }; }
   if (intent === 'turntable') { Object.assign(opts, { t360: true, t180: true }); pick = { type: 'spin', option: 'full', extras: {} }; }
 }
-/** The S and T keys in Compose: pick a still or a turntable and bring the Render button into view. */
+/** The R and T keys in Compose: pick a still or a turntable and bring the Render button into view. */
 export function showRenderIntent(intent) {
   if (!root?.isConnected || !opts) return;
   pickIntent(intent);
@@ -468,7 +468,7 @@ function sceneFor(model, look) {
   const s = { ...defaultScene(state.settings), ...model.scene };
   if (look === 'transparent') return { ...s, preset: 'transparent' };
   if (look === 'showroom') return { ...s, preset: 'showroom', backdrop: null };
-  if (s.preset === 'transparent') return { ...s, preset: state.settings?.defaultScene && state.settings.defaultScene !== 'transparent' ? state.settings.defaultScene : 'cyclorama', backdrop: null };
+  if (s.preset === 'transparent') return { ...s, preset: state.settings?.defaultScene && state.settings.defaultScene !== 'transparent' ? state.settings.defaultScene : 'white-cyc-studio', backdrop: null };
   return s;
 }
 // Draws frames into the web sprite sheets as they arrive (lib/sheets.js), in Flatform's own web/ layout.

@@ -2,7 +2,7 @@
 
     blender -b -P blender_turntable.py -- --glb car.glb --out frames/studio --slug audi-r8 --look studio \
         --frames 72 --step 5 --res 2048x1536 [--scene scene.json] [--rig '{"lighting": {...}, "glass": {...}}']
-        [--still 30 --still-out stills/x.png]
+        [--still 30 --still-out stills/x.png] [--pose '{"bones": {"LeftArm": [0, 0, -45]}, "retarget": {...}}']
 
 Builds the Escalade ring studio, a 3D environment (public/lib/environments.js, passed as --environment) or the
 transparent look in code, normalises and frames the car
@@ -90,6 +90,8 @@ def parse_args():
     p.add_argument("--report-bones", action="store_true")  # tests: print each posed bone's head
     # Render ideas (public/lib/render-types.js): {"explode": 0..1 of the model's size, "override": "clay" | "blueprint"}
     p.add_argument("--effect")
+    p.add_argument("--extras")  # shelf items (studio.js applyExtras): [{ path, group, at: [x, z], turn }]
+    p.add_argument("--kind", choices=["car", "humanoid"], default="car")  # the model's kind: a humanoid is never auto-turned
     return p.parse_args(argv)
 
 
@@ -305,7 +307,8 @@ def import_car(path, s):
     for o in imported:
         if o.parent is None:
             o.parent = model
-    meshes = [o for o in imported if o.type == "MESH"]
+    # Visible meshes only: Blender's glTF importer adds a hidden "Icosphere" as the bones' display shape.
+    meshes = [o for o in imported if o.type == "MESH" and o.visible_get()]
 
     def bounds():
         bpy.context.view_layer.update()
@@ -316,7 +319,7 @@ def import_car(path, s):
 
     lo, hi = bounds()
     size = hi - lo
-    if s["autoOrient"] and size.x > size.y:
+    if s["autoOrient"] and s.get("kind") != "humanoid" and size.x > size.y:
         model.rotation_euler.z = -math.pi / 2  # Tripo: along X, nose on +X; turn the nose to -Y, the camera
     if s["flip"]:
         model.rotation_euler.z += math.pi
@@ -536,7 +539,7 @@ def apply_look(look, meshes):
         env = nt.nodes.new("ShaderNodeTexEnvironment")
         env.image = bpy.data.images.load(hdri["path"])
         mapping = nt.nodes.new("ShaderNodeMapping")
-        mapping.inputs["Rotation"].default_value = (0, 0, math.radians(hdri.get("rotation", 0)))
+        mapping.inputs["Rotation"].default_value = (0, 0, -math.radians(hdri.get("rotation", 0)))  # minus: Mapping turns the lookup
         coord = nt.nodes.new("ShaderNodeTexCoord")
         nt.links.new(coord.outputs["Generated"], mapping.inputs["Vector"])
         nt.links.new(mapping.outputs["Vector"], env.inputs["Vector"])
@@ -582,6 +585,35 @@ AREA_W = 15.0  # three.js RectAreaLight intensity per m² -> Blender watts. pony
 EMIT_W = 4.0  # three.js emissive multiplier -> Blender emission strength (same hand match as the old showroom)
 SKY_STRENGTH = 0.15  # Blender's physical Sky Texture is far brighter than the app's suns; this keeps them in step
 TO_BLENDER = Matrix(((1, 0, 0), (0, 0, -1), (0, 1, 0)))  # Flatform's Y-up (x, y, z) is Blender's (x, -z, y)
+
+
+def build_extras(extras):
+    """Shelf items, as studio.js applyExtras: a person 1.8 m tall, a car CAR_LENGTH long, a prop at its own size,
+    centred on its floor spot (app metres [x, z]) and standing on the floor."""
+    for i, x in enumerate(extras):
+        if not os.path.exists(x.get("path") or ""):
+            continue
+        before = set(bpy.data.objects)
+        bpy.ops.import_scene.gltf(filepath=x["path"])
+        imported = set(bpy.data.objects) - before
+        root = bpy.data.objects.new(f"extra {i}", None)
+        bpy.context.scene.collection.objects.link(root)
+        for o in imported:
+            if o.parent is None:
+                o.parent = root
+        bpy.context.view_layer.update()
+        pts = [o.matrix_world @ Vector(c) for o in imported if o.type == "MESH" and o.visible_get() for c in o.bound_box]
+        if not pts:
+            continue
+        lo = Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts)))
+        hi = Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts)))
+        size = hi - lo
+        k = 1.8 / max(size.z, 1e-6) if x.get("group") == "characters" else CAR_LENGTH / max(size.x, size.y, 1e-6) if x.get("group") == "cars" else 1.0
+        for o in root.children:
+            o.location -= Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z))
+        root.scale = (k, k, k)
+        root.location = bl([x["at"][0], 0, x["at"][1]])
+        root.rotation_euler.z = math.radians(x.get("turn", 0))
 
 
 def bl(v):
@@ -671,8 +703,8 @@ def env_world(sky, reflect):
     if sky.get("path") and os.path.exists(sky["path"]):
         env = nt.nodes.new("ShaderNodeTexEnvironment")
         env.image = bpy.data.images.load(sky["path"])
-        mapping = nt.nodes.new("ShaderNodeMapping")
-        mapping.inputs["Rotation"].default_value = (0, 0, math.radians(sky.get("rotation", 0)))
+        mapping = nt.nodes.new("ShaderNodeMapping")  # turns the lookup, so minus three.js's turn (skyRotation)
+        mapping.inputs["Rotation"].default_value = (0, 0, -math.radians(sky.get("rotation", 0)))
         coord = nt.nodes.new("ShaderNodeTexCoord")
         nt.links.new(coord.outputs["Generated"], mapping.inputs["Vector"])
         nt.links.new(mapping.outputs["Vector"], env.inputs["Vector"])
@@ -711,6 +743,56 @@ def env_world(sky, reflect):
         nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
 
 
+def rain_drops(rain):
+    """environments.js rainDrops: the same streak starts from the same mulberry32 seed (32-bit integer maths)."""
+    a = 0x9E3779B9
+    m = 0xFFFFFFFF
+
+    def imul(x, y):
+        return (x * y) & m
+
+    def rand():
+        nonlocal a
+        a = (a + 0x6D2B79F5) & m
+        t = imul(a ^ (a >> 15), 1 | a)
+        t = ((t + imul(t ^ (t >> 7), 61 | t)) & m) ^ t
+        return ((t ^ (t >> 14)) & m) / 4294967296
+
+    w, h, d = rain["box"]
+    return [[(rand() - 0.5) * w, rand() * h, (rand() - 0.5) * d] for _ in range(rain["drops"])]
+
+
+def build_rain(rain):
+    """env3d.js buildRain, frozen at t = 0: every streak a thin crossed pair of quads, faintly lit and see-through."""
+    verts, faces, half, n = [], [], 0.004, 0
+    for x, y, z in rain_drops(rain):
+        for dx, dz in ((half, 0), (0, half)):
+            for py in (y, y + rain["length"]):
+                verts += [bl((x - dx, py, z - dz)), bl((x + dx, py, z + dz))]
+            faces.append((n, n + 1, n + 3, n + 2))
+            n += 4
+    mesh = bpy.data.meshes.new("rain")
+    mesh.from_pydata(verts, [], faces)
+    obj = bpy.data.objects.new("rain", mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    mat = bpy.data.materials.new("rain")
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+    em = nt.nodes.new("ShaderNodeEmission")
+    em.inputs["Color"].default_value = (*hex_linear(rain["color"]), 1)
+    em.inputs["Strength"].default_value = 1.5
+    clear = nt.nodes.new("ShaderNodeBsdfTransparent")
+    mix = nt.nodes.new("ShaderNodeMixShader")
+    mix.inputs["Fac"].default_value = rain["opacity"]
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    nt.links.new(clear.outputs["BSDF"], mix.inputs[1])
+    nt.links.new(em.outputs["Emission"], mix.inputs[2])
+    nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
+    obj.data.materials.append(mat)
+    env_object("rain", obj)
+
+
 def build_environment(env):
     """A 3D environment (public/lib/environments.js) around the car, part for part as public/lib/env3d.js builds
     it, lit like studio.js buildEnv: the place's own area lights plus key, fill and rim suns matched to it."""
@@ -729,9 +811,10 @@ def build_environment(env):
                 continue
             before = set(bpy.context.scene.objects)
             bpy.ops.import_scene.gltf(filepath=p["path"])
+            imported = set(bpy.context.scene.objects) - before  # before root exists, or root would parent itself
             root = bpy.data.objects.new(f"env glb {i}", None)
             bpy.context.scene.collection.objects.link(root)
-            for o in set(bpy.context.scene.objects) - before:
+            for o in imported:
                 if o.parent is None:
                     o.parent = root
                 o.name = f"env {o.name}"  # hidden with the rest when a place HDRI shows (grounded_dome)
@@ -755,6 +838,8 @@ def build_environment(env):
             obj = bpy.context.active_object
         obj.data.materials.append(mats[p["mat"]])
         env_object(f"{p['mat']} {i}", obj, p.get("rot"))
+    if env.get("rain"):
+        build_rain(env["rain"])
     for i, l in enumerate(env["lights"]):
         w, h = l["area"]
         a = light("AREA", f"env light {i}", bl(l["at"]), l["power"] * w * h * AREA_W, size=(w, h), target=bl(l["aim"]), color=hex_linear(l["color"]))
@@ -779,7 +864,7 @@ def grounded_dome(path, height, radius, rotation, strength):
     nt.nodes.clear()
     coord = nt.nodes.new("ShaderNodeTexCoord")
     mapping = nt.nodes.new("ShaderNodeMapping")  # the same turn as the world HDRI in apply_look
-    mapping.inputs["Rotation"].default_value = (0, 0, math.radians(rotation))
+    mapping.inputs["Rotation"].default_value = (0, 0, -math.radians(rotation))
     env = nt.nodes.new("ShaderNodeTexEnvironment")
     env.image = bpy.data.images.load(path)
     em = nt.nodes.new("ShaderNodeEmission")
@@ -793,6 +878,15 @@ def grounded_dome(path, height, radius, rotation, strength):
     for o in bpy.context.scene.objects:
         if o.name.startswith("env ") and o.type != "LIGHT":
             o.hide_render = True
+
+
+REAL_SIZE = {"car": 4.6, "humanoid": 1.8}  # environments.js envScale: a car's length, a person's height (m)
+
+
+def env_scale(size, kind):
+    """environments.js envScale. size is Blender's (x, y, z = height) of the normalised model."""
+    s = size.z / REAL_SIZE["humanoid"] if kind == "humanoid" else max(size.x, size.y) / REAL_SIZE["car"]
+    return min(4.0, max(0.25, s)) if s > 0 else 1.0
 
 
 def env_lighting(lighting, sun):
@@ -1033,6 +1127,7 @@ def render_to(path):
 def main():
     args = parse_args()
     s = dict(DEFAULTS)
+    s["kind"] = args.kind
     if args.scene and os.path.exists(args.scene):
         with open(args.scene, encoding="utf-8") as f:
             s.update({k: v for k, v in json.load(f).items() if k in DEFAULTS})
@@ -1044,22 +1139,39 @@ def main():
     effect = json.loads(args.effect) if args.effect else {}
     blueprint = effect.get("override") == "blueprint"
     env = json.loads(args.environment) if args.environment and args.look != "transparent" and not blueprint else None
+    extras = json.loads(args.extras) if args.extras else []
+    # The model first: the place is built round it and scaled to it.
+    pivot, meshes, size, sphere = import_car(args.glb, s)
+    if args.pose:  # after normalising, like studio.js applyModel, so the model is placed exactly as in the app
+        arms = apply_pose(args.glb, json.loads(args.pose), pivot)
+        if s["snap"]:  # the posed body back on the floor, as studio.js
+            deps = bpy.context.evaluated_depsgraph_get()
+            low = min((o.evaluated_get(deps).matrix_world @ v.co).z for o in meshes for v in o.evaluated_get(deps).data.vertices)
+            pivot.children[0].location.z -= low
+            bpy.context.view_layer.update()
+        if args.report_bones:
+            report_bones(arms, pivot.children[0])
     if blueprint:
         world(1.0, hex_linear(BLUEPRINT))
+        build_extras(extras)
     elif args.look == "transparent":
         build_transparent()
+        build_extras(extras)
     elif env:
+        before = set(bpy.data.objects)
         build_environment(env)
+        build_extras(extras)  # in the place's real-world metres, so scaled with it
+        k = env_scale(size, args.kind)
+        for o in set(bpy.data.objects) - before:
+            if o.parent is None and o.name not in ("key", "fill", "rim"):
+                o.location *= k
+                o.scale *= k
         lighting = env_lighting(lighting, env["light"]["sun"])
     else:
         build_ring_studio(float(s["reflection"]))
+        build_extras(extras)
     if not blueprint:  # blueprint is all flat emission: no lights to set
         apply_rig(lighting)
-    pivot, meshes, size, sphere = import_car(args.glb, s)
-    if args.pose:
-        arms = apply_pose(args.glb, json.loads(args.pose), pivot)
-        if args.report_bones:
-            report_bones(arms, pivot.children[0])
     apply_glass(meshes, glass)
     if args.materials and os.path.exists(args.materials):
         with open(args.materials, encoding="utf-8") as f:
@@ -1081,7 +1193,8 @@ def main():
     elif s["view"] == "free" and s["orbit"]:
         free_camera(s)
     elif env:
-        env_camera(env["camera"], width / height, s, sphere)
+        tall = args.kind == "humanoid" or not is_car_shape(size)  # always "Frame all", as studio.js
+        env_camera(env["camera"], width / height, {**s, "fit": "all"} if tall else s, sphere)
     else:
         place_camera(s, args.look, size, sphere)
     os.makedirs(args.out, exist_ok=True)

@@ -475,7 +475,12 @@ function renderFrame() {
     const html = `<span class="dot ${low ? 'low' : l.ok ? 'ok' : l.ok == null ? 'wait' : ''}"></span><span class="tb-l">${esc(label)}</span>`;
     if (el.innerHTML !== html) el.innerHTML = html;
   }
-  $('#appVersion').textContent = state.settings ? `Version ${displayVersion(state.settings.version)}` : '';
+  const test = Boolean(state.settings?.testMode); // Flatform Test (mock services, its own data)
+  $('#testBtn').hidden = !test;
+  if (test) document.title = 'Flatform Test';
+  const hm = focusModel();
+  $('#historyBtn').href = hm ? `#/history/${hm.id}` : '#/history';
+  $('#appVersion').textContent = state.settings ? `${test ? 'Flatform Test · mocks · ' : ''}Version ${displayVersion(state.settings.version)}` : '';
 }
 
 // The dock: the tools for the step on screen. A screen with an onDock(id) handles the pick (Scene shows that tool's
@@ -493,7 +498,7 @@ function renderDock() {
 export function pickDock(id) {
   const step = stepOf(route.name);
   if (!step) return;
-  if (id === 'share') { const m = focusModel(); return go(m ? `#/share/${m.id}` : '#/share'); }
+  if (id === 'share' || id === 'history') { const m = focusModel(); return go(m ? `#/${id}/${m.id}` : `#/${id}`); }
   state.tool[step] = id;
   renderDock();
   if (current?.onDock) return current.onDock(id);
@@ -527,13 +532,13 @@ export function setRenderLight(l, modelId) {
   else if (was === 'busy') renderFrame();
   if (l.light === 'done' && was !== 'done') {
     document.title = '✓ Render done · Flatform';
-    setTimeout(() => { document.title = 'Flatform'; }, 8000);
+    setTimeout(() => { document.title = state.settings?.testMode ? 'Flatform Test' : 'Flatform'; }, 8000);
     if (globalThis.Notification?.permission === 'granted') new Notification('Flatform: render finished', { body: l.text, silent: true });
   }
 }
 
 // ---- routing ----
-const SCREENS = ['drop', 'setup', 'generate', 'compose', 'library', 'model', 'settings', 'warframe', 'spin', 'preview', 'finish', 'share', 'usage'];
+const SCREENS = ['drop', 'setup', 'generate', 'compose', 'library', 'model', 'settings', 'warframe', 'spin', 'preview', 'finish', 'share', 'history', 'usage', 'test'];
 export let route = { name: 'drop', id: null };
 let current = null;
 let navToken = 0;
@@ -801,6 +806,8 @@ function paletteCommands() {
       if (state.presenting) return;
       if (id === 'palette') return palette.open();
       const m = (route.id && findModel(route.id)) || focusModel();
+      if (id === 'shelf') { const on = state.tool.scene === 'world'; pickDock('world'); return (await import('./views/compose.js')).toggleShelf(on ? undefined : 'shelf'); }
+      if (id === 'share' || id === 'history') return go(m ? `#/${id}/${m.id}` : `#/${id}`);
       if (!m) return toast('Pick a model first.', 'info');
       if (id === 'still' || id === 'turntable') { pickDock('render'); return (await import('./views/compose-render.js')).showRenderIntent(id); }
       go(`#/${id === 'preview' ? 'preview' : 'finish'}/${m.id}`);

@@ -2,7 +2,7 @@
 // so the place turns with the camera like any 3D object. No renderer needed (the sky and reflections are set up
 // by studio.js); render/blender_turntable.py build_environment mirrors this part for part.
 import * as THREE from 'three';
-import { envParts } from './environments.js';
+import { envParts, rainDrops } from './environments.js';
 
 const rad = THREE.MathUtils.degToRad;
 
@@ -26,10 +26,35 @@ function cycGeometry([w, h, r, front], z0) {
   return geo;
 }
 
-// loadGlb(file) → Promise<Object3D> for { glb } parts (bundled CC0 models); without it they are skipped.
+// Rain: one line per streak, falling through the box and wrapping to the top. update(seconds) moves it; studio.js
+// calls it every frame while the place is shown.
+export function buildRain(rain) {
+  const drops = rainDrops(rain);
+  const pos = new Float32Array(drops.length * 6);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: rain.color, transparent: true, opacity: rain.opacity, depthWrite: false }));
+  lines.name = 'rain';
+  lines.frustumCulled = false;
+  const h = rain.box[1];
+  lines.userData.update = (t) => {
+    drops.forEach(([x, y, z], i) => {
+      const top = ((((y - t * rain.speed) % h) + h) % h) + rain.length;
+      pos.set([x, top, z, x, top - rain.length, z], i * 6);
+    });
+    geo.attributes.position.needsUpdate = true;
+  };
+  lines.userData.update(0);
+  return lines;
+}
+
+// loadGlb(file) → Promise<Object3D> for { glb } parts (bundled CC0 models); without it they are skipped. A model
+// used several times loads once and is cloned.
 export async function buildEnvironment(spec, { loadGlb } = {}) {
   const group = new THREE.Group();
   group.name = 'environment';
+  const glbs = new Map();
+  const glb = (file) => { if (!glbs.has(file)) glbs.set(file, loadGlb(file)); return glbs.get(file).then((o) => o.clone()); };
   const mats = Object.fromEntries(Object.entries(spec.mats).map(([k, m]) => [k, envMaterial(m)]));
   const inward = (k) => envMaterial(spec.mats[k], THREE.BackSide);
   for (const p of envParts(spec)) {
@@ -45,7 +70,7 @@ export async function buildEnvironment(spec, { loadGlb } = {}) {
       o.position.x = p.at[0];
     } else if (p.glb) {
       if (!loadGlb) continue;
-      o = await loadGlb(p.glb);
+      o = await glb(p.glb);
       o.position.set(...p.at);
       o.scale.setScalar(p.scale ?? 1);
     } else {
@@ -58,6 +83,7 @@ export async function buildEnvironment(spec, { loadGlb } = {}) {
     if (p.rot) o.rotation.set(rad(p.rot[0]), rad(p.rot[1]), rad(p.rot[2]));
     group.add(o);
   }
+  if (spec.rain) group.add(buildRain(spec.rain));
   for (const l of spec.lights) {
     const light = new THREE.RectAreaLight(l.color, l.power, l.area[0], l.area[1]);
     light.position.set(...l.at);

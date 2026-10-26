@@ -14,7 +14,7 @@ test('registry: no two shortcuts share a key on one screen, none uses a key the 
     assert.ok(s.label && s.keys && (s.where === '*' || s.where.length), s.id);
     if (s.click) assert.ok(s.none, `${s.id} says something when its button is missing`);
   }
-  for (const id of ['still', 'turntable', 'undo', 'redo', 'reset', 'frame', 'envNext', 'envPrev', 'pose', 'testrig', 'export', 'palette', 'help'])
+  for (const id of ['shelf', 'share', 'history', 'still', 'turntable', 'undo', 'redo', 'reset', 'frame', 'envNext', 'envPrev', 'pose', 'testrig', 'export', 'palette', 'help'])
     assert.ok(keyOf(id), `${id} has a key`);
   // the checker itself catches a clash and a taken key
   const extra = [...SHORTCUTS, { id: 'x', keys: 'F', label: 'x', where: ['compose'] }, { id: 'y', keys: 'Ctrl+R', label: 'y', where: ['library'] }];
@@ -70,7 +70,7 @@ test('cheat sheet: lists every shortcut for the screen plus the global ones', ()
   assert.ok(rows.some(([k]) => k === 'Alt+P'));
   const lib = bindingsFor('library', {});
   assert.ok(lib.some(([k]) => k === 'Ctrl+K') && !lib.some(([k]) => k === 'F'));
-  assert.equal(SHORTCUTS.filter((s) => worksOn(s, 'library')).length, 4);
+  assert.equal(SHORTCUTS.filter((s) => worksOn(s, 'library')).length, 6); // help, palette, preview, finish, share, history
 });
 
 // A small stand-in for document: listeners, a body, querySelector by a few known selectors.
@@ -106,7 +106,8 @@ test('key handler: presses the button, says why when it cannot, and rests while 
   doc.found['.tr-wrap'] = {};
   assert.equal(pausedBy(key('w'), doc), 'test rig');
   doc.press('f'); doc.press('s'); doc.press('k', { ctrlKey: true });
-  assert.equal(frames, 2); assert.deepEqual(ran, [], 'nothing runs while the Test rig plays');
+  for (const k of ['a', 's', 'v', 'A', 'S', 'V']) doc.press(k); // WASD-style keys belong to the character
+  assert.equal(frames, 2); assert.deepEqual(ran, [], 'nothing runs while the Test rig plays, not even A, S or V');
   delete doc.found['.tr-wrap'];
 
   doc.found['dialog[open]'] = {};
@@ -117,8 +118,11 @@ test('key handler: presses the button, says why when it cannot, and rests while 
   doc.found['#view #undoBtn'] = { disabled: true, click: () => assert.fail('disabled') };
   doc.press('z', { ctrlKey: true }); assert.equal(said.at(-1), 'Nothing to undo');
 
-  doc.press('s'); doc.press('k', { ctrlKey: true }); doc.press('P', { ctrlKey: true, shiftKey: true });
+  doc.press('r'); doc.press('k', { ctrlKey: true }); doc.press('P', { ctrlKey: true, shiftKey: true });
   assert.deepEqual(ran, ['still', 'palette', 'preview']);
+  ran.length = 0;
+  doc.press('a'); doc.press('s'); doc.press('v');
+  assert.deepEqual(ran, ['shelf', 'share', 'history'], 'A, S and V in Compose');
 
   const picked = [];
   const card = (k, on) => ({ textContent: ` ${k} `, getAttribute: () => String(on), click: () => picked.push(k) });

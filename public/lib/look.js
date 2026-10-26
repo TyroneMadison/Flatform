@@ -18,6 +18,8 @@ export const HDRIS = {
   garage: { label: 'Garage', note: 'Concrete garage, daylight from the door', ground: [1.6, 12] },
   goegap_road: { label: 'Desert dusk', note: 'Desert road at sunset', ground: [1.7, 80] },
   white_studio_02: { label: 'White cyclorama', note: 'Clean white studio, soft light', ground: [1.6, 10] },
+  umhlanga_sunrise: { label: 'Coast sunrise', note: 'Beach and sea at sunrise', ground: [1.7, 60] },
+  shanghai_bund: { label: 'City night', note: 'Waterfront city lights at night', ground: [1.8, 40] },
 };
 // Your own HDRIs: a tripod at eye height, a mid-size place. ponytail: one guess for every upload; add a per-file
 // setting if people import very small rooms or wide landscapes.

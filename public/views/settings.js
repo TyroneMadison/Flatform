@@ -9,7 +9,7 @@ import { blenderStatus } from '../lib/render-status.js';
 import { PRESETS } from '../lib/studio.js';
 import { EXTRA, EXTRA_HTML, wireExtra } from './settings-extra.js';
 
-const SCENES = Object.entries(PRESETS).map(([k, p]) => [k, k === 'cyclorama' ? 'White Cyc Studio (default)' : k === 'miami' ? 'Miami street at night (your HDRI)' : p.label]);
+const SCENES = Object.entries(PRESETS).map(([k, p]) => [k, k === 'white-cyc-studio' ? 'White Cyc Studio (default)' : k === 'miami' ? 'Miami street at night (your HDRI)' : p.label]);
 // The tabs, in plain words (v3): Accounts, Look, Rendering, Folders, Version history, Usage, Shortcuts, Backup, Plugins, About.
 const SECTIONS = [['providers', 'Accounts'], ['appearance', 'Look'], ['rendering', 'Rendering'], ['output', 'Folders'], ['history', 'Version history'], ['spend', 'Usage'], ...EXTRA, ['about', 'About and updates']];
 const RELEASES = 'https://github.com/TyroneMadison/Flatform/releases';

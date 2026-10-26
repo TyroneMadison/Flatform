@@ -22,10 +22,12 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { HorizontalBlurShader } from 'three/addons/shaders/HorizontalBlurShader.js';
 import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 import { normalizeDecals, decalMaterialParams, decalUrl } from './decals.js';
 import { mergeLook, effectsFor, hdriUrl, lookNeedsRebuild, hdriGround } from './look.js';
 import { buildEnvironment } from './env3d.js';
+import { envScale, skyRotation } from './environments.js';
 import { Post, PathTraced, TONE } from './post.js';
 import { applyPaint, regroup, pickPiece, listPieces } from './paint.js';
 import { applyMotion } from './rig.js';
@@ -45,11 +47,11 @@ export const CAMERAS = {
   low: { label: 'Low hero', turn: 30, elevation: 2.5, lens: 35, height: 'low' },
 };
 // 'ring' was called 'gold' before v0.4; the server renames it in saved scenes and settings.
-// White Cyc Studio comes first: it is the default scene (v0.6; Showroom, Dud Rents' house look, was before).
-// Environments (environments.js) are real 3D places in metres; the rest are built here.
+// White Cyc Studio comes first: it is the default scene. Environments (environments.js) are real 3D places in
+// metres; the rest are built here.
 export const PRESETS = {
-  cyclorama: { label: 'White Cyc Studio', note: 'Seamless white, soft top light' },
   ...Object.fromEntries(Object.entries(ENVIRONMENTS).map(([key, p]) => [key, { label: p.label, note: p.note, env: true, thumb: envThumb(key) }])),
+  cyclorama: { label: 'White cyclorama', note: 'Seamless white, soft top light' },
   ring: { label: 'Escalade ring studio', note: 'Reflective floor · coral ring · side light bars' },
   transparent: { label: 'Transparent', note: 'RGBA PNG with soft contact shadow' },
   miami: { label: 'Miami street at night', note: 'Add your Miami HDRI' },
@@ -66,7 +68,8 @@ const MATCHED = {
 
 export function defaultScene(settings = {}) {
   return {
-    preset: settings.defaultScene && settings.defaultScene !== 'transparent' ? settings.defaultScene : 'cyclorama',
+    preset: settings.defaultScene && settings.defaultScene !== 'transparent' ? settings.defaultScene : 'white-cyc-studio',
+    modeled: false, // v0.5 Showroom option (modeled room instead of the photo); since v3 the room is always modeled
     backdrop: null, x: 0, y: 0, snap: true, turn: 30, scale: 1, sameSize: true,
     camera: 'front34', lens: 50, matchLighting: true, key: 1.3, fill: 0.3, rim: 1.4,
     reflection: 0.7, shadow: 0.5, autoOrient: true, center: true, flip: false,
@@ -369,6 +372,20 @@ class ContactShadow {
 }
 
 // A vertical two-colour gradient as a background texture (cached by its colours).
+// The floor of an HDRI room: solid in the middle, fading out into the projected ground (alphaMap reads green).
+function fadeTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+  grad.addColorStop(0, '#fff');
+  grad.addColorStop(0.55, '#fff');
+  grad.addColorStop(1, '#000');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(c);
+}
+
 const gradients = {};
 function gradientTexture(top, bottom) {
   const key = `${top}:${bottom}`;
@@ -391,7 +408,10 @@ function gradientTexture(top, bottom) {
 function disposeTree(obj) {
   obj.traverse((o) => {
     o.geometry?.dispose();
-    for (const m of [].concat(o.material || [])) m.dispose();
+    for (const m of [].concat(o.material || [])) {
+      for (const k of ['map', 'roughnessMap', 'normalMap', 'alphaMap']) m[k]?.dispose(); // a room floor's textures
+      m.dispose();
+    }
   });
   obj.dispose?.();
 }
@@ -408,7 +428,8 @@ export class Studio {
     this.camera = new THREE.PerspectiveCamera(30, 4 / 3, 0.1, 400);
     this.pivot = new THREE.Group(); // turns for the turntable
     this.stage = new THREE.Group(); // the preset's props
-    this.scene.add(this.pivot, this.stage);
+    this.extras = new THREE.Group(); // things dropped in from the shelf (shelf.js), in real-world metres like the place
+    this.scene.add(this.pivot, this.stage, this.extras);
     this.shadow = new ContactShadow();
     this.scene.add(this.shadow.group);
     this.lights = { key: new THREE.DirectionalLight(0xfff3e2), fill: new THREE.DirectionalLight(0xdfe8ff), rim: new THREE.DirectionalLight(0xffffff) };
@@ -526,6 +547,49 @@ export class Studio {
     if (JSON.stringify(prev.paint) !== JSON.stringify(this.state.paint)) this.applyPaint();
     this.applyDecals();
     await this.applyLook();
+    await this.applyExtras();
+  }
+
+  // Shelf items (scene.extras): each file loads once, then is cloned. A person is sized to 1.8 m tall, a car to
+  // CAR_LENGTH long, a prop keeps its own size; all stand on the floor at their spot.
+  async applyExtras() {
+    const list = this.state.extras || [];
+    const key = JSON.stringify(list);
+    if (key === this.extrasKey) return;
+    this.extrasKey = key;
+    this.extraFiles ||= new Map();
+    const objs = await Promise.all(list.map(async (x) => {
+      if (!this.extraFiles.has(x.src)) {
+        const draco = new DRACOLoader().setDecoderPath('/vendor/three/examples/jsm/libs/draco/gltf/');
+        this.extraFiles.set(x.src, new GLTFLoader().setDRACOLoader(draco).setMeshoptDecoder(MeshoptDecoder).loadAsync(x.src).then((g) => g.scene).finally(() => draco.dispose()));
+      }
+      const file = await this.extraFiles.get(x.src).catch(() => null);
+      const o = file && cloneSkinned(file); // a rigged person needs its skeleton cloned too
+      if (!o) return null;
+      const size = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());
+      if (x.group === 'characters' && size.y > 0) o.scale.setScalar(1.8 / size.y);
+      if (x.group === 'cars') o.scale.setScalar(CAR_LENGTH / Math.max(size.x, size.z, 1e-6));
+      const box = new THREE.Box3().setFromObject(o);
+      const holder = new THREE.Group();
+      o.position.set(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2);
+      holder.add(o);
+      holder.position.set(x.at[0], 0, x.at[1]);
+      holder.rotation.y = THREE.MathUtils.degToRad(x.turn || 0);
+      holder.traverse((m) => { if (m.isMesh) { m.castShadow = m.receiveShadow = true; m.layers.enable(1); } });
+      return holder;
+    }));
+    if (key !== this.extrasKey) return; // a newer list won while these loaded
+    this.extras.clear(); // the clones share the cached files' geometry, so nothing is disposed here
+    for (const o of objs) if (o) this.extras.add(o);
+    this.ptDirty = true;
+  }
+  // The floor point (real-world metres, [x, z]) under a canvas point (CSS px), for dropping shelf items.
+  floorPoint(x, y) {
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2((x / this.width) * 2 - 1, -(y / this.height) * 2 + 1), this.camera);
+    const p = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3());
+    const k = this.extras.scale.x || 1;
+    return p ? [p.x / k, p.z / k] : null;
   }
 
   // Decals (decals.js): projected onto every mesh they touch, so they wrap over curves. They live in a group beside
@@ -778,7 +842,8 @@ export class Studio {
     const box = new THREE.Box3();
     const size = new THREE.Vector3();
     const measure = () => { this.pivot.updateMatrixWorld(true); box.setFromObject(m); return box.getSize(size); };
-    if (s.autoOrient && measure().x > size.z) m.rotation.y = -Math.PI / 2; // scans lie along X, nose on +X: turn it to +Z
+    // Car scans lie along X, nose on +X: turn it to +Z. A person in a T-pose is wide too, but already faces the camera.
+    if (s.autoOrient && this.kind !== 'humanoid' && measure().x > size.z) m.rotation.y = -Math.PI / 2;
     if (s.flip) m.rotation.y += Math.PI; // a scan can't tell its nose from its tail
     measure();
     this.carLike = isCarShape(size); // tall models (humanoids) are never size-locked, see pipeline.js modelScale
@@ -791,7 +856,15 @@ export class Studio {
     this.applyYaw();
     this.carHeight = size.y;
     this.carSize = size.clone();
-    if (s.motion) applyMotion(this, s.motion, this.clipTime ?? null); // motion.js: stance, pose, clip frame
+    // motion.js: stance, pose, clip frame. The model's kind (humanoid or car, set by the page) wins over the scene's.
+    if (s.motion) applyMotion(this, { ...s.motion, type: this.kind || s.motion.type }, this.clipTime ?? null);
+    if (s.motion?.pose && s.snap && this.kind === 'humanoid' && this.clipTime == null) { // a kneel stands on the floor too
+      this.pivot.updateMatrixWorld(true);
+      m.position.y -= box.setFromObject(m, true).min.y; // precise: the posed (skinned) vertices
+    }
+    // The place round the model at the model's real size: a car is 4.6 m long, a person 1.8 m tall.
+    this.stage.scale.setScalar(ENVIRONMENTS[s.preset] ? envScale(size, this.kind || (this.carLike ? 'car' : 'humanoid')) : 1);
+    this.extras.scale.copy(this.stage.scale); // shelf items are in the same real-world metres as the place
     this.applyMirror();
   }
 
@@ -964,9 +1037,9 @@ export class Studio {
     this.target = target;
     const tanV = Math.tan(THREE.MathUtils.degToRad(cam.vfov) / 2);
     this.fitFrame(tanV, aspect, 0.1, 200);
-    if (this.state.fit === 'all' && this.model) {
-      // "Frame all": the eye-level camera aims at the floor, not the model, so pull back along its own line of
-      // sight until every corner of the model projects inside the frame (at most 10× the photo's distance).
+    if ((this.state.fit === 'all' || this.kind === 'humanoid' || this.carLike === false) && this.model) {
+      // "Frame all" (always for a tall model, a person): the room's camera aims at the floor, not the model, so pull
+      // back along its own line of sight until every corner of the model projects inside the frame (at most 10×).
       for (let k = 0; k < 40 && !this.framesModel(0.92); k++) this.camera.position.sub(target).multiplyScalar(1.06).add(target);
       this.camera.updateMatrixWorld();
     }
@@ -1076,6 +1149,7 @@ export class Studio {
     this.floor = null;
     this.catcher = null;
     this.envGroup = null;
+    this.rain = null;
     this.hideDome();
     this.skyTarget?.dispose();
     this.skyTarget = null;
@@ -1156,6 +1230,7 @@ export class Studio {
     const group = await buildEnvironment(e, { loadGlb: async (file) => (await new GLTFLoader().loadAsync(`/env/${encodeURIComponent(file)}`)).scene });
     if (build !== this.builds) { disposeTree(group); return; }
     this.envGroup = add(group);
+    this.rain = group.getObjectByName('rain') || null; // Night City Rain: falls while the view draws (animating)
     const { light } = e;
     add(new THREE.HemisphereLight(...light.sky));
     this.catcher = add(new THREE.Mesh(new THREE.PlaneGeometry(40, 40).rotateX(-Math.PI / 2), new THREE.ShadowMaterial({ opacity: light.shadow * 0.45, depthWrite: false })));
@@ -1193,8 +1268,8 @@ export class Studio {
         if (build !== this.builds) return;
         this.scene.background = tex;
         this.scene.environment = env;
-        this.scene.backgroundRotation.set(0, deg(sky.rotation || 0), 0);
-        this.scene.environmentRotation.set(0, deg(sky.rotation || 0), 0);
+        this.scene.backgroundRotation.set(0, deg(skyRotation(e)), 0);
+        this.scene.environmentRotation.set(0, deg(skyRotation(e)), 0);
         this.scene.backgroundIntensity = sky.intensity ?? 1;
       } catch { this.scene.background = new THREE.Color(e.light.sky[0]); this.message = `Sky ${sky.hdri}.hdr is missing`; }
     } else if (sky.sun) {
@@ -1323,7 +1398,11 @@ export class Studio {
     });
   }
 
+  // True while the scene moves on its own (rain), so views keep drawing frames.
+  get animating() { return Boolean(this.rain); }
+
   render() {
+    this.rain?.userData.update(performance.now() / 1000);
     if (this.model) this.shadow.update(this.renderer, this.scene, this.state.shadow);
     this.shadow.plane.visible = Boolean(this.model);
     if (this.tracing && this.pt?.tracer && !this.ptDirty && !this.ptBusy) { if (this.pt.renderSample() || this.pt.done) return; }
@@ -1339,6 +1418,7 @@ export class Studio {
     for (const m of this.pieceMats.values()) m.dispose();
     this.clearStage();
     if (this.model) disposeTree(this.model);
+    for (const p of this.extraFiles?.values() || []) p.then(disposeTree, () => {});
     for (const t of Object.values(this.envs)) t.dispose();
     this.shadow.dispose();
     this.pmrem.dispose();

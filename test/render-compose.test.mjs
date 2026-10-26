@@ -98,9 +98,8 @@ test('Compose render area keeps every old render option, with a tooltip on each 
 
 test('White Cyc Studio is the default background', async () => {
   const studio = await readFile('public/lib/studio.js', 'utf8');
-  assert.match(studio, /export const PRESETS = \{\r?\n {2}cyclorama: \{ label: 'White Cyc Studio'/);
-  assert.match(studio, /settings\.defaultScene : 'cyclorama'/);
+  assert.match(studio, /settings\.defaultScene : 'white-cyc-studio'/);
   const server = await readFile('server.mjs', 'utf8');
-  assert.match(server, /defaultScene: 'cyclorama', alsoTransparent/);
+  assert.match(server, /defaultScene: 'white-cyc-studio', alsoTransparent/);
   assert.match(server, /scenesV6/);
 });

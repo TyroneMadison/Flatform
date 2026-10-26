@@ -21,6 +21,7 @@ import { initLighting, renderLightingGroup, onLightingClick } from './compose-li
 import { mountRender, updateRender, resetRenderOptions, pickRender } from './compose-render.js';
 import { initSession, noteEdit, stopSession, markSaved } from './compose-session.js';
 import { resetScene } from '../lib/session.js';
+import { initShelf, renderShelf, onShelfClick, onShelfInput, onShelfDragStart, onShelfDrop, isShelfDrag } from './compose-shelf.js';
 import { initPaint, renderPaintGroups, afterRender, onPaintClick, onPaintInput, onPaintChange, selectPiece, selectedPiece, onPaintDragStart, onTextureDrop, onDecalCanvasClick } from './compose-paint.js';
 
 let root;
@@ -38,6 +39,7 @@ let observer;
 let saveTimer;
 let raf;
 let inspOpen = false; // the inspector card on the right, open after a click on a part
+let aside = 'places'; // the left panel: 'places' (the scene list) or 'shelf' (Add things)
 
 const fixed = (n, d = 2) => Number(n).toFixed(d);
 const level = (v) => (v <= 0.02 ? 'Off' : v < 0.35 ? 'Soft' : v < 0.7 ? 'Medium' : 'Strong');
@@ -59,11 +61,12 @@ export async function mount(el, { id }) {
   scene = { ...baseScene(), ...m.scene };
   initSession({ root: el, model: () => m, scene: () => scene, frame: () => frame });
   initPaint({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
-  initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
+  initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector, reload: async (next, { glb = true } = {}) => { m = upsert(next); if (studio) studio.kind = m.kind; renderModel(); if (glb) await loadModel(); refresh(); } });
   initHandPose({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initTestRig({ scene: () => scene, studio: () => studio, draw });
   initTools({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initPath({ scene: () => scene, studio: () => studio, change, draw, renderInspector });
+  initShelf({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, redraw: () => renderAside(true) });
   initLighting({ scene: () => scene, studio: () => studio, change, renderInspector, modelUrl: () => (m?.glb ? fileUrl(m, m.glb) : null) });
   el.innerHTML = `
   <section class="compose stagecomp">
@@ -87,7 +90,12 @@ export async function mount(el, { id }) {
     <aside class="tcard card" id="toolCard" aria-labelledby="toolTitle">
       <header class="tc-head"><h2 id="toolTitle">World</h2><p class="fine" id="toolTip"></p></header>
       <div class="tc-body" id="toolBody">
-        <section class="scenes" id="scenes" aria-label="Worlds"><div class="scnlist" id="sceneList"></div></section>
+        <section class="scenes" id="scenes" aria-label="Worlds">
+          <div class="chips seg sm aside-tabs" role="tablist" aria-label="Worlds or things to add">
+            <button class="chip" type="button" role="tab" data-aside="places" aria-selected="true" title="The worlds your model can stand in">Worlds</button>
+            <button class="chip" type="button" role="tab" data-aside="shelf" aria-selected="false" title="Drag people, cars and props into the scene (${keyOf('shelf')})">Add things <kbd>${keyOf('shelf')}</kbd></button>
+          </div>
+          <div class="scnlist" id="sceneList"></div><div class="shelf" id="shelf" hidden></div></section>
         <input type="file" id="backdropFile" accept=".hdr,.exr,.jpg,.jpeg,.png" hidden>
         <div class="grp" id="startover"><h3>Start over</h3>
           <div class="mg-row">
@@ -139,6 +147,7 @@ export async function mount(el, { id }) {
   let s;
   try {
     s = studio = new Studio($('#cv', el));
+    s.kind = m.kind; // humanoid or car; unset on models from before v3, then motion.js detects it
     s.setRig(state.settings || {}); // the light rig and glass set in the render area below
     s.enableOrbit(onOrbit); // free roam: drag orbits, wheel zooms, right or Shift drag pans
   } catch {
@@ -212,7 +221,7 @@ function draw() {
     if (studio.tracing && !studio.pt?.done) { // progressive path tracing: one sample per frame until done
       $('#hudLook', root).textContent = `Path traced · ${studio.samples} samples`;
       draw();
-    }
+    } else if (studio.animating) draw(); // rain keeps falling
   });
   renderHud();
 }
@@ -363,10 +372,8 @@ function renderTimeline() {
 function renderScenes() {
   const art = {
     ring: '<div class="stage s-ring"><div class="sg-wall"></div><div class="sg-panel"></div><div class="sg-bar l"></div><div class="sg-bar r"></div><div class="sg-floor"></div><div class="sg-ring"></div></div>',
-    showroom: '<div class="stage s-show"><div class="sg-panel"></div><div class="sg-bar l"></div><div class="sg-bar r"></div><div class="sg-floor"></div><div class="sg-ring"></div></div>',
     transparent: '<div class="stage s-clear"><div class="checker"></div><div class="sc-shadow"></div></div>',
     cyclorama: '<div class="stage s-cyc"><div class="sc-shadow"></div></div>',
-    'soft-studio': '<div class="stage s-cyc" style="filter:brightness(.35)"><div class="sc-shadow"></div></div>',
     miami: '<div class="stage s-miami"><div class="sm-sky"></div><div class="sm-city"></div><div class="sm-road"></div><div class="sm-neon"></div></div>',
     custom: '<div class="stage s-hdri"></div>',
   };
@@ -377,12 +384,32 @@ function renderScenes() {
     const note = (key === 'miami' || key === 'custom') && file ? `${file.endsWith('.hdr') || file.endsWith('.exr') ? 'HDRI' : 'Backdrop'} added · click again to replace` : p.note;
     const needs = (key === 'miami' || key === 'custom') && !file;
     const thumb = p.env && !art[key] ? `<div class="stage"><img class="thumb" src="${p.thumb}" alt="" onerror="this.remove()"></div>` : '';
-    return `<button class="scn${key === 'cyclorama' ? ' pinned' : ''}" type="button" data-preset="${key}" aria-pressed="${scene.preset === key}" title="Use ${esc(p.label)} as the background">
-      <div class="scn-th">${thumb || (photo ? `<div class="stage">${photo}</div>` : art[key])}${needs ? `<div class="up">${icon('upload', 18)}</div>` : ''}${key === 'cyclorama' ? '<span class="pin">Default</span>' : ''}</div>
+    return `<button class="scn${key === 'white-cyc-studio' ? ' pinned' : ''}" type="button" data-preset="${key}" aria-pressed="${scene.preset === key}" title="Use ${esc(p.label)} as the background">
+      <div class="scn-th">${thumb || (photo ? `<div class="stage">${photo}</div>` : art[key])}${needs ? `<div class="up">${icon('upload', 18)}</div>` : ''}${key === 'white-cyc-studio' ? '<span class="pin">Default</span>' : ''}</div>
       <div class="scn-t"><b>${p.label}</b><span>${esc(note)}</span></div></button>`;
   }).join('');
   const box = $('#sceneList', root);
   if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
+  renderAside();
+}
+
+// Worlds or Add things (the shelf) in the World card. The shelf redraws only when its content changed, so a
+// scene edit never steals the search box's focus.
+function renderAside(force = false) {
+  $('#sceneList', root).hidden = aside !== 'places';
+  $('#shelf', root).hidden = aside !== 'shelf';
+  $$('[data-aside]', root).forEach((b) => b.setAttribute('aria-selected', String(b.dataset.aside === aside)));
+  if (aside !== 'shelf') return;
+  const box = $('#shelf', root);
+  const html = renderShelf();
+  if (force || box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
+}
+/** The A key: open Add things (or go back to the worlds). app.js switches the dock to World first. */
+export function toggleShelf(to = aside === 'shelf' ? 'places' : 'shelf') {
+  if (!root?.isConnected || !$('#shelf', root)) return;
+  aside = to;
+  renderAside(true);
+  if (aside === 'shelf') $('#shelfQ', root)?.focus();
 }
 
 function slider(key, label, min, max, step, value, text, disabled = false) {
@@ -545,6 +572,8 @@ function bind() {
   el.addEventListener('click', async (e) => {
     const t = e.target.closest('button');
     if (!t) return;
+    if (t.dataset.aside) return toggleShelf(t.dataset.aside);
+    if (onShelfClick(e)) return;
     if (await onToolsClick(t)) return;
     if (await onPathClick(t)) return;
     if (await onLightingClick(t)) return;
@@ -598,6 +627,7 @@ function bind() {
     if (t.id === 'play') play();
   });
   el.addEventListener('input', (e) => {
+    if (onShelfInput(e)) return;
     if (onMotionInput(e.target)) return;
     if (onHandPoseInput(e.target)) return;
     if (onPaintInput(e.target)) return;
@@ -693,9 +723,10 @@ function bind() {
   });
   cv.addEventListener('pointerup', () => { drag = null; });
   // Drag a texture tile from the Material group onto a piece.
-  el.addEventListener('dragstart', (e) => { onPaintDragStart(e); });
-  cv.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('application/x-flatform-texture')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+  el.addEventListener('dragstart', (e) => { if (!onShelfDragStart(e)) onPaintDragStart(e); });
+  cv.addEventListener('dragover', (e) => { if (isShelfDrag(e) || e.dataTransfer.types.includes('application/x-flatform-texture')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
   cv.addEventListener('drop', (e) => {
+    if (isShelfDrag(e)) { e.preventDefault(); e.stopPropagation(); $('#vp', el).classList.remove('dropping'); onShelfDrop(e, cv); return; }
     const id = e.dataTransfer.getData('application/x-flatform-texture');
     if (!id || !studio?.model) return;
     e.preventDefault();

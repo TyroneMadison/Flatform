@@ -31,7 +31,7 @@ test('step trail: Photo > 3D model > Scene and render > Finish, finished steps t
 });
 
 test('sheets: Library, Settings, Share and Usage open over the stage; ✕ and Esc go back to the step', () => {
-  for (const s of ['library', 'model', 'settings', 'share', 'usage']) assert.ok(isSheet(s), s);
+  for (const s of ['library', 'model', 'settings', 'share', 'history', 'usage', 'test']) assert.ok(isSheet(s), s);
   for (const s of ['drop', 'compose', 'finish', 'preview']) assert.ok(!isSheet(s), s);
   assert.match(app, /e\.key !== 'Escape' \|\| !isSheet\(route\.name\)/);
   assert.match(app, /export const closeSheet = \(\) => go\(lastStep\)/);
@@ -46,7 +46,7 @@ test('dock: Scene tools in order; cars get Car parts and no pose, characters get
   assert.ok(!SCENE_GROUPS.carparts.includes('grp-testrig') && !SCENE_GROUPS.carparts.includes('grp-handpose'), 'no pose controls for cars');
   assert.ok(SCENE_GROUPS.pose.includes('grp-testrig') && SCENE_GROUPS.pose.includes('grp-handpose'), 'Test Rig and Pose by hand under Pose');
   assert.deepEqual(dockFor('model').map((t) => t[0]), ['recipe', 'photos']);
-  assert.deepEqual(dockFor('finish').map((t) => t[0]), ['check', 'compare', 'share']);
+  assert.deepEqual(dockFor('finish').map((t) => t[0]), ['check', 'compare', 'history', 'share']);
   assert.deepEqual(dockFor('photo'), [], 'Photo has one big drop area and no dock');
   for (const step of ['scene', 'model', 'finish']) {
     assert.ok(dockFor(step).some((t) => t[0] === DEFAULT_TOOL[step]), step);

@@ -188,7 +188,7 @@ if (!BIN) {
       const info = (await j('/api/blender')).body;
       assert.deepEqual([info.found, info.path], [true, BIN]);
       assert.match(info.version, /^\d+\.\d+/);
-      assert.equal((await j('/api/settings')).body.defaultScene, 'cyclorama'); // White Cyc Studio is the default
+      assert.equal((await j('/api/settings')).body.defaultScene, 'white-cyc-studio'); // White Cyc Studio is the default
       const add = async (file, name) => {
         const form = new FormData();
         form.append('glb', new Blob([await readFile(file)]), path.basename(file));
