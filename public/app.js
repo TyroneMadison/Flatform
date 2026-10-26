@@ -36,6 +36,7 @@ export const state = {
   lastId: null, // model last opened in a flow screen
   spend: null, // GET /api/spend: totals, daily series, per-model costs, balances and low-balance flags per provider
   workspace: 'car', // 'car' or 'warframe': stamped on models created or imported from a home screen
+  drawingFound: null, // { sheet, views } once dropped photos were read as drawing template pages (Drop's tips card)
   recents: [], // the last few scenes worked on, newest first: [{ id, at, frame }] (session.mjs)
   mode: localStorage.getItem('flatform.mode') === 'warframe' ? 'warframe' : 'car', // the Car / Warframe switch in the top bar
   tool: { ...DEFAULT_TOOL }, // the dock tool picked in each step

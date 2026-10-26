@@ -595,3 +595,30 @@ dialog.drawdlg { width: min(720px, 94vw); max-height: 94vh; overflow: auto; padd
 .dk-recipe { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; opacity: .9; margin: 8px 0 0; }
 .dk-foot { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 .dk-foot .btn.pri { flex: 1 1 220px; }
+
+/* ---- Drawing tips card beside the drop zone, Warframe mode (lib/drawing-tips.js) ---- */
+.dz-row.with-tips { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 36%); gap: 14px; }
+.with-tips .dropzone h1 { font-size: clamp(30px, 3vw, 50px); }
+.with-tips .dz-actions { flex-wrap: wrap; justify-content: center; }
+#tipsSlot { display: flex; min-width: 0; }
+.dtips { flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 6px 18px 16px; border-radius: 14px; border: 1px solid rgba(255, 122, 102, .35); }
+.dtips:not([open]) { align-self: flex-start; padding-bottom: 6px; }
+.dtips summary { display: flex; align-items: center; justify-content: space-between; min-height: 44px; cursor: pointer; list-style: none; }
+.dtips summary::-webkit-details-marker { display: none; }
+.dtips[open]::details-content { display: contents; } /* the list and download box take part in the card's column */
+.dtips summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.dt-tag { font: 700 11px var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--accent-hi); }
+.dt-chev { width: 9px; height: 9px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform .2s; margin-right: 6px; }
+.dtips[open] .dt-chev { transform: rotate(-135deg); }
+.dt-found { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--ok-bg); border: 1px solid #3c5a2a; }
+.dt-found > div { flex: 1; display: grid; gap: 2px; } .dt-found b { font-size: 14px; } .dt-found > div > span { font-size: 12.5px; opacity: .85; }
+.dt-found .mono { font-family: var(--mono); letter-spacing: .08em; }
+.dt-ok { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--ok); color: #0f0e0e; font-weight: 900; }
+.dt-open { min-height: 44px; }
+.dt-list { list-style: none; margin: 0; padding: 0; flex: 1; display: grid; grid-template-columns: 1fr 1fr; align-content: space-evenly; gap: 12px 16px; }
+.dt-list li { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; line-height: 1.4; color: var(--soft); }
+.dt-ic { flex: none; width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: rgba(255, 122, 102, .11); color: var(--accent); }
+.dt-dl { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background: linear-gradient(135deg, rgba(255, 122, 102, .13), rgba(255, 255, 255, .02)); border: 1px solid rgba(255, 122, 102, .27); }
+.dt-dl > div { flex: 1; display: grid; gap: 2px; } .dt-dl b { font-size: 13.5px; } .dt-dl span { font-size: 12px; color: var(--muted); }
+.dt-dl .btn { min-height: 44px; flex: none; }
+@media (max-width: 1100px) { .dz-row.with-tips { grid-template-columns: 1fr; } }

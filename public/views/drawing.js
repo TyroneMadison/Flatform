@@ -3,13 +3,14 @@
 // and anything to fix. Make my 3D model sends the FRONT plus up to 3 more views as one job; the cover's colors and
 // the color map go with the model (scene.drawing) for Part colors. Opened from the Drop screen (Drawing kit) and by
 // app.js addFiles when dropped photos are template pages.
-import { $, esc, state, go, enqueue, savedSetup, costOf, setupLabel, takePhotos } from '../app.js';
+import { $, esc, state, go, enqueue, savedSetup, costOf, setupLabel, takePhotos, refresh } from '../app.js';
 import { icon } from '../lib/icons.js';
 import { normalize } from '../lib/engines.js';
 import { ROLES } from '../lib/roles.js';
 import * as K from '../lib/drawing-kit.js';
+import { TEMPLATE_URL, foundOf } from '../lib/drawing-tips.js';
 
-export const TEMPLATE_URL = '/template/Flatform-Drawing-Template.pdf';
+export { TEMPLATE_URL };
 const VIEW_LABEL = { front: 'Front', back: 'Back', left: 'Left side', right: 'Right side' };
 let libs = null, layout = null;
 let scans = []; // [{ name, qr?, error?, content?, url? }]
@@ -67,7 +68,6 @@ export async function openDrawing(photos = []) {
     document.body.append(dialog);
     dialog.addEventListener('click', onClick);
     $('#drawPick', dialog).addEventListener('change', (e) => { const list = takePhotos(e.target.files); e.target.value = ''; if (list.length) addPhotos(list); });
-    dialog.addEventListener('close', () => { for (const s of scans) if (s.url) URL.revokeObjectURL(s.url); scans = []; });
   }
   if (!dialog.open) dialog.showModal();
   render();
@@ -98,7 +98,16 @@ async function addPhotos(photos) {
     scans.push(scan);
   }
   reading = null;
+  // The Drop screen's tips card shows Template detected with the sheet and views; See check opens this card again.
+  state.drawingFound = foundOf(K.precheck(scans));
   render();
+  refresh();
+}
+// Sent or set up: the photos are done with.
+function forget() {
+  for (const s of scans) if (s.url) URL.revokeObjectURL(s.url);
+  scans = [];
+  state.drawingFound = null;
 }
 
 // The recipe this sends: the saved one, with all the views when its engine takes them.
@@ -123,6 +132,7 @@ function onClick(e) {
     if (r.blocker) return;
     const { files, drawing } = job(r);
     const name = `Drawing ${r.sheet}`;
+    forget();
     if (act === 'make') {
       const setup = recipe(r.views);
       enqueue({ name, setup, files: setup.mode === 'views' ? files : { front: files.front }, ...(drawing && { drawing }) }, true);
