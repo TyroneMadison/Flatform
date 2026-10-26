@@ -235,3 +235,6 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16
 .warnbox p { margin: 2px 0; }
 .chipset { display: inline-flex; gap: 2px; margin: 0 6px 6px 0; }
 .chip.sm { padding: 4px 8px; min-height: 0; }
+.skyrow { display: grid; grid-template-columns: 1fr 64px auto auto; gap: 6px; align-items: center; margin: 4px 0; }
+label.check { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; cursor: pointer; }
+label.check input[type="range"] { flex: 1 1 100%; }

@@ -30,6 +30,7 @@ import { SERVICES, CONVERT_CREDITS, entry, append, parse, summary, defaultThresh
 import { check as checkTennogen, fixPlan, CONTENT_TYPES, EXPORT_MODES } from './public/lib/tennogen.js';
 import { pngSize, resizePng } from './png.mjs';
 import { loadPoses } from './public/lib/poses.js';
+const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -1245,6 +1246,22 @@ export async function startServer({
         }
       }
       return send(res, 200, loadPoses(files));
+    }
+    // Named presets saved by the Sadie tools (camera moves, sky playlists, material sets). One small JSON file
+    // per kind in the data folder. POST { name, data } saves or replaces, { name, remove: true } deletes.
+    if (area === 'presets' && PRESET_KINDS.includes(id) && !sub && (method === 'GET' || method === 'POST')) {
+      const file = path.join(dataDir, 'presets', `${id}.json`);
+      let list = [];
+      try { list = JSON.parse(readFileSync(file, 'utf8')); if (!Array.isArray(list)) list = []; } catch { list = []; }
+      if (method === 'GET') return send(res, 200, list);
+      const b = await readJson(req, 256 * 1024);
+      const name = String(b.name || '').trim().slice(0, 60);
+      if (!name) throw new HttpError(400, 'Give it a name');
+      list = list.filter((x) => x.name !== name);
+      if (!b.remove) list.unshift({ name, data: b.data ?? null, saved: new Date().toISOString() });
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, JSON.stringify(list.slice(0, 100), null, 2));
+      return send(res, 200, list);
     }
     if (area === 'tennogen' && id === 'check' && !sub && method === 'POST') {
       const b = await readJson(req);

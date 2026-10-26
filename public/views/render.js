@@ -519,6 +519,7 @@ async function renderInApp(slug, looks, turns, frames, manifests) {
       for (let i = 0; i < frames; i++) {
         await checkpoint();
         studio.setFrame(i);
+        await studio.applySkyFrame();
         studio.render();
         const out = capture();
         await queue(toBlob(out, 'image/png').then((b) => put(P.framePath(slug, look, i), b)));

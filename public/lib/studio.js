@@ -26,6 +26,7 @@ import { Post, PathTraced, TONE } from './post.js';
 import { applyPaint, regroup, pickPiece, listPieces } from './paint.js';
 import { applyMotion } from './rig.js';
 import { mirrorAttributes, depthRange, boneWeights, heat } from './model-tools.js';
+import { samplePath, skyAt, normalizePath } from './camera-path.js';
 import { STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, PLATES, plateUrl, plateThumb, plateCamera, CAR_LENGTH, hfovOf, isCarShape, modelScale, fitDistance, frameOrbit } from './pipeline.js';
 
 RectAreaLightUniformsLib.init();
@@ -562,6 +563,9 @@ export class Studio {
     }
     // HDRI environment (and background).
     const h = look.hdri;
+    this.lookHdri = { ...h };
+    this.skyFile = null;
+    this.dimBase = undefined;
     if (h.file) {
       try {
         const { env, tex } = await this.hdri(h.file);
@@ -640,9 +644,50 @@ export class Studio {
   setFrame(i) {
     this.frame = i;
     this.applyYaw();
+    this.applyPathFrame();
   }
 
-  yaw() { return this.state.turn + this.frame * STEP; }
+  // Camera move (camera-path.js): on a turntable frame the camera follows the saved path. t runs 0..1 over
+  // the full turn. Without a path this does nothing, so plain turntables render as before.
+  pathT() { return (this.frame || 0) / (360 / STEP); }
+  applyPathFrame() {
+    const p = this.state.cameraPath;
+    if (!p?.on || !normalizePath(p).on) return;
+    const c = samplePath(p, this.pathT());
+    this.applyCamera();
+    this.camera.position.set(...c.position);
+    this.target = new THREE.Vector3(...c.target);
+    this.camera.lookAt(this.target);
+    this.camera.near = Math.min(this.camera.near, 0.05);
+    this.camera.far = Math.max(this.camera.far, 400);
+    this.camera.updateProjectionMatrix();
+    this.camera.updateMatrixWorld();
+  }
+  // Sky playlist for frame t: turns the environment and switches HDRIs with a short dip to dark. Async because a
+  // new HDRI may have to load; the render loop awaits it before drawing the frame.
+  async applySkyFrame(t = this.pathT()) {
+    const sky = this.state.sky;
+    const h = this.lookHdri;
+    if (!sky?.on || !h) return;
+    const k = skyAt(sky, t);
+    const file = k.file || h.file;
+    if (!file) return;
+    if (file !== (this.skyFile || h.file)) {
+      try {
+        const { env, tex } = await this.hdri(file);
+        this.scene.environment = env;
+        if (h.background) this.scene.background = tex;
+        this.skyFile = file;
+      } catch { this.message = 'Could not load that HDRI'; }
+    }
+    const rot = THREE.MathUtils.degToRad((h.rotation || 0) + k.rotation);
+    this.scene.environmentRotation.set(0, rot, 0);
+    if (h.background) { this.scene.backgroundRotation.set(0, rot, 0); this.scene.backgroundIntensity = (h.intensity ?? 1) * Math.max(0.02, k.dim); }
+    this.dimBase ??= this.scene.environmentIntensity;
+    this.scene.environmentIntensity = this.dimBase * Math.max(0.02, k.dim);
+  }
+
+  yaw() { return this.state.turn + (this.state.cameraPath?.on && this.state.cameraPath.spin === false ? 0 : this.frame * STEP); }
   applyYaw() { this.pivot.rotation.y = -THREE.MathUtils.degToRad(this.yaw()); }
 
   // Normalise the car: orient, scale to the standard length, centre, put the tyres on the floor.
