@@ -17,6 +17,8 @@ import { threeDAIStudio, createLimiter, THREE_D_AI_BASE, HIGH } from './provider
 import { createKeyStore } from './keys.mjs';
 import { createUpdater, parseVersion, updateOptions } from './updates.mjs';
 import { SERVICES, CONVERT_CREDITS, entry, append, parse, summary, defaultThresholds } from './ledger.mjs';
+import { createSpinService } from './spin.mjs';
+import { identifyCar } from './public/lib/identify.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -124,6 +126,8 @@ export async function startServer({
   updateUrl,
   updateDelayMs,
   onLowBalance, // (service, { balance, threshold }) when GET /api/spend finds a balance under its alert (main.mjs notifies)
+  identifyApi, // (tests) the vision call car auto-identify makes when a vision key is set; never a real one here
+  basePath, // (tests, Sadie's branch) the local base path Generate Spin Set prepares with; realism.mjs stubs it
 }) {
   const MODELS = path.join(dataDir, 'models');
   const BACKDROPS = path.join(dataDir, 'backdrops');
@@ -646,7 +650,15 @@ export async function startServer({
   }
 
   async function patchModel(m, body) {
-    const allowed = ['name', 'activeVersion', 'scene', 'approved'];
+    const allowed = ['name', 'activeVersion', 'scene', 'approved', 'car'];
+    if ('car' in body) {
+      // Car auto-identify's answer, confirmed or edited: { make, model, yearRange, bodyStyle, color }.
+      const c = body.car;
+      if (!c || typeof c !== 'object' || Array.isArray(c)) throw new HttpError(400, 'Bad car details');
+      const str = (v) => (v == null ? null : String(v).slice(0, 60));
+      const yr = Array.isArray(c.yearRange) && c.yearRange.length === 2 && c.yearRange.every((y) => Number.isInteger(y) && y > 1900 && y < 2100) ? c.yearRange : null;
+      m.car = { make: str(c.make), model: str(c.model), yearRange: yr, bodyStyle: str(c.bodyStyle), color: str(c.color) };
+    }
     if (Object.keys(body).some((k) => !allowed.includes(k))) throw new HttpError(400, `Only ${allowed.join(', ')} can be changed`);
     if ('name' in body) {
       if (typeof body.name !== 'string' || !body.name.trim()) throw new HttpError(400, 'Give the model a name');
@@ -826,7 +838,7 @@ export async function startServer({
   // Makes <outputRoot>/<slug>/ and copies the model files. Frames, sheets and json arrive through PUT …/file.
   async function startRender(m, { looks = [], formats = [] }) {
     const v = active(m);
-    if (v.status !== 'ready') throw new HttpError(409, 'Model is not ready yet');
+    if (!['ready', 'spin'].includes(v.status)) throw new HttpError(409, 'Model is not ready yet');
     if (!Array.isArray(looks) || !looks.every(isLook)) throw new HttpError(400, 'Unknown look');
     if (!Array.isArray(formats) || formats.some((f) => !FORMATS.includes(f))) throw new HttpError(400, 'Unknown model format');
     if (formats.length && v.provider !== 'tripo') throw new HttpError(409, TRIPO_ONLY);
@@ -836,7 +848,7 @@ export async function startServer({
     // A new output folder starts a new record; rendering into the same folder again keeps what's already there.
     const kept = m.renders?.outDir === outDir ? m.renders : { poster: m.renders?.poster };
     m.renders = { ...kept, outDir, formats, at: new Date().toISOString() };
-    await copyToHandoff(m, v.glb);
+    if (v.glb) await copyToHandoff(m, v.glb); // a photo-only spin set car has no model
     for (const fmt of formats) {
       if (v.exports[fmt]?.status === 'ready') await copyToHandoff(m, v.exports[fmt].file);
       else await startExport(m, fmt); // copied into the handoff when Tripo finishes converting
@@ -938,6 +950,33 @@ export async function startServer({
       job.error = e.message;
     });
     return jobView(job);
+  }
+
+  // ---- Spin sets for Dud Rents (spin.mjs): photo imports, Generate Spin Set, Send to Dud Rents ----
+
+  const spin = createSpinService({ modelsDir: MODELS, settings, version: VERSION, blenderScript, findBlender, runBlender, basePath });
+  // A car made from a folder of photos only: no 3D model, status 'spin'. Its frames land in the handoff folder.
+  async function importSpinCar({ name, car }) {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const m = { id, name: cleanName(name), created_at: now, activeVersion: 1, versions: [], kind: 'spin' };
+    m.slug = uniqueSlug(m.name, slugsExcept(m));
+    await mkdir(path.join(MODELS, m.id), { recursive: true });
+    m.versions.push({ n: 1, created_at: now, provider: 'spin', status: 'spin', progress: 100, exports: {}, credits: 0, generation: null });
+    library.unshift(mirror(m));
+    if (car) await patchModel(m, { car });
+    else await save();
+    return m;
+  }
+  // The car's handoff folder, made if needed (the same one renders use).
+  async function spinDir(m) {
+    if (!m.renders?.outDir) await startRender(m, { looks: [] });
+    return m.renders.outDir;
+  }
+  async function identify(body) {
+    const names = Array.isArray(body.names) ? body.names.filter((n) => typeof n === 'string').slice(0, 200) : [];
+    const hints = Array.isArray(body.hints) ? body.hints.filter((n) => typeof n === 'string').slice(0, 20) : [];
+    return identifyCar({ names, hints, apiKey: keyStore.get('vision'), callApi: identifyApi });
   }
 
   // Overlapping polls for the same task share one refresh, so a result is never downloaded twice.
@@ -1052,6 +1091,31 @@ export async function startServer({
       if (sub === 'exports' && FORMATS.includes(extra) && method === 'GET') {
         await once(`${id}:${m.activeVersion}:${extra}`, () => refreshExport(m, extra));
         return send(res, 200, active(m).exports[extra] ?? null);
+      }
+    }
+
+    if (area === 'identify' && !id && method === 'POST') return send(res, 200, await identify(await readJson(req, 64 * 1024)));
+    if (area === 'spin') {
+      if (id === 'import' && method === 'POST') return send(res, 201, await importSpinCar(await readJson(req, 16 * 1024)));
+      const m = findModel(id);
+      if (!sub && method === 'GET') return send(res, 200, spin.job(id));
+      if (!sub && method === 'DELETE') return send(res, 200, spin.cancel(id));
+      if (sub === 'start' && method === 'POST') {
+        const body = await readJson(req);
+        const outDir = await spinDir(m);
+        return send(res, 202, spin.start(m, outDir, { option: body.option ?? 72, interior: body.interior === true }));
+      }
+      if (sub === 'meta' && method === 'POST') {
+        const body = await readJson(req);
+        const out = await spin.writeMeta(m, await spinDir(m), { look: isLook(body.look) || body.look === 'interior' ? body.look : 'showroom', option: body.option ?? 72, source: typeof body.source === 'string' ? body.source.slice(0, 100) : undefined, renderer: body.renderer === 'blender' ? 'Blender Cycles (Max realism)' : undefined });
+        await save();
+        return send(res, 200, { ...out, spin: m.spin });
+      }
+      if (sub === 'send' && method === 'POST') {
+        const body = await readJson(req, 16 * 1024);
+        const marker = await spin.send(m, await spinDir(m), body.meta && typeof body.meta === 'object' ? body.meta : {}).catch((e) => { throw new HttpError(409, e.message); });
+        await save();
+        return send(res, 200, marker);
       }
     }
 

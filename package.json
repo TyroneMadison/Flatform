@@ -14,7 +14,7 @@
   "scripts": {
     "app": "electron .",
     "web": "node --env-file=.env server.mjs",
-    "test": "node --test test.mjs test/pipeline.test.mjs test/pricing.test.mjs test/providers.test.mjs test/threedai.test.mjs test/updates.test.mjs test/ledger.test.mjs test/camera.test.mjs",
+    "test": "node --test test.mjs test/pipeline.test.mjs test/pricing.test.mjs test/providers.test.mjs test/threedai.test.mjs test/updates.test.mjs test/ledger.test.mjs test/camera.test.mjs test/spin.test.mjs",
     "dist": "electron-builder --publish never"
   },
   "dependencies": {
@@ -38,6 +38,9 @@
       "keys.mjs",
       "ledger.mjs",
       "updates.mjs",
+      "spin.mjs",
+      "realism.mjs",
+      "handoff.mjs",
       "preload.cjs",
       "public/**/*",
       "package.json",

@@ -404,3 +404,25 @@
 .mp-view canvas { display: block; width: 100%; aspect-ratio: 4 / 3; }
 .mp-poster { width: 100%; max-width: 512px; border-radius: 6px; border: 1px solid var(--line-2); }
 .mp-act { display: flex; gap: 8px; }
+
+/* ---- Spin set (Dud Rents) ---- */
+.spin { display: flex; flex-direction: column; gap: 16px; }
+.spin-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.dropzone.big { min-height: 250px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; border: 2px dashed var(--line-4); }
+.dropzone.big h2 { font: 600 20px var(--display); }
+.dropzone.big.hot { border-color: var(--accent); background: var(--tint); }
+.dropzone.big .ic { color: var(--accent); }
+.who-name { font: 600 30px/1.15 var(--display); letter-spacing: -.02em; margin: 6px 0 10px; }
+.card.glass { padding: 18px 20px; }
+.btn.huge { height: 76px; font: 700 24px var(--display); letter-spacing: 0; border-radius: 12px; width: 100%; justify-content: center; }
+.btn.ok-btn { background: #2f9e5f; border: 0; color: #fff; }
+.strip { display: flex; gap: 10px; overflow-x: auto; padding: 6px 2px 10px; min-height: 90px; }
+.fr { flex: none; width: 72px; height: 72px; padding: 0; border-radius: 10px; border: 2px solid var(--line-3); background: #0d0b09; overflow: hidden; position: relative; cursor: grab; }
+.fr img { width: 100%; height: 100%; object-fit: cover; }
+.fr span { position: absolute; left: 4px; bottom: 3px; font: 500 10px var(--mono); color: #fff; text-shadow: 0 1px 2px #000; }
+.fr.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--tint); }
+.sendrow { display: flex; align-items: center; gap: 14px; }
+.adjust { border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; background: linear-gradient(#12100d, #0d0c0a); }
+.adjust summary { cursor: pointer; font: 600 15px var(--display); color: var(--accent-hi); }
+.adjust .field { margin-top: 12px; }
+.spin .renderbar { display: block; }

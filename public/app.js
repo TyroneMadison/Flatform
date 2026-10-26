@@ -86,12 +86,13 @@ export function stageOf(v) {
 }
 export function statusText(m) {
   if (m.status === 'ready') return 'Ready';
+  if (m.status === 'spin') return m.spin ? 'Spin set from photos' : 'Photos for a spin set';
   if (m.status === 'failed') return m.error || 'Generation failed';
   if (m.note) return m.note;
   const stage = stageOf(m);
   return stage === 1 ? `Queued at ${PROVIDERS[providerOf(m)].name}` : `${stagesOf(m)[stage]} · ${m.progress || 0}%`;
 }
-export const statusClass = (m) => ({ ready: 'ready', failed: 'fail' })[m.status] || 'gen';
+export const statusClass = (m) => ({ ready: 'ready', spin: 'ready', failed: 'fail' })[m.status] || 'gen';
 // "Tripo v3.1" or "3D AI Studio · Hitem3D 3.0", for a version (or the model's active one).
 export function engineLabel(v) {
   if (providerOf(v) === 'tripo') return `Tripo ${String(v.options?.model || state.settings?.model || 'v3.1').split('-')[0]}`;
@@ -415,6 +416,7 @@ function renderFrame() {
     ['Library', 'library', '#/library', ['library', 'model']],
     ['Scenes', 'scene', target ? `#/compose/${target.id}` : '#/library', ['compose']],
     ['Renders', 'film', target ? `#/render/${target.id}` : '#/library', ['render']],
+    ['Spin set', 'retry', target ? `#/spin/${target.id}` : '#/spin', ['spin']],
     ['Settings', 'settings', '#/settings', ['settings']],
   ];
   const html = links.map(([label, ic, href, names]) => {
@@ -435,7 +437,7 @@ function renderFrame() {
 }
 
 // ---- routing ----
-const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings'];
+const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings', 'spin'];
 export let route = { name: 'drop', id: null };
 let current = null;
 let navToken = 0;

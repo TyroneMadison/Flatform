@@ -6,6 +6,7 @@ import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upser
 import { icon } from '../lib/icons.js';
 import * as P from '../lib/pipeline.js';
 import { Studio, defaultScene, kelvinColor } from '../lib/studio.js';
+import { makeSheets as makeSheetSet, downscale, toBlob } from '../lib/sheets.js';
 
 let root;
 let m; // the car on screen
@@ -304,7 +305,6 @@ async function put(rel, body) {
   const r = await fetch(`/api/renders/${job.model.id}/file?path=${encodeURIComponent(rel)}`, { method: 'PUT', body });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `Could not write ${rel}`);
 }
-const toBlob = (canvas, type, quality) => new Promise((ok, fail) => canvas.toBlob((b) => (b ? ok(b) : fail(new Error(`Could not encode ${type}`))), type, quality));
 
 function progress(text, frame, total) {
   Object.assign(job, { phaseText: text, frame, total });
@@ -342,87 +342,10 @@ async function overPlate(img, plate) {
   return c;
 }
 
-// High-quality downscale: halve with smoothing until within 2x of the target, then one last step. Each halving
-// averages 2x2 pixels, so fine detail (badges, panel gaps) survives where one big jump would alias.
-function downscale(source, width, height) {
-  let cur = source;
-  for (;;) {
-    const last = cur.width / 2 < width * 1.01;
-    const c = document.createElement('canvas');
-    Object.assign(c, last ? { width, height } : { width: Math.round(cur.width / 2), height: Math.round(cur.height / 2) });
-    const g = c.getContext('2d', { willReadFrequently: last });
-    g.imageSmoothingQuality = 'high';
-    g.drawImage(cur, 0, 0, c.width, c.height);
-    cur = c;
-    if (last) return cur;
-  }
-}
-// Light unsharp mask (3x3) on opaque pixels, to undo the softening of the downscale. Edges against
-// transparency are left alone so the transparent look gets no halos.
-function sharpen(canvas, amount = 0.35) {
-  const g = canvas.getContext('2d', { willReadFrequently: true });
-  const img = g.getImageData(0, 0, canvas.width, canvas.height);
-  const src = new Uint8ClampedArray(img.data);
-  const w = canvas.width;
-  for (let y = 1; y < canvas.height - 1; y++) {
-    for (let x = 1; x < w - 1; x++) {
-      const p = (y * w + x) * 4;
-      if (src[p + 3] < 255) continue;
-      for (let c = 0; c < 3; c++) {
-        const blur = (src[p + c - 4] + src[p + c + 4] + src[p + c - w * 4] + src[p + c + w * 4]) / 4;
-        img.data[p + c] = src[p + c] + (src[p + c] - blur) * amount;
-      }
-    }
-  }
-  g.putImageData(img, 0, 0);
-  return canvas;
-}
-// The frame at every web width: 512 from the full frame, 256 from the 512, each sharpened lightly.
-function webFrames(source, look) {
-  const out = {};
-  let cur = source;
-  for (const width of P.WEB_WIDTHS) { // 512, 256
-    const f = P.frameSize(look, width);
-    cur = downscale(cur, f.width, f.height);
-    out[width] = cur;
-  }
-  for (const width of P.WEB_WIDTHS) sharpen(out[width]);
-  return out;
-}
-
-// Draws frames into the web sprite sheets as they arrive, so nothing is rendered twice.
+// Draws frames into the web sprite sheets as they arrive (lib/sheets.js), in Flatform's own web/ layout.
 function makeSheets(look, turns) {
-  const sheets = [];
-  for (const turn of turns) {
-    for (const file of P.sheetFiles(look, turn)) {
-      const same = sheets.find((s) => s.turn === turn && s.width === file.width);
-      if (same) { same.also = file; continue; } // the 512 PNG shares the 512 WebP's canvas
-      const canvas = document.createElement('canvas');
-      Object.assign(canvas, P.sheetSize(look, turn, file.width));
-      sheets.push({ turn, width: file.width, type: file.type, name: file.name, canvas, frames: P.turnFrames(turn) });
-    }
-  }
-  return {
-    draw(i, source) {
-      const small = webFrames(source, look);
-      for (const s of sheets) {
-        if (i >= s.frames) continue;
-        const { col, row } = P.cellOf(i);
-        const f = P.frameSize(look, s.width);
-        s.canvas.getContext('2d').drawImage(small[s.width], col * f.width, row * f.height);
-      }
-      return small;
-    },
-    async write(poster) {
-      for (const s of sheets) {
-        await put(`web/${s.name}`, await toBlob(s.canvas, s.type, 0.9));
-        if (s.also) await put(`web/${s.also.name}`, await toBlob(s.canvas, s.also.type));
-        s.canvas.width = s.canvas.height = 0; // free the memory
-      }
-      await put(`web/${P.posterName(look, 'webp')}`, await toBlob(poster, 'image/webp', 0.92));
-      await put(`web/${P.posterName(look, 'png')}`, await toBlob(poster, 'image/png'));
-    },
-  };
+  const files = turns.flatMap((turn) => P.sheetFiles(look, turn).map((f) => ({ turn, width: f.width, type: f.type, name: `web/${f.name}` })));
+  return makeSheetSet(look, files, { put, posterNames: { webp: `web/${P.posterName(look, 'webp')}`, png: `web/${P.posterName(look, 'png')}` } });
 }
 
 
