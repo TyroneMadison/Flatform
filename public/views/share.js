@@ -32,13 +32,13 @@ async function load() {
 function notSetUp() {
   return `<div class="card glass sh-off">
     <h2 class="hv-h">Sharing isn't set up yet</h2>
-    <p class="sub">Once it is, Share makes a link that anyone can open to see your render. No account needed for them. Setting it up is a one-time job.</p>
+    <p class="sub">Then Share makes a link anyone can open to see your render. They need no account. You only set it up once.</p>
     ${setupOpen ? `<form class="sh-setup" id="shSetup">
-        <p class="fine">Paste the two things you get when the share page is set up. Whoever looks after Flatform has the steps (SHARE-DEPLOY.md).</p>
-        <div class="field"><label for="shAddr">Share page address</label><input class="inp mono" id="shAddr" name="url" required placeholder="https://flatform-share.yourname.workers.dev" spellcheck="false" autocomplete="off"></div>
-        <div class="field"><label for="shPass">Share password</label><input class="inp mono" id="shPass" name="token" type="password" required minlength="16" autocomplete="off"></div>
-        <button class="btn pri" type="submit">Turn on sharing</button>
-      </form>` : '<button class="btn pri huge" type="button" data-sh="setup">Turn on sharing</button>'}
+        <p class="fine">Paste the two things you get when the share page is set up. The steps are in SHARE-DEPLOY.md.</p>
+        <div class="field"><label for="shAddr">Share page address</label><input class="inp mono" id="shAddr" name="url" required placeholder="https://flatform-share.yourname.workers.dev" spellcheck="false" autocomplete="off" title="The web address of your share page"></div>
+        <div class="field"><label for="shPass">Share password</label><input class="inp mono" id="shPass" name="token" type="password" required minlength="16" autocomplete="off" title="The password for your share page (16 or more letters)"></div>
+        <button class="btn pri" type="submit" title="Save these and turn sharing on">Turn on sharing</button>
+      </form>` : '<button class="btn pri huge" type="button" data-sh="setup" title="Set up sharing on this computer">Turn on sharing</button>'}
   </div>`;
 }
 
@@ -47,27 +47,27 @@ function draw() {
   if (!root?.isConnected) return;
   const ready = m && (picture() || m.renders?.video);
   const cur = mine().at(-1);
-  root.innerHTML = `<div class="libhead"><div><h1 class="ph">Share</h1><p class="sub">${m ? esc(m.name) : 'Pick a model in the Library first.'}</p></div></div>
+  root.innerHTML = `<div class="libhead"><div><h1 class="ph">Share</h1><p class="sub keep">${m ? esc(m.name) : 'Pick a model in the Library first.'}</p></div></div>
   <section class="share">
     ${!setup.ready ? notSetUp() : `<div class="card glass">
       ${m && (picture() || thumbOf(m)) ? `<img class="sh-thumb" src="${picture() ? fileUrl(m, picture()) : thumbOf(m)}" alt="">` : ''}
-      ${!ready ? `<p class="sub">Render this model first. The share page shows its picture or video.</p>${m ? `<a class="btn pri" href="#/compose/${esc(m.id)}/render" title="Open Compose at its render options">Render it in Compose</a>` : ''}`
-        : !cur ? `<button class="btn pri huge" type="button" data-sh="make">Make a share link</button>`
+      ${!ready ? `<p class="sub keep">Render this model first. The share page shows its picture or video.</p>${m ? `<a class="btn pri" href="#/compose/${esc(m.id)}/render" title="Open the Scene step at Render">Render it</a>` : ''}`
+        : !cur ? `<button class="btn pri huge" type="button" data-sh="make" title="Make a link anyone can open">Make a link</button>`
         : `<p class="label">Your link</p>
-          <div class="sh-link"><code id="shUrl">${esc(cur.url)}</code><button class="btn pri" type="button" data-sh="copy" data-url="${esc(cur.url)}">Copy</button></div>
+          <div class="sh-link"><code id="shUrl">${esc(cur.url)}</code><button class="btn pri" type="button" data-sh="copy" data-url="${esc(cur.url)}" title="Copy the link so you can paste it">Copy</button></div>
           <p class="label">Link works for</p>
-          <div class="seg" role="radiogroup" aria-label="Link works for">${Object.entries(EXPIRY).map(([k, l]) => `<button class="chip" type="button" role="radio" aria-checked="${expiryKey(cur) === k}" data-sh="expiry" data-days="${k}" data-id="${esc(cur.id)}">${l}</button>`).join('')}</div>
-          <p class="fine">${cur.expiresAt ? `Stops working ${esc(new Date(cur.expiresAt).toLocaleString())}.` : 'Works until you turn it off.'}</p>
-          <button class="btn dangerbtn" type="button" data-sh="off" data-id="${esc(cur.id)}">Turn off link</button>`}
-      ${ready ? `<details class="adjust"><summary>Adjust (more options)</summary>
-        <div class="field"><label for="shTitle">Title on the share page</label><input id="shTitle" maxlength="120" value="${esc(title)}"></div>
-        <p class="fine">Shares ${m.renders?.video ? 'the video and the poster picture' : 'the poster picture'}. New links use this title.</p>
-        ${cur ? `<button class="btn sec sm" type="button" data-sh="make">Make another link</button>` : ''}
-        <p class="fine">Sharing goes to ${esc(setup.url || '')}.</p><button class="btn ghostbtn sm" type="button" data-sh="unsetup">Turn off sharing on this computer</button></details>` : ''}
+          <div class="seg" role="radiogroup" aria-label="Link works for">${Object.entries(EXPIRY).map(([k, l]) => `<button class="chip" type="button" role="radio" aria-checked="${expiryKey(cur) === k}" data-sh="expiry" data-days="${k}" data-id="${esc(cur.id)}" title="The link works for ${l.toLowerCase()}">${l}</button>`).join('')}</div>
+          <p class="fine keep">${cur.expiresAt ? `Stops working ${esc(new Date(cur.expiresAt).toLocaleString())}.` : 'Works until you turn it off.'}</p>
+          <button class="btn dangerbtn" type="button" data-sh="off" data-id="${esc(cur.id)}" title="Stop this link from working">Turn off link</button>`}
+      ${ready ? `<details class="adjust"><summary>More options</summary>
+        <div class="field"><label for="shTitle">Title on the share page</label><input id="shTitle" maxlength="120" value="${esc(title)}" title="The name people see on the share page"></div>
+        <p class="fine">Shares ${m.renders?.video ? 'the video and the main picture' : 'the main picture'}. New links use this title.</p>
+        ${cur ? `<button class="btn sec sm" type="button" data-sh="make" title="Make one more link with this title">Make another link</button>` : ''}
+        <p class="fine">Sharing goes to ${esc(setup.url || '')}.</p><button class="btn ghostbtn sm" type="button" data-sh="unsetup" title="Turn off sharing on this computer. Old links keep working.">Turn off sharing</button></details>` : ''}
     </div>`}
     ${links.length ? `<div class="card glass"><h2 class="label">All share links</h2><ul class="sh-list">${links.map((s) => `<li class="${s.expired ? 'expired' : ''}">
-      <span>${esc(s.title)}</span><code>${esc(s.url)}</code><span class="fine">${s.mock ? 'Practice link (made before sharing was set up) · ' : ''}${s.expired ? 'Ended' : s.expiresAt ? `Until ${esc(new Date(s.expiresAt).toLocaleDateString())}` : 'Forever'}</span>
-      <button class="btn ghostbtn sm" type="button" data-sh="off" data-id="${esc(s.id)}">${s.expired ? 'Remove' : 'Turn off'}</button></li>`).join('')}</ul></div>` : ''}
+      <span>${esc(s.title)}</span><code>${esc(s.url)}</code><span class="fine keep">${s.mock ? 'Practice link (made before sharing was on) · ' : ''}${s.expired ? 'Ended' : s.expiresAt ? `Until ${esc(new Date(s.expiresAt).toLocaleDateString())}` : 'Forever'}</span>
+      <button class="btn ghostbtn sm" type="button" data-sh="off" data-id="${esc(s.id)}" title="${s.expired ? 'Take it off this list' : 'Stop this link from working'}">${s.expired ? 'Remove' : 'Turn off'}</button></li>`).join('')}</ul></div>` : ''}
   </section>`;
 }
 

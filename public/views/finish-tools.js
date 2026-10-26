@@ -9,7 +9,7 @@ import { addVersion, diffSettings, wipeClip, sliderKey } from '../lib/versions.j
 import { buildLods, table } from '../lib/lod.js';
 
 export const ASPECTS = { free: null, '1:1': 1, '16:9': 16 / 9, '4:5': 4 / 5 };
-export const LOOK_NAMES = { none: 'Normal', painterly: 'Painterly', cel: 'Cel' };
+export const LOOK_NAMES = { none: 'Normal', painterly: 'Painted', cel: 'Cartoon' };
 /** The picture settings that are saved with each version. */
 export const defaults = () => ({ look: 'none', trim: true, padding: 5, shadow: true, aspect: 'free' });
 const fileApi = (m, rel) => `/api/renders/${encodeURIComponent(m.id)}/file?path=${encodeURIComponent(rel)}`;
@@ -49,13 +49,13 @@ function process() {
   out = applyStyle(img, opts.look);
 }
 
-const seg = (name, val, items) => `<div class="seg" role="radiogroup" aria-label="${name}">${Object.entries(items).map(([k, l]) => `<button class="chip" type="button" role="radio" aria-checked="${val === k}" data-opt="${name}" data-val="${k}">${l}</button>`).join('')}</div>`;
-const toggle = (key, label) => `<label class="toggle"><input type="checkbox" data-opt="${key}" ${opts[key] ? 'checked' : ''}><span>${label}</span></label>`;
+const seg = (name, val, items) => `<div class="seg" role="radiogroup" aria-label="${name}">${Object.entries(items).map(([k, l]) => `<button class="chip" type="button" role="radio" aria-checked="${val === k}" data-opt="${name}" data-val="${k}" title="${name === 'look' ? `Use the ${l.toLowerCase()} look` : `Make the picture ${l.toLowerCase()}`}">${l}</button>`).join('')}</div>`;
+const toggle = (key, label) => `<label class="toggle" title="${label}, on or off"><input type="checkbox" data-opt="${key}" ${opts[key] ? 'checked' : ''}><span>${label}</span></label>`;
 
 function draw() {
   if (!host) return;
   if (!m?.renders?.poster && !m?.renders?.stills?.length) {
-    host.innerHTML = `<div class="card glass"><h2 class="label">Picture</h2><p class="sub">Render this model once, then come back here to trim it, change the look and compare versions.</p><a class="btn pri" href="#/compose/${esc(m?.id || '')}/render" title="Open Scene and render at the Render tool">Render it in Scene</a></div>`;
+    host.innerHTML = `<div class="card glass"><h2 class="label">Picture</h2><p class="sub keep">Render this model once. Then come back to trim it, change the look and compare.</p><a class="btn pri" href="#/compose/${esc(m?.id || '')}/render" title="Open Scene and render at the Render tool">Render it in Scene</a></div>`;
     return;
   }
   const vs = list.length ? list : [];
@@ -67,13 +67,13 @@ function draw() {
       <div class="ft-side">
         <p class="ft-h">Look</p>${seg('look', opts.look, LOOK_NAMES)}
         ${toggle('trim', 'Trim empty space')}
-        <details class="adjust"><summary>Adjust (more options)</summary>
-          <div class="field"><label for="ftPad">Space around the model: <b id="ftPadV">${opts.padding}%</b></label><input id="ftPad" type="range" min="0" max="30" value="${opts.padding}" data-opt="padding"></div>
+        <details class="adjust"><summary>More options</summary>
+          <div class="field"><label for="ftPad">Space around the model: <b id="ftPadV">${opts.padding}%</b></label><input id="ftPad" type="range" min="0" max="30" value="${opts.padding}" data-opt="padding" title="How much empty space to leave around the model"></div>
           <div class="field">${toggle('shadow', 'Keep the shadow inside the trim')}</div>
           <div class="field"><p class="ft-h">Shape</p>${seg('aspect', opts.aspect, { free: 'Free', '1:1': 'Square', '16:9': 'Wide', '4:5': 'Tall' })}</div>
         </details>
-        <button class="btn pri huge" type="button" data-ft="save">Save picture</button>
-        <p class="fine">Saved as a new version in the render folder. The first render is kept.</p>
+        <button class="btn pri huge" type="button" data-ft="save" title="Save this picture as a new version">Save picture</button>
+        <p class="fine">Saves as a new version. The first render is kept.</p>
       </div>
     </div>
   </div>
@@ -82,17 +82,17 @@ function draw() {
     <div class="ft-wipe" id="ftWipe" role="slider" tabindex="0" aria-label="Compare versions" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(t * 100)}">
       <canvas id="ftA"></canvas><canvas id="ftB"></canvas><div class="ft-handle" id="ftHandle"></div>
     </div>
-    <p class="fine">Drag the middle to compare versions. Left: ${esc(nameOf(pickA))}. Right: ${esc(nameOf(pickB))}.</p>
-    ${vs.length ? `<details class="adjust"><summary>Adjust (more options)</summary>
-      <div class="field"><label for="ftVa">Left side</label><select id="ftVa" data-pick="a">${optList(pickA)}</select></div>
-      <div class="field"><label for="ftVb">Right side</label><select id="ftVb" data-pick="b">${optList(pickB)}</select></div>
-      <p class="fine">${esc(changes())}</p></details>` : ''}
+    <p class="fine keep">Drag the middle to compare. Left: ${esc(nameOf(pickA))}. Right: ${esc(nameOf(pickB))}.</p>
+    ${vs.length ? `<details class="adjust"><summary>More options</summary>
+      <div class="field"><label for="ftVa">Left side</label><select id="ftVa" data-pick="a" title="Pick the version on the left">${optList(pickA)}</select></div>
+      <div class="field"><label for="ftVb">Right side</label><select id="ftVb" data-pick="b" title="Pick the version on the right">${optList(pickB)}</select></div>
+      <p class="fine keep">${esc(changes())}</p></details>` : ''}
   </div>
   <div class="card glass ft">
     <h2 class="label">Light copy for website</h2>
-    <p class="sub">Smaller 3D files that load fast on a web page. Your full model stays as it is.</p>
-    ${lods ? `<table class="ft-lod"><thead><tr><th>Copy</th><th>Triangles</th></tr></thead><tbody>${lods.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.tris.toLocaleString()}</td></tr>`).join('')}</tbody></table>` : ''}
-    <button class="btn ${lods ? 'sec' : 'pri'} wide" type="button" data-ft="lod">${lods ? 'Make them again' : 'Make light copies'}</button>
+    <p class="sub">Smaller 3D files that load fast on a website. Your full model stays the same.</p>
+    ${lods ? `<table class="ft-lod"><thead><tr><th>Copy</th><th>Pieces</th></tr></thead><tbody>${lods.map((r) => `<tr><td>${esc(r.name.replace(/^LOD(\d)/, 'Copy $1').replace('Full (export)', 'Full model'))}</td><td>${r.tris.toLocaleString()}</td></tr>`).join('')}</tbody></table>` : ''}
+    <button class="btn ${lods ? 'sec' : 'pri'} wide" type="button" data-ft="lod" title="Save smaller copies of the model for websites">${lods ? 'Make them again' : 'Make light copies'}</button>
   </div>`;
   paint();
 }
@@ -163,7 +163,7 @@ async function makeLods() {
       const r = await fetch(fileApi(m, `lod/${slug}-${l.name}.glb`), { method: 'PUT', body: glb });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
     }
-    lods = table(Math.round(full), levels); toast('Light copies saved in the lod folder.', 'ok'); draw();
+    lods = table(Math.round(full), levels); toast('Light copies saved in the render folder (lod).', 'ok'); draw();
   } catch (e) { toast(`Could not make light copies: ${e.message}`, 'bad'); }
 }
 

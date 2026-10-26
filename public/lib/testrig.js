@@ -139,7 +139,7 @@ function bulletJump(s, input, T) {
  */
 export function step(prev, input = {}, dt = 1 / 60, world = ARENA, T = TUNE) {
   const s = structuredClone(prev);
-  dt = Math.min(dt, 1 / 30);
+  dt = Math.max(0, Math.min(dt, 1 / 30)); // a frame stamped before the last one must not run time backwards (NaN)
   const v = s.vel;
   const pressed = (k) => Boolean(input[k]) && !s.held[k];
   let jumpNow = pressed('jump'); // cleared once used, so one press is one jump

@@ -9,7 +9,7 @@ import { createKeyStore } from '../keys.mjs';
 
 test('built-in templates: five per kind, each sets lighting, camera and background', () => {
   assert.deepEqual(templatesFor('warframe').map((t) => t.name), ['Orokin hall', 'Void black', 'Relay plaza', 'Studio turnaround', 'TennoGen shot']);
-  assert.deepEqual(templatesFor('car').map((t) => t.name), ['Dud Rents showroom', 'Garage', 'Desert dusk', 'White cyclorama', 'Night city']);
+  assert.deepEqual(templatesFor('car').map((t) => t.name), ['Dud Rents showroom', 'Garage', 'Desert dusk', 'White studio', 'Night city']);
   for (const t of BUILTIN_TEMPLATES) {
     const s = templateScene(t.scene);
     assert.ok(s.preset && s.camera && s.look?.lights && s.look?.background, t.id);
@@ -40,4 +40,16 @@ test('save, list and delete your own templates per workspace', async () => {
     const d = await fetch(`${base}/${t.id}?workspace=warframe`, { method: 'DELETE' });
     assert.equal(d.status, 200); assert.deepEqual(await d.json(), []);
   } finally { await srv.close(); }
+});
+
+test('Night City is not washed out: soft bloom, high threshold, dimmer signs, capped glow input', async () => {
+  const { bloom } = BUILTIN_TEMPLATES.find((t) => t.id === 'car-night-city').scene.look;
+  assert.ok(bloom.on && bloom.strength <= 0.25, `bloom strength ${bloom.strength} (was 0.5)`);
+  assert.ok(bloom.threshold >= 1.5, `bloom threshold ${bloom.threshold} (was 0.9)`);
+  const { ENVIRONMENTS } = await import('../public/lib/environments.js');
+  const m = ENVIRONMENTS['night-city-rain'].mats;
+  for (const k of ['pink', 'cyan', 'lamp']) assert.ok(m[k].emit <= 2.5, `${k} sign emit ${m[k].emit}`);
+  // A specular spike on wet asphalt is unbounded HDR, so the glow's input is capped in post.js.
+  const { readFile } = await import('node:fs/promises');
+  assert.match(await readFile(new URL('../public/lib/post.js', import.meta.url), 'utf8'), /min\( gl_FragColor, vec4\( 2\.0 \) \)/);
 });

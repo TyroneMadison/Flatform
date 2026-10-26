@@ -34,10 +34,10 @@ test('status light: idle, busy with % and ETA, paused, done, error, cancelled', 
 });
 
 test('queue tray: plain labels, runs in order, keeps only the last few finished', () => {
-  assert.equal(taskLabel({ still: true, t360: true, studio: true, transparent: true }), 'Still + 360° turntable · Compose scene, Transparent');
+  assert.equal(taskLabel({ still: true, t360: true, studio: true, transparent: true }), 'Still + 360° spin · My scene, See-through');
   assert.equal(taskLabel({ models: true, showroom: true }), 'Model files'); // looks only matter for pictures
   assert.equal(taskLabel({}), 'Nothing');
-  assert.equal(lookName('studio'), 'Compose scene');
+  assert.equal(lookName('studio'), 'My scene');
   const q = [{ id: 1, status: 'done' }, { id: 2, status: 'running' }, { id: 3, status: 'waiting' }, { id: 4, status: 'waiting' }];
   assert.equal(nextTask(q).id, 3);
   assert.equal(waitingCount(q), 2);
@@ -98,7 +98,8 @@ test('Compose render area keeps every old render option, with a tooltip on each 
 
 test('White Cyc Studio is the default background', async () => {
   const studio = await readFile('public/lib/studio.js', 'utf8');
-  assert.match(studio, /settings\.defaultScene : 'white-cyc-studio'/);
+  assert.match(studio, /preset: roomFor\(settings\.defaultScene\)/);
+  assert.equal((await import('../public/lib/environments.js')).roomFor(undefined), 'white-cyc-studio');
   const server = await readFile('server.mjs', 'utf8');
   assert.match(server, /defaultScene: 'white-cyc-studio', alsoTransparent/);
   assert.match(server, /scenesV6/);

@@ -10,13 +10,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
-import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, ENVIRONMENTS, envCamera } from './public/lib/pipeline.js';
+import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, ENVIRONMENTS, envCamera, roomFor } from './public/lib/pipeline.js';
 import { blenderEnvironment } from './public/lib/environments.js';
 import { findBlender as findBlenderOn, blenderVersion, blenderPose } from './blender.mjs';
+import { runAutoRig } from './autorig.mjs';
 import { PROVIDERS, VIEWS, DEFAULT_PROVIDER, normalize, baseSetup, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
 import { estimate } from './public/lib/pricing.js';
 import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
 import { resolveColors, deserializeMaterial, blenderMaterial } from './public/lib/tenno.js';
+import { glbPieces, locatePieces } from './glb-pieces.mjs';
 import { cleanExtras } from './public/lib/render-types.js';
 import { inferRegions, checkAnthropicKey } from './inference.mjs';
 import { createQueue } from './batch.mjs';
@@ -42,6 +44,7 @@ const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
 import { ENHANCE, enhanceBlock } from './enhance.mjs';
 import { createShares, cleanShareUrl } from './share.mjs';
 import { createRenderHistory } from './render-history.mjs';
+import { stampText, stampFile } from './public/lib/stamp.js';
 import { planOvernight, morningSummary, awakeGuard, MAX_TRIES } from './overnight.mjs';
 import { runPlugin, pluginStore } from './plugins.mjs';
 import { DEFAULTS as BACKUP_DEFAULTS, checkBackup, runBackup } from './backup.mjs';
@@ -82,7 +85,7 @@ const BACKDROP_TYPES = ['.jpg', '.jpeg', '.png', '.hdr', '.exr'];
 const FAILED = ['failed', 'cancelled', 'banned'];
 // Global keys work on .ai; .com (the host the docs show) is the China region and rejects global keys.
 const REGIONS = { global: 'https://openapi.tripo3d.ai/v3', china: 'https://openapi.tripo3d.com/v3' };
-const SCENES = [...Object.keys(ENVIRONMENTS), 'ring', 'transparent', 'cyclorama', 'miami', 'custom']; // 'ring' was called 'gold' before v0.4
+const SCENES = Object.keys(ENVIRONMENTS); // the one room list every workspace shares (environments.js ROOMS)
 // Version fields mirrored at the top level of each library entry, so v0.2 readers and the UI see the active version.
 const VERSION_FIELDS = ['task_id', 'status', 'progress', 'tripo_status', 'glb', 'thumb', 'credits', 'error', 'exports', 'source',
   'provider', 'engine', 'mode', 'views', 'upstream_status', 'note', 'generation', 'file', 'fileName'];
@@ -201,11 +204,12 @@ export async function startServer({
   if (!settings.outputRoot && defaultOutputRoot) {
     try { await mkdir(defaultOutputRoot, { recursive: true }); settings.outputRoot = path.resolve(defaultOutputRoot); settings.outputRootIsDefault = true; } catch { /* drive missing: the app asks for a folder */ }
   }
-  if (settings.defaultScene === 'gold') settings.defaultScene = 'ring';
-  // v0.5: Showroom became the default scene. 'ring' was the old built-in default, so it moves over once.
-  if (!settings.scenesV5) Object.assign(settings, { scenesV5: true, ...(settings.defaultScene === 'ring' && { defaultScene: 'showroom' }) });
+  // v0.5: Showroom became the default scene. 'ring' (once 'gold') was the old built-in default, so it moves over once.
+  if (!settings.scenesV5) Object.assign(settings, { scenesV5: true, ...(['ring', 'gold'].includes(settings.defaultScene) && { defaultScene: 'showroom' }) });
   // v0.6: White Cyc Studio became the default scene; Showroom was the default before, so it moves over once.
   if (!settings.scenesV6) Object.assign(settings, { scenesV6: true, ...(settings.defaultScene === 'showroom' && { defaultScene: 'white-cyc-studio' }) });
+  // 1.1.2: every workspace shares the same 3D rooms; an old flat scene (cyclorama, Miami, your backdrop) starts in its closest room.
+  settings.defaultScene = roomFor(settings.defaultScene);
   const apiBase = () => fixedApiBase || REGIONS[settings.region] || REGIONS.global;
 
   // ponytail: whole library in one JSON file rewritten on each change; move to SQLite past a few thousand models
@@ -234,8 +238,9 @@ export async function startServer({
       migrated = true;
     }
     for (const v of m.versions) if (!v.provider) { v.provider = 'tripo'; migrated = true; }
-    if (m.scene?.preset === 'gold') {
-      m.scene.preset = 'ring';
+    // Old flat scenes (gold or ring studio, cyclorama, Miami, your backdrop) open in their closest 3D room.
+    if (m.scene?.preset && m.scene.preset !== 'transparent' && m.scene.preset !== roomFor(m.scene.preset)) {
+      m.scene.preset = roomFor(m.scene.preset);
       if (existsSync(path.join(MODELS, m.id))) await writeAtomic(path.join(MODELS, m.id, 'scene.json'), m.scene);
       migrated = true;
     }
@@ -976,7 +981,7 @@ export async function startServer({
         const okPath = (x) => x === '' || (typeof x === 'string' && x.length < 1024 && path.isAbsolute(x));
         if (!l || typeof l !== 'object' || !okPath(l.weightsDir ?? '') || !okPath(l.python ?? '')) throw new HttpError(400, 'localEngine needs full folder and file paths');
         next.localEngine = { weightsDir: l.weightsDir ?? settings.localEngine.weightsDir, python: l.python ?? settings.localEngine.python };
-      } else if (['texture', 'pbr', 'alsoTransparent'].includes(k)) bool(k);
+      } else if (['texture', 'pbr', 'alsoTransparent', 'showHelp'].includes(k)) bool(k);
       else if (k === 'theme') next.theme = normalizeTheme(body.theme);
       else if (k === 'gridUnit') { if (!['m', 'ft'].includes(body.gridUnit)) throw new HttpError(400, 'Grid unit must be m or ft'); next.gridUnit = body.gridUnit; }
       else if (k === 'gitRepo') {
@@ -1116,7 +1121,7 @@ export async function startServer({
   }
 
   // Version history (render-history.mjs): the render's first picture and the settings that made it.
-  const noteVersion = (m, picture, kind) => history.add(m.id, { picture, pass: m.renders?.at, kind,
+  const noteVersion = (m, picture, kind) => history.add(m.id, { picture, pass: m.renders?.at, kind, stamp: stampText(m.renders?.at),
     settings: { scene: m.scene || {}, lighting: settings.lighting, glass: settings.glass } }).catch((e) => console.error(`Version history: ${e.message}`));
 
   // ---- Optional Blender renderer ----
@@ -1155,7 +1160,8 @@ export async function startServer({
   }
 
   // effect: a Render idea's exploded parts or clay / blueprint (render-types.js). paint: Every colour's repainted body.
-  function startBlender(m, { looks = [], frames = FRAMES, still, effect, paint: paintOverride }) {
+  // stamp: burn the render's start time into every picture (the Render step's Time stamp, on unless turned off).
+  function startBlender(m, { looks = [], frames = FRAMES, still, effect, paint: paintOverride, stamp = true }) {
     const bin = findBlender();
     if (!bin) throw new HttpError(409, 'Blender not found. Install Blender 4.x or locate it in Settings.');
     if (!m.renders?.outDir) throw new HttpError(409, 'Start the render first');
@@ -1163,6 +1169,7 @@ export async function startServer({
     if (![FRAMES, HALF, 0].includes(frames)) throw new HttpError(400, `Render ${FRAMES} or ${HALF} frames`);
     if (still !== undefined && !(Number.isFinite(still) && still >= 0 && still < 360)) throw new HttpError(400, 'Bad still angle');
     if (jobs.get(m.id)?.status === 'running') throw new HttpError(409, 'Blender is already rendering this car');
+    if (rigging(m.id)) throw new HttpError(423, 'Rigging… Joints are being added to this model. The render starts when they are done.');
     const v = active(m);
     const sceneFile = path.join(MODELS, m.id, 'scene.json');
     // 3D environments: Blender builds the same place (environments.js) around the car, with its eye-level camera
@@ -1170,7 +1177,7 @@ export async function startServer({
     const builtinHdri = (name) => (Object.hasOwn(HDRIS, name) ? path.join(hdriDir, `${name}.hdr`) : null);
     const envArg = (look) => {
       const picked = look === 'showroom' ? 'showroom' : look === 'transparent' ? null : m.scene?.preset || settings.defaultScene;
-      const preset = picked === 'cyclorama' ? 'white-cyc-studio' : picked; // Compose's default white cyc, built as the 3D one
+      const preset = picked && roomFor(picked); // the same room Compose shows (an old flat scene: its closest room)
       if (!ENVIRONMENTS[preset]) return [];
       const glb = (file) => path.join(envDir, path.basename(file));
       return ['--environment', JSON.stringify(blenderEnvironment(preset, envCamera(ENVIRONMENTS[preset].cam, 4 / 3), { hdri: builtinHdri, glb }))];
@@ -1189,9 +1196,15 @@ export async function startServer({
     const fx = cleanExtras({ effect }).effect;
     const effectArg = fx ? ['--effect', JSON.stringify(fx)] : [];
     const materialsFile = path.join(MODELS, m.id, 'blender-materials.json');
-    const materials = paint?.pieces ? Object.fromEntries(Object.entries(paint.pieces).filter(([, p]) => p && (p.material || p.slot || p.colors || p.region || p.hidden))
-      .map(([key, p]) => [key, { ...blenderMaterial(deserializeMaterial(p.material), resolveColors(paint, p)), slot: p.slot, textured: p.material?.textured !== false && !p.material?.color, ...(p.hidden && { hidden: true }) }])) : {};
+    const specs = paint?.pieces ? Object.fromEntries(Object.entries(paint.pieces).filter(([, p]) => p && (p.material || p.slot || p.colors || p.region || p.hidden))
+      .map(([key, p]) => [key, { ...blenderMaterial(deserializeMaterial(p.material), resolveColors(paint, p), p.slot), slot: p.slot, textured: p.material?.textured !== false && !p.material?.color, ...(p.hidden && { hidden: true }) }])) : {};
+    // Each piece's Blender object and material slot (a mesh with Paint and Accents is two pieces in the app, one object in Blender).
+    let where = [];
+    if (Object.keys(specs).length) { try { where = glbPieces(readFileSync(path.join(MODELS, m.id, v.glb))); } catch { /* no file: keys only */ } }
+    const materials = locatePieces(specs, where);
     const extrasArg = extrasOf(m);
+    const stampArg = stamp !== false && stampText(m.renders.at) ? ['--stamp', stampText(m.renders.at)] : []; // one stamp for every look and frame
+    const stillOut = (look) => path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still, stampFile(m.renders.at)));
     const job = { status: 'running', looks, look: looks[0], frame: 0, frames, error: null };
     jobs.set(m.id, job);
     (async () => {
@@ -1207,12 +1220,12 @@ export async function startServer({
           ...(existsSync(sceneFile) ? ['--scene', sceneFile] : []),
           '--rig', JSON.stringify({ lighting: settings.lighting, glass: settings.glass }),
           ...lookArg, '--materials', materialsFile, ...poseArg, ...effectArg, ...extrasArg, '--kind', m.kind === 'humanoid' ? 'humanoid' : 'car',
-          ...envArg(look),
-          ...(still !== undefined ? ['--still', String(still), '--still-out', path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still))] : []),
+          ...envArg(look), ...stampArg,
+          ...(still !== undefined ? ['--still', String(still), '--still-out', stillOut(look)] : []),
         ]);
       }
       job.status = 'done';
-      const first = still !== undefined ? path.join(m.renders.outDir, 'stills', stillName(m.slug, looks[0], still))
+      const first = still !== undefined ? stillOut(looks[0])
         : path.join(m.renders.outDir, 'frames', looks[0], `${m.slug}_000.png`);
       if (existsSync(first)) await noteVersion(m, first, still !== undefined ? 'Picture' : 'Spin video');
     })().catch((e) => {
@@ -1237,33 +1250,48 @@ export async function startServer({
     return list.length ? ['--extras', JSON.stringify(list)] : [];
   }
 
-  // ---- Free auto-rig (render/blender_autorig.py): a Mixamo-named skeleton, bound with automatic weights, saved
-  // as a new version (rigged.glb). Humanoids only; Blender runs on this computer, nothing is paid for.
-  const rigJobs = new Map(); // model id → { status, error, version }
-  const rigView = (job) => job && { status: job.status, error: job.error, version: job.version };
-  function startRig(m) {
+  // ---- Free auto-rig (autorig.mjs): a Mixamo-named skeleton placed on the model's own limbs, saved as a new version
+  // (rigged-vN.glb). Humanoids only; Blender runs on this computer, nothing is paid for. Each job works in its own
+  // folder (rig-jobs/<model>-<time>), never in the model folder or a render's; the model's file is only read. The
+  // rigged file joins the model only once it passed every check, and only then does the model switch to it.
+  // While a model is being rigged its Blender renders wait (startBlender says so); the page shows "Rigging…".
+  const rigJobs = new Map(); // model id → { status, step, error, fallback, version, seconds }
+  const rigView = (job) => job && { status: job.status, step: job.step, error: job.error, fallback: job.fallback, version: job.version, seconds: job.seconds };
+  const rigging = (id) => rigJobs.get(id)?.status === 'running';
+  function startRig(m, { markers = null } = {}) {
     if ((m.kind || 'car') !== 'humanoid') throw new HttpError(409, 'Only humanoids are rigged. Set this model to Humanoid first; cars are never rigged.');
     const v = active(m);
     if (v.status !== 'ready' || !v.glb) throw new HttpError(409, 'The model is not ready yet');
+    if (v.rigged) throw new HttpError(409, 'This version already has joints. Pick the version before them to add joints again.');
     const bin = findBlender();
     if (!bin) throw new HttpError(409, 'Auto-rig runs in Blender, which was not found. Install Blender 4.x or locate it in Settings.');
-    if (rigJobs.get(m.id)?.status === 'running') throw new HttpError(409, 'Already rigging this model');
+    if (rigging(m.id)) throw new HttpError(409, 'Already rigging this model');
+    if (jobs.get(m.id)?.status === 'running') throw new HttpError(409, 'This model is rendering in Blender. Add joints when the render is done.');
+    if (markers !== null && (typeof markers !== 'object' || Array.isArray(markers))) throw new HttpError(400, 'Bad landmarks');
     const n = Math.max(...m.versions.map((x) => x.n)) + 1;
     const out = n > 1 ? `rigged-v${n}.glb` : 'rigged.glb';
-    const job = { status: 'running', error: null, version: null };
+    const dir = path.join(dataDir, 'rig-jobs', `${m.id}-${Date.now()}`);
+    const job = { status: 'running', step: 'Starting', error: null, fallback: null, version: null, seconds: null };
     rigJobs.set(m.id, job);
-    runBlender(job, bin, ['-b', '-P', rigScript, '--', '--glb', path.join(MODELS, m.id, v.glb), '--out', path.join(MODELS, m.id, out)])
-      .then(async () => {
-        if (!existsSync(path.join(MODELS, m.id, out))) throw new Error('Blender finished without writing the rigged model');
+    const clean = () => rm(dir, { recursive: true, force: true }).catch(() => {});
+    (async () => {
+      try {
+        const { file, report } = await runAutoRig({ glb: path.join(MODELS, m.id, v.glb), dir, script: rigScript, markers, run: (args) => runBlender(job, bin, args), onStep: (t) => { job.step = t; } });
+        await copyFile(file, path.join(MODELS, m.id, out));
+        await clean();
         const now = new Date().toISOString();
         m.versions.push({ n, created_at: now, provider: 'rig', status: 'ready', progress: 100, glb: out, thumb: v.thumb, source: v.source,
-          exports: {}, credits: 0, generation: null, rigged: true, note: `Auto-rigged from version ${v.n} in Blender` });
+          exports: {}, credits: 0, generation: null, rigged: true, from: v.n, rig: { seconds: report.seconds, pieces: report.islands, markers: report.markers },
+          note: `Auto-rigged from version ${v.n} in Blender` });
         m.activeVersion = n;
         mirror(m);
         await save();
-        Object.assign(job, { status: 'done', version: n });
-      })
-      .catch((e) => Object.assign(job, { status: 'failed', error: e.message.replace(/^.*FLATFORM_ERROR /, '') }));
+        Object.assign(job, { status: 'done', version: n, seconds: report.seconds });
+      } catch (e) {
+        await clean();
+        Object.assign(job, { status: 'failed', error: e.message.replace(/^.*FLATFORM_ERROR /, ''), fallback: e.fallback || null });
+      }
+    })();
     return rigView(job);
   }
 
@@ -1677,7 +1705,7 @@ export async function startServer({
         const s = Object.keys(rig).length ? await saveSettings(rig) : settingsView();
         return send(res, 200, { model: m, settings: s });
       }
-      if (sub === 'rig' && method === 'POST') return send(res, 202, startRig(m));
+      if (sub === 'rig' && method === 'POST') return send(res, 202, startRig(m, { markers: (await readJson(req, 16384)).markers ?? null }));
       if (sub === 'rig' && method === 'GET') return send(res, 200, rigView(rigJobs.get(id)) ?? null);
       if (sub === 'versions' && method === 'POST') return send(res, 201, await addVersion(req, m));
       if (sub === 'enhance' && method === 'POST') return send(res, 202, await startEnhance(m, (await readJson(req)).kind));

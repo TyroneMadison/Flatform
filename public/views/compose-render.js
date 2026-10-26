@@ -6,7 +6,7 @@
 // A render belongs to the car it started on and keeps going if you leave Compose; the top-bar light follows it.
 import { mountExport } from './compose-video.js';
 import { $, $$, esc, state, api, send, toast, findModel, fileUrl, upsert, refresh, native, announce, providerOf, FORMATS, setRenderLight, go, pickDock } from '../app.js';
-import { statusLight, taskLabel, resultFile, nextTask, waitingCount, trimQueue, STATUS_TEXT } from '../lib/render-status.js';
+import { statusLight, rigLight, blockedByRig, taskLabel, resultFile, nextTask, waitingCount, trimQueue, STATUS_TEXT } from '../lib/render-status.js';
 import { icon } from '../lib/icons.js';
 import * as P from '../lib/pipeline.js';
 import { Studio, defaultScene, kelvinColor } from '../lib/studio.js';
@@ -14,6 +14,7 @@ import { tennogenApplies, tennogenCard, onTennogen, onTennogenSubmit, tennogenGa
 import { makeSheets as makeSheetSet, downscale, toBlob } from '../lib/sheets.js';
 import { RENDER_TYPES, typeOf, defaultOption, planRun, cleanExtras } from '../lib/render-types.js';
 import { applyEffect, styled, poster, vertical } from '../lib/render-effects.js';
+import { stampText, stampFile, burnStamp } from '../lib/stamp.js';
 
 let root;
 let m; // the car on screen
@@ -53,20 +54,20 @@ export function mountRender(el, model, h = {}) {
   </div>
   <button class="btn pri big ra-run" type="button" data-act="run" id="raRun" title="Start making it. You can keep working while it renders."></button>
   <div id="raIdeasSlot"></div>
-  <details class="ra-settings" id="raMore"><summary title="What to render, looks, render light, engine, file types and the folder renders are saved in">More settings</summary>
+  <details class="ra-settings" id="raMore"><summary title="What to make, looks, light, quality, file types and the save folder">More settings</summary>
   <div class="export">
     <div class="ex-left" id="left"></div>
     <div class="ex-mid">
-      <div class="rowhead sheethead"><h2 class="label">Sprite preview · 360°</h2>
+      <div class="rowhead sheethead"><h2 class="label">Spin preview · 360°</h2>
         <div class="chips seg sm" role="radiogroup" aria-label="Preview look">
           <button class="chip" type="button" role="radio" data-preview="showroom" title="Show the Showroom look in the preview">Showroom</button>
-          <button class="chip" type="button" role="radio" data-preview="studio" title="Show your Compose scene in the preview">Compose scene</button>
-          <button class="chip" type="button" role="radio" data-preview="transparent" title="Show the see-through look in the preview">Transparent</button>
+          <button class="chip" type="button" role="radio" data-preview="studio" title="Show your own scene in the preview">My scene</button>
+          <button class="chip" type="button" role="radio" data-preview="transparent" title="Show the see-through background in the preview">See-through</button>
         </div></div>
-      <div class="sheet"><canvas id="sheet360" aria-label="Preview of the 360° sprite sheet. It fills in frame by frame while rendering."></canvas></div>
-      <div class="sheet-meta"><span>${P.COLUMNS} columns × ${P.spriteGrid(P.FRAMES).rows} rows</span><span>Frame 000 is front ¾</span><span>Web copies at 512 and 256 px, WebP + PNG</span></div>
-      <div class="rowhead sheethead"><h2 class="label">180° half turn · detail page</h2><span class="sub">Cut from the same ${P.FRAMES} frames, no extra rendering</span></div>
-      <div class="sheet"><canvas id="sheet180" aria-label="Preview of the 180° sprite sheet. It fills in frame by frame while rendering."></canvas></div>
+      <div class="sheet"><canvas id="sheet360" aria-label="Preview of the 360° spin. It fills in picture by picture while rendering."></canvas></div>
+      <div class="sheet-meta"><span>${P.COLUMNS} columns × ${P.spriteGrid(P.FRAMES).rows} rows</span><span>Picture 000 is front ¾</span><span>Web copies at 512 and 256 px, WebP + PNG</span></div>
+      <div class="rowhead sheethead"><h2 class="label">180° half spin · detail page</h2><span class="sub">Made from the same ${P.FRAMES} pictures, no extra wait</span></div>
+      <div class="sheet"><canvas id="sheet180" aria-label="Preview of the 180° half spin. It fills in picture by picture while rendering."></canvas></div>
     </div>
     <aside class="ex-right" id="right"></aside>
   </div></details>`;
@@ -101,7 +102,7 @@ export function showRenderIntent(intent) {
 }
 
 function freshOpts() {
-  const o = { still: false, t360: true, t180: true, models: false, formats: new Set(), ...Object.fromEntries(LOOK_KEYS.map((l) => [l, P.DEFAULT_LOOKS.includes(l)])) };
+  const o = { still: false, t360: true, t180: true, models: false, stamp: true, formats: new Set(), ...Object.fromEntries(LOOK_KEYS.map((l) => [l, P.DEFAULT_LOOKS.includes(l)])) };
   if (state.settings?.alsoTransparent === false && !running()) o.transparent = false;
   return o;
 }
@@ -170,28 +171,30 @@ function renderLeft() {
   const tripo = providerOf(m) === 'tripo'; // only Tripo can convert its own models to other formats
   const html = `<h2 class="label">What to render</h2>
     ${card('still', 'Still picture', `PNG · 2048 px · the angle you see now (${stillYaw(m)}°)`, 'One sharp picture from the angle the scene is turned to right now')}
-    ${card('t360', '360° turntable', `${P.FRAMES} frames · ${P.STEP}° steps · loops`, 'A full spin you can drag on a website. Makes the sprite sheets and a viewer page.')}
-    ${card('t180', '180° half turn', `Frames 000–0${P.HALF - 1} · stops at both ends`, 'Half a spin, front to back, for a detail page. Uses the same frames as the 360.')}
-    ${card('models', 'Model files', tripo ? 'GLB · GLTF · FBX · USDZ · OBJ · STL · 3MF' : 'GLB', 'Copy the 3D model itself into the handoff folder')}
-    ${opts.models && tripo ? `<div class="fmtpick" role="group" aria-label="Extra formats"><span class="chip on" aria-label="GLB is always included" title="GLB is always included">GLB</span>${FORMATS.map(f).join('')}</div>
-      <p class="fine" style="margin:-4px 0 10px 32px">GLB is copied straight away. Other formats are converted by Tripo the first time, then copied.</p>` : ''}
-    ${opts.models && !tripo ? '<p class="fine" style="margin:-4px 0 10px 32px">Other formats come from Tripo’s converter, which only works on models made with Tripo direct.</p>' : ''}
+    ${card('t360', '360° spin', `${P.FRAMES} pictures · ${P.STEP}° apart · loops`, 'A full spin people can drag on a website, plus a viewer page')}
+    ${card('t180', '180° half spin', `Pictures 000–0${P.HALF - 1} · stops at both ends`, 'Half a spin, front to back, for a detail page. Uses the same pictures.')}
+    ${card('models', 'Model files', tripo ? '.glb · .gltf · .fbx · .usdz · .obj · .stl · .3mf' : '.glb', 'Copy the 3D model itself into the save folder')}
+    ${opts.models && tripo ? `<div class="fmtpick" role="group" aria-label="Extra formats"><span class="chip on" aria-label="The .glb file is always included" title="The .glb file is always included">.glb</span>${FORMATS.map(f).join('')}</div>
+      <p class="fine" style="margin:-4px 0 10px 32px">The .glb file is copied right away. Tripo makes the other types the first time.</p>` : ''}
+    ${opts.models && !tripo ? '<p class="fine" style="margin:-4px 0 10px 32px">Other file types come from Tripo, and only for models made with Tripo.</p>' : ''}
     <h2 class="label">Looks</h2>
     <div class="looks">
-      ${look('showroom', 'Showroom', '4:3 room', `<div class="stage"><img class="thumb" src="${P.envThumb('showroom')}" alt=""></div>`, 'Render in the Showroom, the website’s house look')}
-      ${look('studio', 'Compose scene', 'What you set up above · 4:3', sceneArt(), 'Render exactly the scene you set up in Compose (White Cyc Studio unless you picked another)')}
-      ${look('transparent', 'Transparent', '1:1 · see-through PNG', '<div class="stage s-clear"><div class="checker"></div><div class="sc-shadow"></div></div>', 'No background, just the model and a soft shadow, for lists and cut-outs')}
+      ${look('showroom', 'Showroom', '4:3 room', `<div class="stage"><img class="thumb" src="${P.envThumb('showroom')}" alt=""></div>`, 'Render in the Showroom, the website’s usual look')}
+      ${look('studio', 'My scene', 'What you set up · 4:3', sceneArt(), 'Render the scene you set up here (White studio unless you picked another)')}
+      ${look('transparent', 'See-through', '1:1 · no background', '<div class="stage s-clear"><div class="checker"></div><div class="sc-shadow"></div></div>', 'No background, just the model and a soft shadow, for lists and cut-outs')}
     </div>
     ${rigPanel(busy)}
     ${tennogenApplies(m) ? tennogenCard(m, busy) : ''}
     <div class="renderer-pick">
       <h2 class="label">Quality</h2>
       <div class="chips" role="radiogroup" aria-label="Renderer">
-        <button class="chip" type="button" role="radio" data-renderer="three" aria-checked="${opts.renderer === 'three'}" title="Renders right here in Flatform. Quick, and looks like the viewport.">Quick (in Flatform)</button>
-        <button class="chip" type="button" role="radio" data-renderer="blender" aria-checked="${opts.renderer === 'blender'}" ${!blenderReady() ? 'disabled' : ''} title="${blenderReady() ? 'Renders in Blender with Cycles. Slower, more realistic light.' : 'Needs Blender installed. Find it in Settings.'}">Best (Blender)</button>
+        <button class="chip" type="button" role="radio" data-renderer="three" aria-checked="${opts.renderer === 'three'}" title="Renders right here in Flatform. Quick, and looks like what you see.">Quick (in Flatform)</button>
+        <button class="chip" type="button" role="radio" data-renderer="blender" aria-checked="${opts.renderer === 'blender'}" ${!blenderReady() ? 'disabled' : ''} title="${blenderReady() ? 'Renders in Blender with Cycles. Slower, more real light.' : 'Needs Blender. Show where it is in Settings.'}">Best (Blender)</button>
       </div>
-      <p class="fine">${blenderReady() ? `Blender: ${esc(state.blender.path)}` : 'Blender not found. Quick works fine; install Blender 4.x or find it in Settings for the Best option.'}</p>
-    </div>`;
+      <p class="fine keep">${blenderReady() ? `Blender: ${esc(state.blender.path)}` : 'Blender not found. Quick works fine. For Best, install Blender 4 or show where it is in Settings.'}</p>
+    </div>
+    <h2 class="label">Time stamp</h2>
+    ${card('stamp', 'Time stamp', 'Date and time, small, in the bottom-right corner', 'Writes when this render started (New York time) small in the bottom-right corner of every picture and video frame. Turn it off for clean pictures. The time is always in the file name.')}`;
   const box = $('#left', root);
   if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
 }
@@ -214,26 +217,26 @@ const RIG_TIP = {
 };
 function rigSlider(group, key, label, min, max, step, value, disabled) {
   const p = ((value - min) / (max - min)) * 100;
-  return `<div class="sl" title="${RIG_TIP[key]}"><label for="rig-${key}">${label}</label>
-    <input class="range" type="range" id="rig-${key}" data-rig="${group}" data-key="${key}" min="${min}" max="${max}" step="${step}" value="${value}" style="--p:${p}%" ${disabled ? 'disabled' : ''}>
+  return `<div class="sl"><label for="rig-${key}">${label}</label>
+    <input class="range" type="range" id="rig-${key}" data-rig="${group}" data-key="${key}" min="${min}" max="${max}" step="${step}" value="${value}" style="--p:${p}%" title="${RIG_TIP[key]}" ${disabled ? 'disabled' : ''}>
     <span class="v" id="rv-${key}">${RIG_TEXT[key](value)}</span></div>`;
 }
 function rigPanel(busy) {
   const l = { ...P.DEFAULT_LIGHTING, ...state.settings?.lighting };
   const g = { ...P.DEFAULT_GLASS, ...state.settings?.glass };
   const swatch = `rgb(${kelvinColor(l.kelvin).map((v) => Math.round(v * 255)).join(',')})`;
-  return `<div class="grp rig"><h3>${icon('light', 14)} Render lighting <button class="link" type="button" data-act="rig-reset" ${busy ? 'disabled' : ''} title="Put the render lights back the way they started">Reset</button></h3>
-      ${rigSlider('lighting', 'key', 'Key', 0, 2, 0.05, l.key, busy)}
+  return `<div class="grp rig"><h3>${icon('light', 14)} Render light <button class="link" type="button" data-act="rig-reset" ${busy ? 'disabled' : ''} title="Put the render lights back the way they started">Reset</button></h3>
+      ${rigSlider('lighting', 'key', 'Main light', 0, 2, 0.05, l.key, busy)}
       ${rigSlider('lighting', 'azimuth', 'Direction', -180, 180, 5, l.azimuth, busy)}
       ${rigSlider('lighting', 'elevation', 'Height', 5, 85, 1, l.elevation, busy)}
       ${rigSlider('lighting', 'kelvin', `Colour <i class="kswatch" id="kswatch" style="background:${swatch}"></i>`, 2700, 9000, 100, l.kelvin, busy)}
-      ${rigSlider('lighting', 'fill', 'Fill', 0, 2, 0.05, l.fill, busy)}
-      ${rigSlider('lighting', 'rim', 'Rim · env', 0, 2, 0.05, l.rim, busy)}
+      ${rigSlider('lighting', 'fill', 'Soft light', 0, 2, 0.05, l.fill, busy)}
+      ${rigSlider('lighting', 'rim', 'Edge light', 0, 2, 0.05, l.rim, busy)}
     </div>
     <div class="grp rig"><h3>${icon('cube', 14)} Glass</h3>
-      <label class="tg" title="Darken the windows like real tinted glass"><span>Tinted glass<small>Found by name, or dark glossy texture on Tripo scans</small></span><input class="sw" type="checkbox" role="switch" data-glass="on" ${g.on ? 'checked' : ''} ${busy ? 'disabled' : ''}></label>
+      <label class="tg" title="Darken the windows like real tinted glass"><span>Tinted glass<small>Finds windows by name, or by a dark shiny look</small></span><input class="sw" type="checkbox" role="switch" data-glass="on" ${g.on ? 'checked' : ''} ${busy ? 'disabled' : ''}></label>
       ${g.on ? `<div class="sl"><label for="rig-tint">Tint</label><input class="tint" type="color" id="rig-tint" title="The colour of the window tint" data-glass="tint" value="${esc(g.tint)}" ${busy ? 'disabled' : ''}><span class="v">${esc(g.tint)}</span></div>
-      ${rigSlider('glass', 'opacity', 'Opacity', 0, 1, 0.05, g.opacity, busy)}` : ''}
+      ${rigSlider('glass', 'opacity', 'See-through', 0, 1, 0.05, g.opacity, busy)}` : ''}
     </div>`;
 }
 function saveRig(group, patch) {
@@ -249,17 +252,17 @@ function renderRight() {
   const busy = running();
   const dir = outDir();
   const d = sep();
-  const html = `<h2 class="label">Handoff folder</h2>
+  const html = `<h2 class="label">Save folder</h2>
     <div class="path" title="Where finished renders are saved">${icon('folder')}<code>${dir ? esc(dir) : `Not chosen yet · suggested ${esc(s.suggestedOutputRoot || '')}`}</code></div>
     <button class="btn ghostbtn wide" type="button" data-act="folder" title="Pick the folder renders are saved in" ${busy ? 'disabled' : ''}><span>${dir ? 'Change folder' : 'Choose folder'}</span></button>
     <form class="field pathform" id="folderForm" hidden><label for="folderIn">Folder</label><input class="inp mono" id="folderIn" name="outputRoot" value="${esc(s.outputRoot || s.suggestedOutputRoot || '')}" spellcheck="false" title="The full path of the folder"><button class="btn ghostbtn" type="submit" title="Use this folder">Save</button></form>
     <div class="cta">
-      <button class="btn ghostbtn" type="button" data-act="open" title="Open the handoff folder on this computer" ${native && (m.renders?.outDir || s.outputRoot) ? '' : 'disabled'}>${icon('folder')}<span>Open folder</span></button>
+      <button class="btn ghostbtn" type="button" data-act="open" title="Open the save folder on this computer" ${native && (m.renders?.outDir || s.outputRoot) ? '' : 'disabled'}>${icon('folder')}<span>Open folder</span></button>
     </div>
-    <details class="ra-more"><summary title="What ends up in the handoff folder">What’s in the folder</summary>
+    <details class="ra-more"><summary title="What ends up in the save folder">What’s in the folder</summary>
     <div class="tree">
-      <div class="tr-l">${icon('folder', 14)}<div><code>web${d}</code><span>360 + 180 sheets · 512 and 256 px · sprite json · posters</span></div></div>
-      <div class="tr-l">${icon('folder', 14)}<div><code>frames${d}</code><span>${P.FRAMES} PNGs per look · 2048 px</span></div></div>
+      <div class="tr-l">${icon('folder', 14)}<div><code>web${d}</code><span>Spin pictures for the website · 512 and 256 px · posters</span></div></div>
+      <div class="tr-l">${icon('folder', 14)}<div><code>frames${d}</code><span>${P.FRAMES} pictures per look · 2048 px</span></div></div>
       <div class="tr-l">${icon('cube', 14)}<div><code>spin-viewer.js · viewer.html</code><span>Drag-to-spin viewer for the site and admin</span></div></div>
       <div class="tr-l">${icon('cube', 14)}<div><code>HANDOFF.md</code><span>What goes where, for the web team</span></div></div>
     </div>
@@ -275,9 +278,9 @@ function renderRight() {
 
 // The queue tray: every render and video started from here, newest last.
 function trayHtml() {
-  if (!queue.length) return '<div class="tray" aria-label="Queue"><h3>Queue</h3><p class="fine">Nothing waiting. Renders you start line up here and run one after another.</p></div>';
+  if (!queue.length) return '<div class="tray" aria-label="Queue"><h3>Queue</h3><p class="fine keep">Nothing waiting. Renders you start line up here and run one after another.</p></div>';
   const row = (t) => `<li class="tq ${t.status}" title="${esc(t.error || STATUS_TEXT[t.status])}"><i class="dot ${t.status === 'done' ? 'ok' : t.status === 'running' ? 'busy' : t.status === 'waiting' ? 'wait' : ''}"></i>
-    <span><b>${esc(t.model.name)}</b><small>${esc(t.label)}</small></span><em>${t.status === 'running' && job?.task === t ? `${statusLight(job).pct}%` : STATUS_TEXT[t.status]}</em>
+    <span><b>${esc(t.model.name)}</b><small>${esc(t.label)}</small></span><em>${t.status === 'running' && job?.task === t ? `${statusLight(job).pct}%` : STATUS_TEXT[blockedByRig(t, rigs()) ? 'rigging' : t.status]}</em>
     ${t.status === 'waiting' ? `<button class="link" type="button" data-remove="${t.id}" title="Take this one out of the queue">Remove</button>` : ''}
     ${t.status === 'done' && t.file ? `<button class="link" type="button" data-reveal="${t.id}" title="Show the finished file in its folder" ${native ? '' : 'hidden'}>Show</button>` : ''}</li>`;
   return `<div class="tray" aria-label="Queue"><h3>Queue <button class="link" type="button" data-act="clear-tray" title="Clear finished renders from this list">Clear finished</button></h3><ol>${queue.map(row).join('')}</ol></div>`;
@@ -296,9 +299,12 @@ function drawTray() {
   else if (running() && trayShownFor !== job) { trayShownFor = job; tray.hidden = false; }
 }
 
+// Models being rigged (compose-motion.js sets state.rigging): their renders wait in the queue until the joints are in.
+const rigs = () => state.rigging || new Set();
 function renderBar() {
   const other = job && job.model.id !== m?.id;
-  const light = statusLight(job, waitingCount(queue));
+  const rigId = !running() && [...rigs()][0];
+  const light = rigId ? rigLight(findModel(rigId)?.name, queue.filter((t) => blockedByRig(t, rigs())).length) : statusLight(job, waitingCount(queue));
   setRenderLight(light, job?.model.id); // the top bar shows it on every screen
   drawTray();
   document.getElementById('vp')?.classList.toggle('rendering', running()); // the Compose viewport glows while rendering
@@ -468,7 +474,7 @@ function sceneFor(model, look) {
   const s = { ...defaultScene(state.settings), ...model.scene };
   if (look === 'transparent') return { ...s, preset: 'transparent' };
   if (look === 'showroom') return { ...s, preset: 'showroom', backdrop: null };
-  if (s.preset === 'transparent') return { ...s, preset: state.settings?.defaultScene && state.settings.defaultScene !== 'transparent' ? state.settings.defaultScene : 'white-cyc-studio', backdrop: null };
+  if (s.preset === 'transparent') return { ...s, preset: P.roomFor(state.settings?.defaultScene), backdrop: null };
   return s;
 }
 // Draws frames into the web sprite sheets as they arrive (lib/sheets.js), in Flatform's own web/ layout.
@@ -508,6 +514,7 @@ function enqueue(patch = {}, label = null) {
   const snap = { ...o, formats: new Set(opts.formats), yaw: stillYaw(m) }; // the still uses the angle on screen now
   queue = trimQueue([...queue, { id: crypto.randomUUID(), model: m, opts: snap, label: label || taskLabel(snap), status: 'waiting' }]);
   if (running()) toast(`Added to the queue. It starts when the current render is done.`, 'info');
+  else if (rigs().has(m.id)) toast('Added to the queue. It starts when the joints are added (Rigging…).', 'info');
   renderRight();
   renderBar();
   pump();
@@ -524,8 +531,12 @@ async function track(model, label, fn) {
 function pump() {
   if (running()) return;
   const t = nextTask(queue);
-  if (t) start(t).finally(pump);
+  if (!t) return;
+  if (blockedByRig(t, rigs())) { renderBar(); return; } // rigChanged() starts it once the joints are in
+  start(t).finally(pump);
 }
+/** compose-motion.js: a rig started or finished. Redraws the light and the tray, and starts a render that waited. */
+export function rigChanged() { renderBar(); pump(); }
 
 const join = (dir, rel) => `${dir}${sep()}${rel.replaceAll('/', sep())}`;
 function reveal(t) {
@@ -547,6 +558,8 @@ async function start(task) {
     const formats = o.models && providerOf(model) === 'tripo' ? [...o.formats] : [];
     const started = await send(`/api/renders/${model.id}/start`, 'POST', { looks: turns.length || o.still ? looks : [], formats });
     const slug = started.slug;
+    // The render's start time: burned into every picture (unless Time stamp is off) and put in the file names.
+    Object.assign(job, { stamp: o.stamp !== false ? stampText(started.renders.at) : '', when: stampFile(started.renders.at) });
     const frames = turns.length ? Math.max(...turns.map(P.turnFrames)) : 0;
     const manifests = {};
     if (turns.length || o.still) {
@@ -554,22 +567,22 @@ async function start(task) {
       else await renderInApp(slug, looks, turns, frames, manifests);
     }
     const extra = await afterRender(slug, looks, turns, started.outDir);
-    progress('Writing the handoff files', job.total, job.total);
+    progress('Saving the files', job.total, job.total);
     const version = state.settings?.version;
     if (turns.length) {
       await put('spin-viewer.js', await (await fetch('/lib/spin-viewer.js')).blob());
       await put('viewer.html', new Blob([P.viewerHtml({ name: model.name, manifests })]));
     }
-    const stills = o.still ? looks.map((look) => ({ look, angle: job.yaw })) : [];
+    const stills = o.still ? looks.map((look) => ({ look, angle: job.yaw, when: job.when })) : [];
     const models = [`${slug}.glb`, ...formats.map((f) => `${slug}.${f.toLowerCase()} (when Tripo finishes converting)`)];
     await put('HANDOFF.md', new Blob([P.handoffText({ slug, name: model.name, looks: turns.length ? looks : [], turns, stills, models, renderer: job.renderer, version })]));
     upsert(await api(`/api/models/${model.id}`)); // the Library picks up the new poster and badges from this
     job.done = true;
-    Object.assign(task, { status: 'done', outDir: started.outDir, file: extra || resultFile({ slug, still: o.still, t360: o.t360, t180: o.t180, looks, yaw: job.yaw }) });
+    Object.assign(task, { status: 'done', outDir: started.outDir, file: extra || resultFile({ slug, still: o.still, t360: o.t360, t180: o.t180, looks, yaw: job.yaw, when: job.when }) });
     if (o.job) overnightMark(task, 'done');
     progress(`Saved to ${started.outDir}`, job.total, job.total);
     announce(`${model.name}: render finished`);
-    toast(`${model.name} is rendered. It's in Library and your handoff folder.`, 'ok', [
+    toast(`${model.name} is rendered. It's in Library and your save folder.`, 'ok', [
       { label: 'Open', title: 'See the finished render in Library', run: () => go(`#/model/${model.id}`) },
       ...(native ? [{ label: 'Show in folder', title: 'Show the finished file on this computer', run: () => reveal(task) }] : []),
     ]);
@@ -602,7 +615,7 @@ async function renderInApp(slug, looks, turns, frames, manifests) {
     const capture = () => {
       fg.clearRect(0, 0, width, height);
       fg.drawImage(ss > 1 ? downscale(canvas, width, height) : canvas, 0, 0);
-      return frame;
+      return burnStamp(frame, job.stamp); // the same stamp on every frame
     };
     try {
       studio.resize(width, height, ss);
@@ -644,12 +657,12 @@ async function renderInApp(slug, looks, turns, frames, manifests) {
         studio.state.turn = job.yaw;
         studio.applyYaw();
         studio.render();
-        await put(`stills/${P.stillName(slug, look, job.yaw)}`, await toBlob(capture(), 'image/png'));
-        progress(`${P.LOOKS[look].label} · still image`, ++done, total);
+        await put(`stills/${P.stillName(slug, look, job.yaw, job.when)}`, await toBlob(capture(), 'image/png'));
+        progress(`${P.LOOKS[look].label} · picture`, ++done, total);
       }
       await Promise.all(uploads);
       if (sheets) {
-        progress(`${P.LOOKS[look].label} · writing sprite sheets`, done, total);
+        progress(`${P.LOOKS[look].label} · putting the pictures together`, done, total);
         await sheets.write(poster);
         await writeManifests(slug, look, turns, 'three', manifests);
       }
@@ -662,7 +675,7 @@ async function renderInApp(slug, looks, turns, frames, manifests) {
 async function renderBlender(slug, looks, turns, frames, manifests) {
   const { model } = job;
   const o = job.opts;
-  await send(`/api/renders/${model.id}/blender`, 'POST', { looks, frames, ...(o.still && { still: job.yaw }), ...(o.effect && { effect: o.effect }), ...(o.paint && { paint: o.paint }) });
+  await send(`/api/renders/${model.id}/blender`, 'POST', { looks, frames, stamp: o.stamp !== false, ...(o.still && { still: job.yaw }), ...(o.effect && { effect: o.effect }), ...(o.paint && { paint: o.paint }) });
   for (;;) {
     await sleep(700);
     const b = await api(`/api/renders/${model.id}/blender`);
@@ -688,7 +701,7 @@ async function renderBlender(slug, looks, turns, frames, manifests) {
         if (turns.includes(360)) cell('sheet360', i, P.COLUMNS, img);
         if (i < P.HALF) cell('sheet180', i, 19, img);
       }
-      progress(`${P.LOOKS[look].label} · sprite frame ${P.pad3(i + 1)} of ${P.pad3(frames)}`, i + 1, frames);
+      progress(`${P.LOOKS[look].label} · picture ${P.pad3(i + 1)} of ${P.pad3(frames)}`, i + 1, frames);
     }
     await sheets.write(poster);
     await writeManifests(slug, look, turns, 'blender', manifests);
@@ -707,12 +720,12 @@ async function afterRender(slug, looks, turns, outDir) {
   if (o.still) {
     for (const look of looks) {
       await checkpoint();
-      let rel = `stills/${P.stillName(slug, look, job.yaw)}`;
+      let rel = `stills/${P.stillName(slug, look, job.yaw, job.when)}`;
       if (tag) { const out = named(rel, tag); await put(out, await (await fetch(src(rel))).blob()); rel = out; }
       if (o.style) {
         progress(`${P.LOOKS[look].label} · drawing it ${o.style === 'cel' ? 'as a cartoon' : 'as a painting'}`, job.total, job.total);
         const out = named(rel, o.style === 'cel' ? 'cartoon' : 'painted');
-        await put(out, await png(await styled(src(rel), o.style)));
+        await put(out, await png(burnStamp(await styled(src(rel), o.style), job.stamp))); // the filter smudges it: write it again
         rel = out;
       }
       if (o.poster != null) { const out = named(rel, 'poster'); await put(out, await png(await poster(src(rel), o.poster || job.model.name))); rel = out; }
@@ -727,12 +740,12 @@ async function afterRender(slug, looks, turns, outDir) {
       dir = `frames/${look}-phone`;
       for (let i = 0; i < frames; i++) {
         await checkpoint();
-        await put(`${dir}/${P.framePath(slug, look, i).split('/').pop()}`, await png(await vertical(src(P.framePath(slug, look, i)))));
+        await put(`${dir}/${P.framePath(slug, look, i).split('/').pop()}`, await png(burnStamp(await vertical(src(P.framePath(slug, look, i))), job.stamp))); // the crop cuts the corner off
         progress(`Cutting the tall phone version · frame ${P.pad3(i + 1)} of ${P.pad3(frames)}`, i + 1, frames);
       }
     }
     progress('Making the video', job.total, job.total);
-    const name = [slug, look, o.video, tag].filter(Boolean).join('_');
+    const name = [slug, look, o.video, tag, job.when].filter(Boolean).join('_');
     try {
       const r = await send('/api/video', 'POST', { modelId: job.model.id, frames: dir, pattern: `${slug}_%03d.png`, name, outDir, format: 'mp4', resolution: o.vertical ? 'vertical' : '1080p', fps: 24, quality: 'good', seconds: 0 });
       file = r.output.split(/[\\/]/).pop();

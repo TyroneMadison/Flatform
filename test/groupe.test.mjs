@@ -42,7 +42,7 @@ test('wiring: new screens routed, on the rail, settings sections listed, stylesh
   assert.match(app, /#\/usage/); assert.match(app, /installHotkeys\(/);
   const set = await readFile('public/views/settings-extra.js', 'utf8');
   for (const s of ['shortcuts', 'backup', 'plugins']) assert.match(set, new RegExp(`\\['${s}'`));
-  assert.match(set, /Off until you turn it on\. Saves to a backup branch, never main\./);
+  assert.match(set, /Off until you turn it on\. Saves to a separate backup copy, never your main one\./);
   assert.match(await readFile('public/index.html', 'utf8'), /styles\/nova\.css/);
 });
 

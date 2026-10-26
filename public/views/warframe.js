@@ -20,15 +20,15 @@ export function mount(el) {
       ${icon('upload', 56)}
       <div class="big">Drag pictures here</div>
       <p class="muted">or</p>
-      <button class="bigbtn" type="button" data-import="pick">${icon('plus', 22)}Add new picture</button>
+      <button class="bigbtn" type="button" data-import="pick" title="Pick a picture from this computer">${icon('plus', 22)}Add new picture</button>
     </div>
     <div class="grid g2">
-      <button class="bigbtn tall" type="button" data-import="pick">${icon('plus', 26)}New Warframe from a picture</button>
-      <button class="pick tall" type="button" data-act="open-model">${icon('folder', 26)}Open my model</button>
+      <button class="bigbtn tall" type="button" data-import="pick" title="Make a 3D Warframe from a picture">${icon('plus', 26)}New from a picture</button>
+      <button class="pick tall" type="button" data-act="open-model" title="Open a 3D file you already have">${icon('folder', 26)}Open my model</button>
     </div>
     <h3>Start from a template</h3>
-    <div class="grid g4" role="group" aria-label="Templates">${TEMPLATES.map(([type, label, color]) => `<button class="tile" type="button" data-template="${type}" aria-pressed="${state.tennogenType === type}"><div class="th" style="background:${color}"></div>${label}</button>`).join('')}</div>
-    <div class="card"><div class="row"><span class="pill2 ok">✓ TennoGen ready</span><span class="muted">Sizes, names and maps are checked for you when you export.</span></div></div>
+    <div class="grid g4" role="group" aria-label="Templates">${TEMPLATES.map(([type, label, color]) => `<button class="tile" type="button" data-template="${type}" aria-pressed="${state.tennogenType === type}" title="Start a ${label.toLowerCase()}, then pick a picture"><div class="th" style="background:${color}"></div>${label}</button>`).join('')}</div>
+    <div class="card"><div class="row"><span class="pill2 ok">✓ TennoGen ready</span><span class="muted">Sizes, names and paint pictures are checked for you when you save.</span></div></div>
     <h3>Your Warframes</h3>
     <div class="grid g4" id="wfRecent"></div>
   </section>`;

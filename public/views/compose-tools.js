@@ -8,6 +8,8 @@ let ctx; // { root, scene, studio, change, draw, renderInspector }
 let measuring = false, pts = [], boneSel = null;
 export function initTools(c) { ctx = c; measuring = false; pts = []; boneSel = null; }
 const unit = () => state.settings?.gridUnit || 'm';
+// Mirror chips in plain words; the saved axis key stays x, y or z.
+const MIRROR_WORDS = { x: 'Left and right', y: 'Top and bottom', z: 'Front and back' };
 const kind = () => (activeWorkspace()?.kind === 'warframe' ? 'warframe' : 'car');
 
 export function renderToolsGroup() {
@@ -21,21 +23,21 @@ export function renderToolsGroup() {
   const mi = s.mirror || {};
   return `<div class="grp" id="grp-tools"><h3>Tools</h3>
     <h4 class="fine">Line up</h4>
-    <div class="mg-row"><button class="btn big" type="button" data-tool="ground">Put on the floor</button><button class="btn big sec" type="button" data-tool="center">Center it</button></div>
+    <div class="mg-row"><button class="btn" type="button" data-tool="ground" title="Drop the model so it stands on the floor">Put on floor</button><button class="btn" type="button" data-tool="center" title="Move the model to the middle of the scene">Center it</button></div>
     <h4 class="fine">Mirror one half</h4>
-    <div class="chips seg" role="radiogroup" aria-label="Mirror">${[['', 'Off'], ...AXES.map((a) => [a, `${a.toUpperCase()} axis`])].map(([k, l]) => `<button class="chip" type="button" role="radio" data-mirror="${k}" aria-checked="${(mi.axis || '') === k}">${l}</button>`).join('')}</div>
-    ${mi.axis ? `<button class="btn sm ghostbtn" type="button" data-tool="mirror-side">Use the other half</button>` : ''}
+    <div class="chips seg" role="radiogroup" aria-label="Mirror">${[['', 'Off'], ...AXES.map((a) => [a, MIRROR_WORDS[a] || a])].map(([k, l]) => `<button class="chip" type="button" role="radio" data-mirror="${k}" aria-checked="${(mi.axis || '') === k}" title="${k ? `Copy one half onto the other, ${l.toLowerCase()}` : 'No mirror'}">${l}</button>`).join('')}</div>
+    ${mi.axis ? `<button class="btn" type="button" data-tool="mirror-side" title="Copy the other half instead">Use the other half</button>` : ''}
     <h4 class="fine">Measure</h4>
-    <button class="btn big ${measuring ? '' : 'sec'}" type="button" data-tool="measure" aria-pressed="${measuring}">${measuring ? 'Stop measuring' : 'Measure two points'}</button>
-    ${measuring ? `<p class="fine">${pts.length === 0 ? 'Click the first point on the model.' : pts.length === 1 ? 'Now click the second point.' : `Distance: <b>${formatLength(distance(pts[0], pts[1]), unit())}</b>. Click again to start over.`}</p>` : ''}
-    ${size ? `<p class="fine">Size: ${esc(dimensions(size, unit()).text)}</p>` : ''}
-    ${check.ok ? (size ? '<p class="fine ok">Size looks right for this workspace.</p>' : '') : `<div class="warnbox">${check.warnings.map((w) => `<p>${esc(w)}</p>`).join('')}</div>`}
+    <button class="btn" type="button" data-tool="measure" aria-pressed="${measuring}" title="Click two spots on the model to see how far apart they are">${measuring ? 'Stop measuring' : 'Measure'}</button>
+    ${measuring ? `<p class="fine keep">${pts.length === 0 ? 'Click the first point on the model.' : pts.length === 1 ? 'Now click the second point.' : `Distance: <b>${formatLength(distance(pts[0], pts[1]), unit())}</b>. Click again to start over.`}</p>` : ''}
+    ${size ? `<p class="fine keep">Size: ${esc(dimensions(size, unit()).text)}</p>` : ''}
+    ${check.ok ? (size ? '<p class="fine ok keep">Size looks right for this workspace.</p>' : '') : `<div class="warnbox">${check.warnings.map((w) => `<p>${esc(w)}</p>`).join('')}</div>`}
     <h4 class="fine">Camera spots</h4>
-    <button class="btn big sec" type="button" data-tool="bookmark">Save this view</button>
-    <div class="chips" role="group" aria-label="Camera spots">${marks.map((b, i) => `<span class="chipset"><button class="chip" type="button" data-bm="${esc(b.name)}" title="Key ${i + 1}">${b.hero ? '★ ' : ''}${i + 1}. ${esc(b.name)}</button><button class="chip sm" type="button" data-bm-hero="${esc(b.name)}" title="Make this the hero shot">★</button><button class="chip sm" type="button" data-bm-del="${esc(b.name)}" title="Remove">✕</button></span>`).join('') || '<p class="fine">No saved spots yet. Keys 1 to 9 jump to them.</p>'}</div>
-    ${bones.length ? `<h4 class="fine">Check the rig</h4>
-    <label class="row-sel"><span>Show weights for</span><select class="inp" data-tool-bone><option value="">Off</option>${bones.map((b) => `<option ${b === boneSel ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select></label>
-    ${flags ? `<p class="fine">Blue is no pull, red is full pull. ${flags.none.length} points with no weights, ${flags.unnormalized.length} that do not add up, ${flags.over4.length} with more than 4 bones.</p>` : ''}` : ''}
+    <button class="btn" type="button" data-tool="bookmark" title="Remember where the camera is now. Keys 1 to 9 jump back.">Save view</button>
+    <div class="chips" role="group" aria-label="Camera spots">${marks.map((b, i) => `<span class="chipset"><button class="chip" type="button" data-bm="${esc(b.name)}" title="Jump to this spot (key ${i + 1})">${b.hero ? '★ ' : ''}${i + 1}. ${esc(b.name)}</button><button class="chip sm" type="button" data-bm-hero="${esc(b.name)}" title="Make this the main shot">★</button><button class="chip sm" type="button" data-bm-del="${esc(b.name)}" title="Remove this spot">✕</button></span>`).join('') || '<p class="fine keep">No saved spots yet. Keys 1 to 9 jump to them.</p>'}</div>
+    ${bones.length ? `<h4 class="fine">Check the joints</h4>
+    <label class="row-sel"><span>Show pull for</span><select class="inp" data-tool-bone title="Pick a joint to see which parts it moves"><option value="">Off</option>${bones.map((b) => `<option ${b === boneSel ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select></label>
+    ${flags ? `<p class="fine keep">Blue is no pull, red is full pull. ${flags.none.length} points no joint pulls, ${flags.unnormalized.length} that do not add up, ${flags.over4.length} pulled by more than 4 joints.</p>` : ''}` : ''}
   </div>`;
 }
 

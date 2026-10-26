@@ -28,7 +28,7 @@ Drag a picture of a car into the window. One good photo works. Four photos (fron
 
 ### 2. Pick a look
 
-Choose a preset: **Draft**, **Balanced** or **Max quality**. You see the price before you start. Want more control? Open a group and move the sliders.
+Choose a recipe: **Draft**, **Balanced** or **Max quality**. You see the price before you start. Want more control? Open a group and move the sliders.
 
 <img src="docs/gifs/02-presets-and-sliders.gif" alt="Picking presets and dragging the lighting and face sliders" width="100%">
 
@@ -51,10 +51,10 @@ Make still pictures, a full 360° spin, or a 180° half turn. Flatform puts ever
 ## What it can do
 
 - 📸 Make a 3D model from **one photo or four**
-- ⚡ **Presets** with the price shown up front, plus sliders when you want them
+- ⚡ **Recipes** with the price shown up front, plus sliders when you want them
 - 🔀 Use **Tripo** or **3D AI Studio**, and switch any time
 - 🎬 Studio scenes, your own backgrounds, and see-through renders
-- 🔁 360° and 180° spins, stills, and sprite sheets for the web
+- 🔁 360° and 180° spins, still pictures, and fast-loading spins for your website
 - 📚 A **library** of every model you've made, with search
 - 🔒 Your keys stay **encrypted on your computer**
 - 🔔 Tells you when a **new version** is out
@@ -66,15 +66,15 @@ Make still pictures, a full 360° spin, or a 180° half turn. Flatform puts ever
 You need a key from **one** of these services. A key is like a password that lets Flatform use your account. You pay the service for each model; Flatform adds no fees.
 
 - **Tripo:** get a key at [developers.tripo3d.ai](https://developers.tripo3d.ai)
-- **3D AI Studio:** get a key from the [3D AI Studio API dashboard](https://www.3daistudio.com/Platform/API)
+- **3D AI Studio:** get a key from the [3D AI Studio key page](https://www.3daistudio.com/Platform/API)
 
 **To add your key:**
 
-1. Open Flatform and click **Settings** in the left bar.
-2. Click **Providers**.
-3. Find your service and click **Replace**.
+1. Open Flatform and click **Settings** (the gear at the top right).
+2. Click **Accounts**.
+3. Find your service and click **Change key**.
 4. Paste your key and save it.
-5. Click **Test**. A green check and your credit balance mean it worked. Testing is free.
+5. Flatform checks the key for free. A green check and your credit balance mean it worked.
 
 <img src="docs/gifs/03-add-a-key.gif" alt="Pasting a key in Settings and testing it" width="100%">
 
@@ -89,7 +89,7 @@ You only have to do this once.
 
 ## More screenshots
 
-| Drop | Four views |
+| Drop | Four photos |
 |---|---|
 | <img src="docs/screenshots/drop.png" alt="Drop screen"> | <img src="docs/screenshots/setup-3das-fourview.png" alt="Four photo slots with 3D AI Studio presets"> |
 | **Sliders** | **Settings** |
@@ -131,7 +131,7 @@ Blender, seeded with sample models, photos and every room, and a Test screen wit
 `test-app/data` to start it fresh. `test-app/make-samples.py` rebuilds its samples with a
 real Blender; `npx electron test-app/make-env-thumbs.mjs` re-renders the scene thumbnails in the app's own renderer.
 
-Releases: push a tag like `v1.1.0` (numbering: [VERSIONING.md](VERSIONING.md), notes: [CHANGELOG.md](CHANGELOG.md)). GitHub Actions builds Windows and Mac and attaches them to a draft release.
+Releases: push a tag like `v1.2.0` (numbering: [VERSIONING.md](VERSIONING.md), notes: [CHANGELOG.md](CHANGELOG.md)). GitHub Actions builds Windows and Mac and attaches them to a draft release.
 
 </details>
 

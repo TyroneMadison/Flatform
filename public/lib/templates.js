@@ -14,20 +14,20 @@ const lit = (preset, tweak = {}) => {
 export const BUILTIN_TEMPLATES = [
   // Warframe
   { id: 'wf-orokin-hall', kind: 'warframe', name: 'Orokin hall', note: 'Ivory and gold, warm glow',
-    scene: { preset: 'cyclorama', camera: 'front34', turn: 25, lens: 50, view: 'car', fit: 'all', reflection: 0.6, shadow: 0.5,
+    scene: { preset: 'white-cyc-studio', camera: 'front34', turn: 25, lens: 50, view: 'car', fit: 'all', reflection: 0.6, shadow: 0.5,
       look: { background: { kind: 'gradient', color: '#f3ead6', color2: '#b8893a' }, hdri: { file: 'builtin:brown_photostudio_02', intensity: 1.1, rotation: 40 },
         lights: lit('studio', { key: { color: '#ffe2b0', intensity: 1.5 }, rim: { color: '#ffd27a', intensity: 1.6 } }), bloom: { on: true, strength: 0.6, threshold: 0.85 }, tone: 'agx', ao: { on: true, strength: 1 } } } },
   { id: 'wf-void-black', kind: 'warframe', name: 'Void black', note: 'Pure black, hard rim light',
-    scene: { preset: 'cyclorama', camera: 'front34', turn: 20, lens: 50, view: 'car', fit: 'all', reflection: 0, shadow: 0,
+    scene: { preset: 'white-cyc-studio', camera: 'front34', turn: 20, lens: 50, view: 'car', fit: 'all', reflection: 0, shadow: 0,
       look: { background: { kind: 'solid', color: '#000000' }, hdri: { file: null }, lights: lit('rim', { rim: { intensity: 2.6, color: '#e8f0ff' } }), bloom: { on: true, strength: 0.8, threshold: 0.8 }, tone: 'agx', exposure: 0.9 } } },
   { id: 'wf-relay-plaza', kind: 'warframe', name: 'Relay plaza', note: 'Cool daylight, open sky',
-    scene: { preset: 'cyclorama', camera: 'front34', turn: 35, lens: 35, view: 'car', fit: 'all', reflection: 0.3, shadow: 0.6,
+    scene: { preset: 'white-cyc-studio', camera: 'front34', turn: 35, lens: 35, view: 'car', fit: 'all', reflection: 0.3, shadow: 0.6,
       look: { background: { kind: 'gradient', color: '#cfe0f2', color2: '#5d6f86' }, hdri: { file: 'builtin:kloofendal_48d_partly_cloudy_puresky', intensity: 1, rotation: 120 }, lights: lit('softbox'), tone: 'neutral' } } },
   { id: 'wf-turnaround', kind: 'warframe', name: 'Studio turnaround', note: 'Neutral studio for a full spin',
-    scene: { preset: 'cyclorama', camera: 'side', turn: 0, lens: 50, view: 'car', fit: 'all', reflection: 0.2, shadow: 0.5,
+    scene: { preset: 'white-cyc-studio', camera: 'side', turn: 0, lens: 50, view: 'car', fit: 'all', reflection: 0.2, shadow: 0.5,
       look: { background: { kind: 'solid', color: '#2a2b30' }, hdri: { file: 'builtin:studio_small_03', intensity: 1 }, lights: lit('studio'), ao: { on: true, strength: 1 }, tone: 'neutral' } } },
-  { id: 'wf-tennogen-shot', kind: 'warframe', name: 'TennoGen shot', note: 'Workshop-style front shot',
-    scene: { preset: 'cyclorama', camera: 'front34', turn: 15, lens: 50, view: 'car', fit: 'all', reflection: 0, shadow: 0.4,
+  { id: 'wf-tennogen-shot', kind: 'warframe', name: 'TennoGen shot', note: 'A front shot like the Steam Workshop',
+    scene: { preset: 'white-cyc-studio', camera: 'front34', turn: 15, lens: 50, view: 'car', fit: 'all', reflection: 0, shadow: 0.4,
       look: { background: { kind: 'solid', color: '#15161a' }, hdri: { file: 'builtin:studio_small_03', intensity: 1.2, rotation: 30 }, lights: lightsFromPreset('studio'), ao: { on: true, strength: 1 }, tone: 'agx', bloom: { on: true, strength: 0.5 }, aa: 'smaa', quality: 'high' } } },
   // Car
   { id: 'car-dudrents-showroom', kind: 'car', name: 'Dud Rents showroom', note: 'Gold ring, dark showroom',
@@ -36,10 +36,10 @@ export const BUILTIN_TEMPLATES = [
     scene: { preset: 'luxury-garage', camera: 'front34', turn: 35, lens: 50, view: 'car', fit: 'footprint', matchLighting: true, look: {} } },
   { id: 'car-desert-dusk', kind: 'car', name: 'Desert dusk', note: 'Low sun, open road',
     scene: { preset: 'desert-highway-dusk', camera: 'low', turn: 30, lens: 35, view: 'car', fit: 'footprint', matchLighting: true, look: {} } },
-  { id: 'car-white-cyc', kind: 'car', name: 'White cyclorama', note: 'Clean white, soft even light',
+  { id: 'car-white-cyc', kind: 'car', name: 'White studio', note: 'Clean white, soft even light',
     scene: { preset: 'white-cyc-studio', camera: 'side', turn: 90, lens: 50, view: 'car', fit: 'footprint', matchLighting: true, look: {} } },
   { id: 'car-night-city', kind: 'car', name: 'Night city', note: 'Wet street, neon reflections',
-    scene: { preset: 'night-city-rain', camera: 'low', turn: 25, lens: 35, view: 'car', fit: 'footprint', matchLighting: true, look: { bloom: { on: true, strength: 0.5, threshold: 0.9 } } } },
+    scene: { preset: 'night-city-rain', camera: 'low', turn: 25, lens: 35, view: 'car', fit: 'footprint', matchLighting: true, look: { bloom: { on: true, strength: 0.2, threshold: 1.6 } } } }, // bloom runs before tone mapping: keep it to the signs, not the sky
 ];
 
 export const templatesFor = (kind) => BUILTIN_TEMPLATES.filter((t) => t.kind === (kind === 'warframe' ? 'warframe' : 'car'));

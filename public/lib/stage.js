@@ -25,10 +25,10 @@ export function journey(screen, hrefs = {}) {
 // The dock for each step: [id, icon, label, tooltip]. Icons are names from lib/icons.js.
 const SCENE_TOOLS = (humanoid) => [
   ['world', 'scene', 'World', 'The room around your model: 3D worlds, ground, placement and grid'],
-  ['look', 'paint', 'Look', 'Colours, materials, decals and saved looks. Tip: click a part in the 3D view'],
+  ['look', 'paint', 'Look', 'Colours, materials, stickers and saved looks. Tip: click a part in the 3D view'],
   ['light', 'light', 'Light', 'Light presets, brightness and the sky light'],
-  ['camera', 'camera', 'Camera', 'Camera spots, lens, camera moves and the turntable'],
-  humanoid ? ['pose', 'person', 'Pose', 'Pose by hand, stance, animation and the Test Rig']
+  ['camera', 'camera', 'Camera', 'Camera spots, zoom, camera moves and the spin'],
+  humanoid ? ['pose', 'person', 'Pose', 'Pose by hand, stance, movement and the Test Rig']
     : ['carparts', 'car', 'Car parts', 'Doors, hood, trunk, wheels and ride height'],
   ['tools', 'tools', 'Tools', 'Measure, line up, mirror, Reset scene, Restore last session and versions'],
   ['render', 'film', 'Render', 'Make pictures, spin videos and more. The only place renders start'],
@@ -57,7 +57,7 @@ export const TOOL_TIPS = {
   world: 'Click a world. Your model moves into it. Every world is a real 3D room that turns with the camera.',
   look: 'Click a part in the 3D view to change just that part, or infer the colours from your photo.',
   light: 'Click a light card. Brightness and the sky light are below it.',
-  camera: 'Click a camera spot, or drag in the 3D view. Lens is in mm: low is wide, high is zoomed in.',
+  camera: 'Click a camera spot, or drag in the 3D view. Zoom: low shows more, high is close up.',
   pose: 'Press Test Rig to play as this character, or pick a pose.',
   carparts: 'Open doors, the hood or the trunk, turn the wheels or change the ride height.',
   tools: 'Reset scene puts everything back to how a new scene starts. You can undo it.',
@@ -69,13 +69,13 @@ export function shows(tool, id) {
   return (SCENE_GROUPS[tool] || SCENE_GROUPS.world).includes(id);
 }
 
-// "Changed Background · Undo": the plain name of what an edit changed, from the scene keys it touched.
+// "World changed · Undo": the plain name of what an edit changed, from the scene keys it touched.
 const CHANGE_NAMES = {
   preset: 'World', backdrop: 'World', look: 'Light and look', paint: 'Colours', motion: 'Pose', pose: 'Pose', handPose: 'Pose',
-  camera: 'Camera', lens: 'Lens', view: 'Camera', orbit: 'Camera', fit: 'Camera', bookmarks: 'Camera spots', path: 'Camera move',
+  camera: 'Camera', lens: 'Zoom', view: 'Camera', orbit: 'Camera', fit: 'Camera', bookmarks: 'Camera spots', path: 'Camera move',
   turn: 'Turn', scale: 'Size', x: 'Position', y: 'Position', snap: 'Position', reflection: 'Ground', shadow: 'Ground',
-  key: 'Light', fill: 'Light', rim: 'Light', matchLighting: 'Light', mirror: 'Mirror', decals: 'Decals', flip: 'Flip',
-  autoOrient: 'Auto-orient', center: 'Center', sameSize: 'Size',
+  key: 'Light', fill: 'Light', rim: 'Light', matchLighting: 'Light', mirror: 'Mirror', decals: 'Stickers', flip: 'Flip',
+  autoOrient: 'Facing', center: 'Center', sameSize: 'Size',
 };
 export function changeName(keys = []) {
   const names = [...new Set(keys.map((k) => CHANGE_NAMES[k] || 'Scene'))];

@@ -114,7 +114,7 @@ test('key handler: presses the button, says why when it cannot, and rests while 
   doc.press('f'); assert.equal(frames, 2, 'a dialog on top keeps the keys');
   delete doc.found['dialog[open]'];
 
-  doc.press('p'); assert.deepEqual(said, ['Pose by hand works on characters with a skeleton']);
+  doc.press('p'); assert.deepEqual(said, ['Pose by hand works on characters that can move']);
   doc.found['#view #undoBtn'] = { disabled: true, click: () => assert.fail('disabled') };
   doc.press('z', { ctrlKey: true }); assert.equal(said.at(-1), 'Nothing to undo');
 

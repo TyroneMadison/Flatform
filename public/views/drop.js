@@ -17,19 +17,19 @@ export function mount(el) {
       <div class="dz-hit" role="button" tabindex="0" aria-label="Choose photos, or drop them here" aria-describedby="dzLead"></div>
       <div class="dz-orb" aria-hidden="true"><div class="dz-ring"></div><div class="dz-ring r2"></div><div class="ghost" id="ghost"></div></div>
       <h1>${wf ? 'Drop a picture. Get a 3D Warframe.' : 'Drop a photo. Get a 3D car.'}</h1>
-      <p class="lead" id="dzLead">One clear subject, keep the whole ${wf ? 'Warframe' : 'car'} in view. Nothing is sent or paid for until you press Generate. Already have a 3D model? Drop it too.</p>
+      <p class="lead" id="dzLead">Keep the whole ${wf ? 'Warframe' : 'car'} in view. Nothing is paid for until you press Make 3D model. Have a 3D file? Drop it too.</p>
       <div class="dz-actions">
-        <button class="btn pri big" type="button" data-act="pick" title="Pick photos (PNG, JPEG or HEIC) or a 3D model from this computer">${icon('upload')}<span>Choose photos</span></button>
+        <button class="btn pri big" type="button" data-act="pick" title="Pick photos or a 3D file from this computer">${icon('upload')}<span>Choose photos</span></button>
         <button class="btn ghostbtn big" type="button" data-act="paste" title="Paste a photo you copied (Ctrl+V)"><span>Paste</span><kbd>Ctrl V</kbd></button>
         <a class="btn ghostbtn big" href="#/library" title="Open something you made before">Open library</a>
         ${wf ? '<a class="btn ghostbtn big" href="#/warframe" title="Start from a Warframe template">From template</a>' : ''}
       </div>
-      <div class="dz-meta"><span>Photos: PNG, JPEG or HEIC, up to 20 MB</span><span>Models: GLB, GLTF, FBX, OBJ, USDZ</span><span>One clear subject</span></div>
+      <div class="dz-meta"><span>Photos: PNG, JPEG or HEIC, up to 20 MB</span><span>3D files: .glb, .gltf, .fbx, .obj, .usdz</span><span>One clear subject</span></div>
       <p class="dz-status" id="dzStatus" aria-live="polite"></p>
     </div>
     <div class="tips">
-      <div class="tip glass"><b>Front ¾ angle works best</b><span>One shot shows more of the body and wheels. Or use 4 views with 3D AI Studio.</span></div>
-      <div class="tip glass"><b>Keep the whole car in frame</b><span>Cropped bumpers and mirrors come back missing.</span></div>
+      <div class="tip glass"><b>Shoot from a front corner</b><span>One photo then shows the side and the wheels too. Or use 4 photos with 3D AI Studio.</span></div>
+      <div class="tip glass"><b>Keep the whole car in frame</b><span>Parts cut off in the photo come out missing.</span></div>
       <div class="tip glass"><b id="modelTip"></b><span id="creditTip"></span></div>
     </div>
     <div id="resume"></div>
@@ -40,8 +40,8 @@ export function mount(el) {
   const zone = $('#dropzone', el);
   const hot = (on) => {
     zone.classList.toggle('hot', on);
-    $('#dzLead', el).textContent = on ? 'Release to set it up. Nothing is sent until you press Generate.'
-      : `One clear subject, keep the whole ${wf ? 'Warframe' : 'car'} in view. Nothing is sent or paid for until you press Generate. Already have a 3D model? Drop it too.`;
+    $('#dzLead', el).textContent = on ? 'Let go to set it up. Nothing is sent until you press Make 3D model.'
+      : `Keep the whole ${wf ? 'Warframe' : 'car'} in view. Nothing is paid for until you press Make 3D model. Have a 3D file? Drop it too.`;
   };
   zone.addEventListener('dragover', (e) => { e.preventDefault(); hot(true); });
   zone.addEventListener('dragleave', (e) => { if (!zone.contains(e.relatedTarget)) hot(false); });
@@ -68,8 +68,8 @@ export function update() {
 
   const waiting = state.queue.filter((q) => q.status === 'waiting').length;
   const failed = state.queue.filter((q) => q.status === 'error');
-  $('#dzStatus', root).textContent = state.importing ? `Importing ${state.importing}…` : sending ? `Sending ${sending.name}…${waiting ? ` ${waiting} more waiting.` : ''}`
-    : failed.length ? `${failed.length} photo${failed.length > 1 ? 's' : ''} could not be sent. See the queue on the Generate screen.` : '';
+  $('#dzStatus', root).textContent = state.importing ? `Adding ${state.importing}…` : sending ? `Sending ${sending.name}…${waiting ? ` ${waiting} more waiting.` : ''}`
+    : failed.length ? `${failed.length} photo${failed.length > 1 ? 's' : ''} could not be sent. See the list on the 3D model step.` : '';
 
   const next = savedSetup();
   $('#modelTip', root).textContent = `Next: ${setupLabel(next)} · ${costOf(next)} credits`;
@@ -83,7 +83,7 @@ export function update() {
   // Pick up where you left off: the last scenes you edited, reopened exactly as they were.
   const items = recentItems();
   const resume = items.length ? `<div class="rowhead"><h2 class="label">Pick up where you left off</h2><span class="sub">Ctrl+K finds these anywhere</span></div>
-    <div class="recent">${items.map((x) => `<button class="mini glass" type="button" data-recent="${esc(x.id)}" title="Open ${esc(x.model.name)} in Compose, exactly as you left it">
+    <div class="recent">${items.map((x) => `<button class="mini glass" type="button" data-recent="${esc(x.id)}" title="Open ${esc(x.model.name)} in Scene, just as you left it">
       <div class="stage s-ring">${thumbOf(x.model) ? `<img class="thumb" src="${thumbOf(x.model)}" alt="">` : ''}</div>
       <div class="mt"><b>${esc(x.model.name)}</b><span class="st">Edited ${esc(timeAgo(x.at))}</span></div></button>`).join('')}</div>` : '';
   const rs = $('#resume', root);

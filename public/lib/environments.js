@@ -27,7 +27,7 @@
 
 export const ENVIRONMENTS = {
   'white-cyc-studio': {
-    label: 'White Cyc Studio', note: 'Bright infinity cove · soft even light',
+    label: 'White studio', note: 'Bright white room with no corners · soft even light',
     cam: { horizon: 0.5, ground: 0.72, width: 7.4, hfov: 45 },
     light: { sun: { azimuth: -30, elevation: 60, kelvin: 6000 }, key: 0.9, fill: 0.7, rim: 0.4, sky: ['#ffffff', '#d8dade', 0.9], shadow: 0.6, reflection: 0.06, env: 1.0 },
     sky: { color: '#eceef1' }, reflect: 'white_studio_02',
@@ -50,7 +50,7 @@ export const ENVIRONMENTS = {
     ],
   },
   'soft-studio': {
-    label: 'Soft studio', note: 'Grey cove · big overhead softbox · strip lights',
+    label: 'Soft studio', note: 'Grey room with no corners · big soft light above · strip lights',
     cam: { horizon: 0.5, ground: 0.72, width: 7.4, hfov: 45 },
     light: { sun: { azimuth: -40, elevation: 55, kelvin: 5600 }, key: 0.8, fill: 0.45, rim: 1.2, sky: ['#e8eaee', '#2a2b2e', 0.35], shadow: 0.75, reflection: 0.12, env: 1.1 },
     sky: { color: '#2b2c30' }, reflect: 'studio_small_03',
@@ -73,7 +73,7 @@ export const ENVIRONMENTS = {
     ],
   },
   showroom: {
-    label: 'Showroom', note: 'Dark showroom · gold ring · ceiling softbox',
+    label: 'Showroom', note: 'Dark showroom · gold ring · soft ceiling light',
     cam: { horizon: 0.53, ground: 0.71, width: 7.3, hfov: 50 },
     light: { sun: { azimuth: 0, elevation: 70, kelvin: 6500 }, key: 1.0, fill: 0.15, rim: 1.6, sky: ['#d8dde6', '#2a1e10', 0.12], shadow: 0.85, reflection: 0.35, env: 0.9 },
     sky: { color: '#09090a' },
@@ -158,8 +158,8 @@ export const ENVIRONMENTS = {
     sky: { hdri: 'shanghai_bund', sunU: 0.093, intensity: 0.7 }, // sunU: its brightest light, put behind the car as the rim
     mats: {
       asphalt: { color: '#17181c', rough: 0.12 }, line: { color: '#cfcfcf', rough: 0.5 }, curb: { color: '#3a3a40', rough: 0.8 },
-      tower: { color: '#2a2c38', rough: 0.6 }, window: { color: '#ffd59a', rough: 0.5, emit: 0.6 }, pink: { color: '#ff2fb0', rough: 0.4, emit: 4 },
-      cyan: { color: '#2fe0ff', rough: 0.4, emit: 4 }, lamp: { color: '#ffe0b0', rough: 0.4, emit: 5 },
+      tower: { color: '#2a2c38', rough: 0.6 }, window: { color: '#ffd59a', rough: 0.5, emit: 0.6 }, pink: { color: '#ff2fb0', rough: 0.4, emit: 2 },
+      cyan: { color: '#2fe0ff', rough: 0.4, emit: 2 }, lamp: { color: '#ffe0b0', rough: 0.4, emit: 2.5 },
     },
     parts: [
       { box: [600, 0.02, 14], at: [0, -0.01, 0], mat: 'asphalt' },
@@ -252,8 +252,19 @@ export const ENVIRONMENTS = {
   },
 };
 
-// Real-world size of what the places are built round: a car's length, a person's height (m).
-const REAL = { car: 4.6, humanoid: 1.8 };
+// The one room list every workspace offers (Car and Warframe alike): the World picker, the Test Rig and Settings.
+// Thumbnails are 320 x 200 WebP renders of the room itself (test-app/make-env-thumbs.mjs).
+export const envThumb = (slug) => `/img/rooms/${slug}.webp`;
+export const ROOMS = Object.entries(ENVIRONMENTS).map(([slug, e]) => ({ slug, label: e.label, note: e.note, thumb: envThumb(slug) }));
+// Scenes saved before every workspace shared these rooms: the old flat car scenes open in the closest room.
+const LEGACY = { gold: 'showroom', ring: 'showroom', cyclorama: 'white-cyc-studio', miami: 'night-city-rain', custom: 'white-cyc-studio' };
+export const roomFor = (preset) => (Object.hasOwn(ENVIRONMENTS, preset) ? preset : Object.hasOwn(LEGACY, preset) ? LEGACY[preset] : 'white-cyc-studio');
+
+// Real-world size of what the places are built round (m): a car (length, width, height) and a person's height.
+// Every room is built for this car at scale 1: it sits on y = 0, turns without touching anything, and fits
+// through any door (test/rooms-car.test.mjs).
+export const CAR = { length: 4.6, width: 1.9, height: 1.5 };
+const REAL = { car: CAR.length, humanoid: 1.8 };
 /** How much to scale the place so the model stands in it at its real size. size: the normalised model {x, y, z}, Y up. */
 export function envScale(size, kind = 'car') {
   if (!size) return 1;

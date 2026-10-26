@@ -45,6 +45,10 @@ export class Post {
       }
       if (fx.bloom) {
         this.bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.6, 0.4, 0.9);
+        // Cap what feeds the glow: a specular spike on wet asphalt can be 1000x white and would wash the whole frame.
+        const hp = this.bloom.materialHighPassFilter;
+        hp.fragmentShader = hp.fragmentShader.replace('gl_FragColor = mix( outputColor, texel, alpha );', '$& gl_FragColor = min( gl_FragColor, vec4( 2.0 ) );');
+        hp.needsUpdate = true;
         c.addPass(this.bloom);
       }
       c.addPass(new OutputPass()); // tone mapping + sRGB happen here when a composer is in use
@@ -88,10 +92,12 @@ export class PathTraced {
     return t;
   }
 
-  // The scene changed (model, materials, lights, environment): rebuild the BVH and start over.
+  // The scene changed (model, materials, lights, environment): rebuild the BVH and start over. Built on this thread:
+  // setSceneAsync needs a BVH worker, and workers do not see the page's import map. ponytail: a big place stalls a
+  // frame or so; add three-mesh-bvh's ParallelMeshBVHWorker (bundled) if that shows.
   async setScene(scene, camera) {
     const t = await this.load();
-    await t.setSceneAsync(scene, camera);
+    t.setScene(scene, camera);
     this.paused = false;
   }
 

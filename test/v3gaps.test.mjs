@@ -159,7 +159,7 @@ test('3D model step: big ring with the time left, Recipe card and Ready to build
   const setup = read('public/views/setup.js');
   assert.match(setup, />Recipe</);
   assert.match(setup, /Ready to build/);
-  assert.match(setup, />Generate 3D model</);
+  assert.match(setup, />Make 3D model</);
 });
 
 test('templates: the retired "modeled" switch is gone, old saved templates still load', () => {

@@ -28,11 +28,11 @@ export function renderShelf() {
   const placed = ctx.scene().extras || [];
   return `<p class="fine">Drag a thing onto the picture to put it there, or click it to put it next to your model.</p>
     <label class="flabel" for="shelfQ">Search</label>
-    <input class="inp" id="shelfQ" type="search" value="${esc(q)}" placeholder="Bench, lamp, car…" autocomplete="off" spellcheck="false">
-    <div class="chips seg sm shelf-f" role="radiogroup" aria-label="Show">${Object.entries(FILTERS).map(([k, l]) => `<button class="chip" type="button" role="radio" data-shelf-f="${k}" aria-checked="${group === k}">${l}</button>`).join('')}</div>
+    <input class="inp" id="shelfQ" type="search" title="Type to find a thing to add" value="${esc(q)}" placeholder="Bench, lamp, car…" autocomplete="off" spellcheck="false">
+    <div class="chips seg sm shelf-f" role="radiogroup" aria-label="Show">${Object.entries(FILTERS).map(([k, l]) => `<button class="chip" type="button" role="radio" data-shelf-f="${k}" aria-checked="${group === k}" title="Show only this kind of thing">${l}</button>`).join('')}</div>
     <ul class="shelf-grid" id="shelfGrid" aria-label="Things you can add">${gridHtml()}</ul>
     ${placed.length ? `<h3 class="label">In your scene</h3><ul class="shelf-placed">${placed.map((x) => `<li><span>${esc(x.label)}</span>
-      <button class="btn ghostbtn sm" type="button" data-shelf-out="${esc(x.id)}" aria-label="Take out ${esc(x.label)}">Take out</button></li>`).join('')}</ul>` : ''}`;
+      <button class="btn ghostbtn sm" type="button" data-shelf-out="${esc(x.id)}" aria-label="Take out ${esc(x.label)}" title="Take this out of the scene">Take out</button></li>`).join('')}</ul>` : ''}`;
 }
 
 function add(item, at) {

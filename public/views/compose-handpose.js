@@ -35,29 +35,28 @@ function available() {
 }
 export const isPosing = () => on;
 
-const tip = (s) => `title="${esc(s)}"`;
-const sw = (key, label, small, checked, title) => `<label class="tg" ${tip(title)}><span>${label}<small>${small}</small></span><input class="sw" type="checkbox" role="switch" data-hp-opt="${key}" ${checked ? 'checked' : ''}></label>`;
+const sw = (key, label, small, checked, title) => `<label class="tg" title="${esc(title)}"><span>${label}<small>${small}</small></span><input class="sw" type="checkbox" role="switch" data-hp-opt="${key}" ${checked ? 'checked' : ''}></label>`;
 
 export function renderHandPoseGroup() {
   if (!available()) { if (on) stopHandPose(); return ''; }
   const keys = motionOf().keys || [];
-  const body = on ? `<p class="fine">Drag an orange dot: a hand or foot bends its arm or leg, the dot at the hips moves the whole body. Click a blue dot (head, neck, back), then drag its rings to turn it.</p>
-      ${sw('mirror', 'Mirror left and right', 'Move one side, the other copies it', mirror, 'When on, moving a left hand or foot moves the right one the same way (and the other way round)')}
-      ${sw('feet', 'Keep feet on the floor', 'Feet stay put when the body moves', lockFeet, 'When on, moving the body keeps both feet planted, and a foot can not go below the floor')}
-      <div class="mg-row"><button class="btn sm ghostbtn" type="button" data-act="undo" ${tip('Undo the last drag (Ctrl+Z)')}>Undo</button>
-        <button class="btn sm ghostbtn" type="button" data-hp="reset" ${tip('Put every joint back the way the model was made')}>Start over</button></div>
+  const body = on ? `<p class="fine keep">Drag an orange dot to move a hand, foot or the hips. Click a blue dot, then drag its rings to turn it.</p>
+      ${sw('mirror', 'Copy to other side', 'Move one side, the other side copies it', mirror, 'Moving a left hand or foot moves the right one too')}
+      ${sw('feet', 'Keep feet on the floor', 'Feet stay put when the body moves', lockFeet, 'Feet stay planted and never go below the floor')}
+      <div class="mg-row"><button class="btn sm ghostbtn" type="button" data-act="undo" title="Undo the last drag (Ctrl+Z)">Undo</button>
+        <button class="btn sm ghostbtn" type="button" data-hp="reset" title="Put every joint back the way it was">Start over</button></div>
       <h4 class="fine">Save this pose</h4>
-      <div class="mg-row"><input class="inp" type="text" id="hp-name" maxlength="60" placeholder="My pose" aria-label="Pose name" ${tip('A name for this pose. It shows up under Pick a pose')}>
-        <button class="btn sm sec" type="button" data-hp="save" ${tip('Save this pose so you can use it again on any character')}>Save pose</button></div>
+      <div class="mg-row"><input class="inp" type="text" id="hp-name" maxlength="60" placeholder="My pose" aria-label="Pose name" title="Name this pose. It shows up under Pick a pose.">
+        <button class="btn sm sec" type="button" data-hp="save" title="Save this pose to use again on any character">Save pose</button></div>
       <h4 class="fine">Make it move</h4>
-      <div class="sl" ${tip('Pick a moment in the loop, then Add key to remember the pose at that moment')}><label for="hp-time">Moment</label><input id="hp-time" type="range" min="0" max="${LOOP}" step="0.1" value="${keyT}" data-hp-time><span class="v" id="v-hp-time">${keyT.toFixed(1)} s</span></div>
-      <div class="mg-row"><button class="btn sm sec" type="button" data-hp="key" ${tip('Remember the pose at this moment')}>Add key</button>
-        <button class="btn sm sec" type="button" data-hp="play" ${keys.length < 2 ? 'disabled' : ''} ${tip(keys.length < 2 ? 'Add at least two keys to play' : 'Play the keys as a loop')}>${playing ? 'Stop' : 'Play loop'}</button></div>
-      ${keys.length ? `<div class="chips" role="group" aria-label="Keys">${keys.map((k, i) => `<span class="chipset"><button class="chip" type="button" data-hp-go="${i}" ${tip('Show and edit this key')}>${k.t.toFixed(1)} s</button><button class="chip sm" type="button" data-hp-del="${i}" ${tip('Remove this key')} aria-label="Remove key at ${k.t.toFixed(1)} s">✕</button></span>`).join('')}</div>`
-        : '<p class="fine">Pose, pick a moment, Add key. Two or more keys play as a loop.</p>'}
-      <button class="btn sm pri" type="button" data-hp="toggle" aria-pressed="true" ${tip(`Hide the dots and go back to turning the model (${keyOf('pose')})`)}>Done</button>`
+      <div class="sl"><label for="hp-time">Moment</label><input id="hp-time" type="range" min="0" max="${LOOP}" step="0.1" value="${keyT}" data-hp-time title="Pick a moment in the loop, then press Save moment"><span class="v" id="v-hp-time">${keyT.toFixed(1)} s</span></div>
+      <div class="mg-row"><button class="btn sm sec" type="button" data-hp="key" title="Remember the pose at this moment">Save moment</button>
+        <button class="btn sm sec" type="button" data-hp="play" ${keys.length < 2 ? 'disabled' : ''} title="${keys.length < 2 ? 'Save two moments first to play' : 'Play the saved moments as a loop'}">${playing ? 'Stop' : 'Play loop'}</button></div>
+      ${keys.length ? `<div class="chips" role="group" aria-label="Saved moments">${keys.map((k, i) => `<span class="chipset"><button class="chip" type="button" data-hp-go="${i}" title="Show and change this moment">${k.t.toFixed(1)} s</button><button class="chip sm" type="button" data-hp-del="${i}" title="Remove this moment" aria-label="Remove moment at ${k.t.toFixed(1)} s">✕</button></span>`).join('')}</div>`
+        : '<p class="fine keep">Pose the model, pick a moment, then Save moment. Two or more play as a loop.</p>'}
+      <button class="btn sm pri" type="button" data-hp="toggle" aria-pressed="true" title="Hide the dots and go back to turning the model (${keyOf('pose')})">Done</button>`
     : '<p class="fine">Move the arms, legs, head and body yourself, right on the model.</p>';
-  return `<div class="grp" id="grp-handpose"><h3>Pose by hand</h3>${on ? '' : `<button class="btn pri" type="button" data-hp="toggle" aria-pressed="false" ${tip(`Show grab dots on the joints so you can drag them (${keyOf('pose')})`)}>Pose by hand</button>`}${body}</div>`;
+  return `<div class="grp" id="grp-handpose"><h3>Pose by hand</h3>${on ? '' : `<button class="btn pri" type="button" data-hp="toggle" aria-pressed="false" title="Show dots on the joints so you can drag them (${keyOf('pose')})">Pose by hand</button>`}${body}</div>`;
 }
 
 // --- the 3D side ---
@@ -221,7 +220,7 @@ export async function onHandPoseClick(t) {
     } catch (err) { toast(err.message); }
     return true;
   }
-  if (act === 'key') { stopPlay(); await setMotion({ keys: addKey(motionOf().keys, keyT, current()) }); toast(`Key added at ${keyT.toFixed(1)} s`, 'info'); return true; }
+  if (act === 'key') { stopPlay(); await setMotion({ keys: addKey(motionOf().keys, keyT, current()) }); toast(`Moment saved at ${keyT.toFixed(1)} s`, 'info'); return true; }
   if (act === 'play') {
     if (playing) stopPlay(); else { playing = true; tc.detach(); t0 = performance.now(); raf = requestAnimationFrame(tick); }
     ctx.renderInspector();

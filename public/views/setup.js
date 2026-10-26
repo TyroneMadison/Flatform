@@ -5,10 +5,28 @@ import { $, esc, state, stepper, findModel, toast, go, refresh, refreshAccount, 
   savedSetup, rememberSetup, accountOf, fmtBalance, busy, send, arrowRadios, confirmDialog } from '../app.js';
 import { icon } from '../lib/icons.js';
 import { PROVIDERS, ENGINES, PRESETS, VIEWS, GROUPS, groupName, normalize, presetConfig, matchPreset, summary, optionSpecs,
-  valuesOf, valueLabel, engineList } from '../lib/engines.js';
+  valuesOf, valueLabel, engineList, customFrom, detailWarning, SMART_LOW_POLY } from '../lib/engines.js';
 import { estimate } from '../lib/pricing.js';
 
 const VIEW_NAMES = { front: 'Front', left: 'Left', back: 'Back', right: 'Right' };
+// The hover tip of each Recipe option, in plain words (option keys are the engines' own names).
+const TIPS = {
+  model: 'Which Tripo version makes the model', geometry_quality: 'How much shape detail. Ultra costs more.',
+  texture: 'Paint: none, one plain color, or real metal and shine', texture_quality: 'How sharp the paint is',
+  texture_model: 'Which paint version Tripo uses', lighting_removal: "Take the photo's shadows off the paint",
+  texture_alignment: 'Line the paint up with the photo or the shape', enable_image_autofix: 'Let the engine tidy the photo first',
+  face_limit: 'How many pieces make the model. More is finer.', face_count: 'How many pieces make the model. More is finer.',
+  decimation_target: 'How many pieces make the model. More is finer.', quad: 'Build it from square pieces, easier to edit',
+  smart_low_poly: 'Fewer, cleaner pieces for games: 500 to 10,000', generate_parts: 'Split the model into parts you can move',
+  auto_size: 'Make it its real size', export_uv: 'Keep the paint map in the file', compress: 'Make the file smaller',
+  model_seed: 'Use the same number to get the same shape again', texture_seed: 'Use the same number to get the same paint again',
+  seed: 'Use the same number to get the same result again', texture_size: 'Paint picture size. Bigger is sharper.',
+  steps: 'More passes look better but take longer', simplify: 'How much detail to remove', detail_boost: 'A free extra pass for sharper detail',
+  generate_type: 'What to make', enable_pbr: 'Add real metal and shine', polygon_type: 'Make it from triangles or squares',
+  resolution: 'How fine the model is', textures: 'Paint the model', generate_thumbnail: 'Also make a small preview picture',
+  shading: 'How much photo lighting to remove',
+};
+const tipOf = (spec) => esc(TIPS[spec.key] || spec.label);
 let root;
 let setup; // the normalised setup on screen
 let openGroup = null;
@@ -43,7 +61,7 @@ export function mount(el, { id }) {
     </aside>
     <div class="su-center">
       <div class="su-left" id="suLeft"></div>
-      <div class="su-ready card"><h2>Ready to build</h2><p class="muted" id="suReadyLine"></p><div class="foot" id="suFoot"></div></div>
+      <div class="su-ready card"><h2>Ready to build</h2><p class="muted" id="suReadyLine"></p><div id="suWarn"></div><div class="foot" id="suFoot"></div></div>
     </div>
     <input type="file" id="suPick" accept="image/png,image/jpeg,image/heic,image/heif,.heic,.heif" multiple hidden>
   </section>`;
@@ -84,6 +102,8 @@ function render() {
   put('#suLeft', leftHtml());
   if (!dragging) put('#suPanel', panelHtml());
   put('#suFoot', footHtml());
+  // Quad or game-ready low detail caps the detail: say so where Make 3D model is, so it is seen before paying.
+  put('#suWarn', detailWarning(setup) ? `<p class="su-warn" role="status">${esc(detailWarning(setup))}</p>` : '');
   const photo = setup.mode === 'views' ? pending().views.front : singlePhotos()[0];
   const preset = PRESETS[setup.provider].find((x) => x.id === matchPreset(setup))?.name || 'Custom';
   $('#suReadyLine', root).textContent = `${photo ? photo.name : 'No photo yet'} · ${preset} recipe`;
@@ -107,34 +127,34 @@ function leftHtml() {
   const e = ENGINES[setup.engine];
   const views = setup.mode === 'views';
   const photos = singlePhotos();
-  const title = model ? `Regenerate ${esc(model.name)}` : !views && photos.length > 1 ? `Set up ${photos.length} models` : 'Set up this model';
-  const lede = !views && photos.length > 1 && !model ? 'Each photo becomes its own model, all with the setup on the right.'
-    : 'Choose a preset. Open a group only if you want to change something.';
+  const title = model ? `Make ${esc(model.name)} again` : !views && photos.length > 1 ? `Set up ${photos.length} models` : 'Set up this model';
+  const lede = !views && photos.length > 1 && !model ? 'Each photo becomes its own model, all with this recipe.'
+    : 'Pick a recipe. Open a group only to change it.';
   let stage;
   if (views) {
     stage = `<div class="su-views">${VIEWS.map((v) => {
       const ph = p.views[v];
       if (ph) {
         return `<div class="slot full" data-slot="${v}"><img src="${photoUrl(ph)}" alt="${VIEW_NAMES[v]} view: ${esc(ph.name)}"><span class="sl-name">${VIEW_NAMES[v]}</span>
-          <button class="sl-x" type="button" data-unslot="${v}" aria-label="Remove the ${v} view">${icon('close', 14)}</button></div>`;
+          <button class="sl-x" type="button" data-unslot="${v}" aria-label="Remove the ${v} photo" title="Remove the ${v} photo">${icon('close', 14)}</button></div>`;
       }
-      return `<button class="slot empty" type="button" data-slot="${v}" data-pickslot="${v}">${icon('plus', 20)}<span class="sl-name">${VIEW_NAMES[v]}${v === 'front' ? ' · required' : ''}</span><span class="sl-hint">Drop or choose a photo</span></button>`;
+      return `<button class="slot empty" type="button" data-slot="${v}" data-pickslot="${v}" title="Add the ${v} photo">${icon('plus', 20)}<span class="sl-name">${VIEW_NAMES[v]}${v === 'front' ? ' · required' : ''}</span><span class="sl-hint help">Drop or choose a photo</span></button>`;
     }).join('')}</div>`;
   } else if (photos.length) {
     stage = `<div class="su-photo" data-drop><img id="suMain" src="${photoUrl(photos[0])}" alt="${esc(photos[0].name)}"></div>
       ${photos.length > 1 ? `<div class="su-strip">${photos.map((ph) => `<div class="st-item"><img src="${photoUrl(ph)}" alt="${esc(ph.name)}">
         <button class="sl-x" type="button" data-unphoto="${ph.id}" aria-label="Remove ${esc(ph.name)}">${icon('close', 12)}</button></div>`).join('')}</div>` : ''}`;
   } else {
-    stage = `<button class="su-photo su-empty" type="button" data-act="add" data-drop>${icon('upload', 30)}<b>Drop a photo here or choose one</b><span>PNG, JPEG or HEIC · up to 20 MB · one clear subject</span></button>`;
+    stage = `<button class="su-photo su-empty" type="button" data-act="add" data-drop title="Pick a photo. PNG, JPEG or HEIC, up to 20 MB.">${icon('upload', 30)}<b>Add a photo</b><span class="help">One clear thing · up to 20 MB</span></button>`;
   }
   const filled = VIEWS.filter((v) => p.views[v]).length;
-  const info = views ? `<span><b>${filled} of 4 views</b> · ${VIEWS.filter((v) => p.views[v]).join(', ') || 'front first'}</span>`
+  const info = views ? `<span><b>${filled} of 4 sides</b> · ${VIEWS.filter((v) => p.views[v]).join(', ') || 'front first'}</span>`
     : photos.length ? `<span><b>${esc(photos[0].file.name)}</b><span id="suDims"></span>${photos.length > 1 ? ` · ${photos.length} photos` : ''}</span>` : '<span></span>';
-  const more = views || !photos.length ? '' : `<button class="link" type="button" data-act="add">${model ? 'Use another photo' : 'Add photos'}</button>`;
+  const more = views || !photos.length ? '' : `<button class="link" type="button" data-act="add" title="${model ? 'Pick a different photo' : 'Add more photos, one model each'}">${model ? 'Other photo' : 'Add photos'}</button>`;
   const toggle = !e.views
-    ? `<span class="muted">${p.mode === 'views' ? `${esc(e.label)} takes one photo: only the front view is sent` : `${esc(e.label)} takes one photo`}</span>`
-    : `<button class="link" type="button" data-act="mode">${views ? 'Back to single photo' : 'Single photo · switch to 4 views'}</button>`;
-  return `<h1 class="sh">${title}</h1><p class="lede">${lede}</p>${stage}<div class="su-cap">${info}<span class="su-acts">${more}${toggle}</span></div>`;
+    ? `<span class="muted">${p.mode === 'views' ? `${esc(e.label)} takes one photo, so only the front is sent` : `${esc(e.label)} takes one photo`}</span>`
+    : `<button class="link" type="button" data-act="mode" title="${views ? 'Use one photo' : 'Use up to 4 photos from different sides'}">${views ? 'Use one photo' : 'Use 4 sides'}</button>`;
+  return `<h1 class="sh">${title}</h1><p class="lede help">${lede}</p>${stage}<div class="su-cap">${info}<span class="su-acts">${more}${toggle}</span></div>`;
 }
 
 function addPhotos(files, slot) {
@@ -155,7 +175,7 @@ function pick(slot = '') {
 }
 
 // ---- right: provider, presets, groups ----
-const radio = (on, attrs, inner, cls = '') => `<button type="button" role="radio" class="${cls}${on ? ' on' : ''}" aria-checked="${on}" tabindex="${on ? 0 : -1}" ${attrs}>${inner}</button>`;
+const radio = (on, attrs, inner, cls = '', tip = '') => `<button type="button" role="radio" class="${cls}${on ? ' on' : ''}" aria-checked="${on}" tabindex="${on ? 0 : -1}" title="${tip}" ${attrs}>${inner}</button>`;
 const plain = (html) => html.replace(/<[^>]+>/g, '');
 const info = (html) => `<button type="button" class="info" aria-label="${esc(plain(html))}">i<span class="tipbox" aria-hidden="true">${html}</span></button>`;
 const row = (id, label, control, tip = '') => `<div class="r"><div class="l"><span id="su-l-${id}">${label}</span>${tip}</div><div class="c">${control}</div></div>`;
@@ -166,11 +186,11 @@ function panelHtml() {
   const presets = PRESETS[provider].map((x) => ({ ...x, credits: estimate(presetConfig(provider, x.id, pending().mode)).credits }));
   presets.push({ id: 'custom', name: 'Custom', desc: 'Your own mix', credits: current === 'custom' ? estimate(setup).credits : '—' });
   return `
-    <div class="prov" role="radiogroup" aria-label="Provider">${Object.entries(PROVIDERS).map(([id, p]) => radio(id === provider, `data-provider="${id}" data-fk="prov:${id}"`, `<b>${p.name}</b><span>${p.sub}</span>`)).join('')}</div>
-    <h2 class="k" id="suPresetK">Preset</h2>
+    <div class="prov" role="radiogroup" aria-label="Provider">${Object.entries(PROVIDERS).map(([id, p]) => radio(id === provider, `data-provider="${id}" data-fk="prov:${id}"`, `<b>${p.name}</b><span>${p.sub}</span>`, '', p.local ? 'Make it free on this computer' : `Make it with ${p.name} (uses credits)`)).join('')}</div>
+    <h2 class="k" id="suPresetK">Pick a recipe</h2>
     <div class="presets" role="radiogroup" aria-labelledby="suPresetK">${presets.map((x) => radio(x.id === current, `data-preset="${x.id}" data-fk="pre:${x.id}"`,
-      `<b>${x.name}</b><p>${x.desc}</p><em>${x.credits}${typeof x.credits === 'number' ? '<span class="sr-only"> credits</span>' : ''}</em>`, 'pre')).join('')}</div>
-    <h2 class="k">Fine-tune</h2>
+      `<b>${x.name}</b><p>${x.desc}</p><em>${x.credits}${typeof x.credits === 'number' ? '<span class="sr-only"> credits</span>' : ''}</em>`, 'pre', esc(x.id === 'custom' ? 'Change the details yourself' : `${x.name}: ${x.desc}`))).join('')}</div>
+    <h2 class="k">Change details</h2>
     <div class="groups">${GROUPS.map(groupHtml).join('')}</div>`;
 }
 
@@ -181,7 +201,7 @@ function groupHtml(g) {
   if (!rows.length) return `<div class="g"><div class="gh static"><b>${name}</b><span>${text}</span><i></i></div></div>`;
   const open = openGroup === g;
   return `<div class="g${open ? ' open' : ''}">
-    <button class="gh" type="button" aria-expanded="${open}" aria-controls="su-g-${g}" data-group="${g}" data-fk="g:${g}"><b>${name}</b><span>${open ? '' : text}</span><i>${icon(open ? 'chevronUp' : 'chevronDown', 14)}</i></button>
+    <button class="gh" type="button" aria-expanded="${open}" aria-controls="su-g-${g}" data-group="${g}" data-fk="g:${g}" title="${open ? 'Hide' : 'Show'} the ${esc(name.toLowerCase())} choices"><b>${name}</b><span>${open ? '' : text}</span><i>${icon(open ? 'chevronUp' : 'chevronDown', 14)}</i></button>
     <div class="rows" id="su-g-${g}" role="group" aria-label="${name}"${open ? '' : ' hidden'}>${rows.join('')}</div></div>`;
 }
 
@@ -189,7 +209,7 @@ function rowsOf(g) {
   const e = ENGINES[setup.engine];
   const rows = [];
   if (g === 'quality' && e.provider === '3daistudio') {
-    rows.push(row('engine', 'Engine', `<select class="selc" aria-labelledby="su-l-engine" data-engine data-fk="engine">${engineList('3daistudio')
+    rows.push(row('engine', 'Engine', `<select class="selc" aria-labelledby="su-l-engine" data-engine data-fk="engine" title="Which engine makes the model">${engineList('3daistudio')
       .map((id) => `<option value="${id}"${id === setup.engine ? ' selected' : ''}>${esc(ENGINES[id].label)}</option>`).join('')}</select>`));
   }
   if (g === 'input') rows.push(modeRow(e));
@@ -199,13 +219,13 @@ function rowsOf(g) {
 
 function modeRow(e) {
   if (!e.views) {
-    return row('mode', 'Photos', '<span class="static">Single photo</span>', info(e.provider === 'tripo'
-      ? 'Flatform sends Tripo direct one photo. For 2–4 views of the same car, use a 3D AI Studio engine.' : `${esc(e.label)} builds the model from one photo.`));
+    return row('mode', 'Photos', '<span class="static">One photo</span>', info(e.provider === 'tripo'
+      ? 'Tripo takes one photo. For 2 to 4 sides, use 3D AI Studio.' : `${esc(e.label)} makes the model from one photo.`));
   }
   const views = setup.mode === 'views';
-  const tip = e.viewsPlus ? `2–4 views add ${e.viewsPlus} credits.` : setup.engine.startsWith('tripo-') ? 'Same price. Tripo reads the views in order: front, left, back, right.' : 'Same price with 2–4 views.';
-  return row('mode', 'Photos', `<div class="segc" role="radiogroup" aria-labelledby="su-l-mode">${[['single', 'Single photo'], ['views', '4 views']]
-    .map(([m, label]) => radio((m === 'views') === views, `data-mode="${m}" data-fk="mode:${m}"`, label)).join('')}</div>`, info(tip));
+  const tip = e.viewsPlus ? `2 to 4 sides cost ${e.viewsPlus} more credits.` : setup.engine.startsWith('tripo-') ? 'Same price. Order: front, left, back, right.' : 'Same price with 2 to 4 sides.';
+  return row('mode', 'Photos', `<div class="segc" role="radiogroup" aria-labelledby="su-l-mode">${[['single', 'One photo'], ['views', '4 sides']]
+    .map(([m, label]) => radio((m === 'views') === views, `data-mode="${m}" data-fk="mode:${m}"`, label, '', m === 'views' ? 'Up to 4 photos from different sides' : 'One photo')).join('')}</div>`, info(tip));
 }
 
 function optionRow(spec) {
@@ -217,16 +237,16 @@ function optionRow(spec) {
   let control = '';
   if (spec.type === 'seg') {
     control = `<div class="segc" role="radiogroup" ${labelled}>${valuesOf(spec, o).map((val) => radio(val[0] === v,
-      `data-key="${k}" data-value="${esc(JSON.stringify(val[0]))}" data-fk="${k}:${esc(String(val[0]))}"`, esc(valueLabel(spec, val)))).join('')}</div>`;
+      `data-key="${k}" data-value="${esc(JSON.stringify(val[0]))}" data-fk="${k}:${esc(String(val[0]))}"`, esc(valueLabel(spec, val)), '', tipOf(spec))).join('')}</div>`;
   } else if (spec.type === 'select') {
     const values = valuesOf(spec, o).some(([x]) => x === v) ? valuesOf(spec, o) : [[v, v], ...valuesOf(spec, o)];
-    control = `<select class="selc" ${labelled} data-key="${k}" data-fk="${k}">${values.map(([x, label]) => `<option value="${esc(JSON.stringify(x))}"${x === v ? ' selected' : ''}>${esc(label)}</option>`).join('')}</select>`;
+    control = `<select class="selc" ${labelled} data-key="${k}" data-fk="${k}" title="${tipOf(spec)}">${values.map(([x, label]) => `<option value="${esc(JSON.stringify(x))}"${x === v ? ' selected' : ''}>${esc(label)}</option>`).join('')}</select>`;
   } else if (spec.type === 'toggle') {
-    control = `<span class="tgc"><input type="checkbox" role="switch" class="sw" ${labelled} data-key="${k}" data-fk="${k}"${v ? ' checked' : ''}${off ? ' disabled' : ''}></span>`;
+    control = `<span class="tgc"><input type="checkbox" role="switch" class="sw" ${labelled} title="${tipOf(spec)}" data-key="${k}" data-fk="${k}"${v ? ' checked' : ''}${off ? ' disabled' : ''}></span>`;
   } else if (spec.type === 'slider') {
     control = slider(spec, v);
   } else if (spec.type === 'seed') {
-    control = `<input type="number" class="seedin" ${labelled} data-key="${k}" data-fk="${k}" min="0" max="2147483647" step="1" placeholder="Random" value="${v ?? ''}">`;
+    control = `<input type="number" class="seedin" ${labelled} title="${tipOf(spec)}" data-key="${k}" data-fk="${k}" min="0" max="2147483647" step="1" placeholder="Random" value="${v ?? ''}">`;
   }
   const label = `${spec.label}${spec.plus ? ` <em class="plus">+${spec.plus}</em>` : ''}`;
   return row(k, label, control, off || spec.info ? info(off || spec.info) : '');
@@ -234,20 +254,22 @@ function optionRow(spec) {
 
 // Sliders over wide ranges (face counts) move on a log scale and snap to two significant digits. The far left of
 // an optional one is "Adaptive" (the engine decides).
+const autoOf = (spec) => spec.auto && !spec.noAuto?.(setup.options); // smart low poly: no Adaptive end
 function slider(spec, v) {
   const [min, max] = spec.range(setup.options);
-  const lo = spec.log ? (spec.auto ? 0 : 1) : min;
+  const lo = spec.log ? (autoOf(spec) ? 0 : 1) : min;
   const hi = spec.log ? 1000 : max;
   const pos = !spec.log ? v : v == null ? 0 : Math.round(1 + (999 * Math.log(v / min)) / Math.log(max / min));
   const text = v == null ? spec.auto : spec.format(v);
-  return `<div class="slc"><input type="range" class="range" aria-labelledby="su-l-${spec.key}" data-key="${spec.key}" data-fk="${spec.key}" min="${lo}" max="${hi}" step="${spec.log ? 1 : spec.step || 1}"
-    value="${pos}" style="--p:${((pos - lo) / (hi - lo)) * 100}%" aria-valuetext="${esc(text)}"><output>${esc(text)}</output></div>`;
+  return `<div class="slc"><input type="range" class="range" aria-labelledby="su-l-${spec.key}" title="${tipOf(spec)}" data-key="${spec.key}" data-fk="${spec.key}" min="${lo}" max="${hi}" step="${spec.log ? 1 : spec.step || 1}"
+    value="${pos}" style="--p:${((pos - lo) / (hi - lo)) * 100}%" aria-valuetext="${esc(text)}"><output>${esc(text)}</output>
+    <span class="sl-ends" aria-hidden="true"><span>${esc(autoOf(spec) ? spec.auto : spec.format(min))}</span><span>${esc(spec.format(max))}</span></span></div>`;
 }
 function sliderValue(spec, input) {
   const [min, max] = spec.range(setup.options);
   const pos = Number(input.value);
   if (!spec.log) return pos;
-  if (pos === 0 && spec.auto) return null;
+  if (pos === 0 && autoOf(spec)) return null;
   const raw = min * (max / min) ** ((pos - 1) / 999);
   const unit = 10 ** Math.max(0, Math.floor(Math.log10(raw)) - 1);
   return Math.min(max, Math.max(min, Math.round(raw / unit) * unit));
@@ -262,21 +284,21 @@ function footHtml() {
   const total = each * Math.max(1, n);
   const a = accountOf(provider);
   if (PROVIDERS[provider].local) { // free: no key, no balance
-    const why = !n ? (setup.mode === 'views' ? 'Add the front view' : 'Add a photo') : setup.mode === 'views' && VIEWS.filter((v) => p.views[v]).length < 2 ? 'Add at least one more view' : '';
-    const line = [n > 1 && `${n} models`, why, a && !a.ready && 'one-time download needed, see Settings', 'runs on your graphics card'].filter(Boolean).join(' · ');
-    return `<div class="cost" role="status"><b>Free</b><span>${esc(line)}</span></div><button class="btn pri gen big" type="button" data-act="generate"${why ? ' disabled' : ''} title="${why || 'Make the 3D model on this computer'}">Generate 3D model</button>`;
+    const why = !n ? (setup.mode === 'views' ? 'Add the front photo' : 'Add a photo') : setup.mode === 'views' && VIEWS.filter((v) => p.views[v]).length < 2 ? 'Add one more side' : '';
+    const line = [n > 1 && `${n} models`, why, a && !a.ready && 'needs a one-time download in Settings', 'runs on this computer'].filter(Boolean).join(' · ');
+    return `<div class="cost" role="status"><b>Free</b><span>${esc(line)}</span></div><button class="btn pri gen big" type="button" data-act="generate"${why ? ' disabled' : ''} title="${why || 'Make the 3D model on this computer'}">Make 3D model</button>`;
   }
   const noKey = state.settings?.keys?.[provider] === 'none' || a?.hasKey === false;
   const balance = a?.hasKey && a.balance != null ? Number(a.balance) : null;
   const short = balance != null && balance < total;
-  const why = !n ? (setup.mode === 'views' ? 'Add the front view' : 'Add a photo') : setup.mode === 'views' && VIEWS.filter((v) => p.views[v]).length < 2 ? 'Add at least one more view' : '';
+  const why = !n ? (setup.mode === 'views' ? 'Add the front photo' : 'Add a photo') : setup.mode === 'views' && VIEWS.filter((v) => p.views[v]).length < 2 ? 'Add one more side' : '';
   const line = [
     n > 1 && `${n} models × ${each}`,
     why,
-    noKey ? `no ${PROVIDERS[provider].name} key yet` : a?.error ? 'balance unavailable' : balance != null ? `${short ? 'not enough · ' : ''}balance ${fmtBalance(balance)}` : 'balance …',
+    noKey ? `no ${PROVIDERS[provider].name} key yet` : a?.error ? "can't check your credits" : balance != null ? `${short ? 'not enough · ' : ''}you have ${fmtBalance(balance)}` : 'checking credits…',
   ].filter(Boolean).join(' · ');
-  const button = noKey ? `<button class="btn pri gen big" type="button" data-act="key" title="Connect your account first: it takes a minute">${icon('key')}<span>Add key</span></button>`
-    : `<button class="btn pri gen big" type="button" data-act="generate"${why ? ' disabled' : ''} title="${why || 'Send the photo and recipe and make the 3D model'}">Generate 3D model</button>`; // short: Generate asks first
+  const button = noKey ? `<button class="btn pri gen big" type="button" data-act="key" title="Connect your account first. It takes a minute.">${icon('key')}<span>Add key</span></button>`
+    : `<button class="btn pri gen big" type="button" data-act="generate"${why ? ' disabled' : ''} title="${why || 'Send the photo and recipe to make the 3D model'}">Make 3D model</button>`; // short: Generate asks first
   return `<div class="cost" role="status"><b>${total} credits</b><span class="${short ? 'bad' : ''}">${esc(line)}</span></div>${button}`;
 }
 
@@ -287,7 +309,7 @@ async function onClick(e) {
   const d = t.dataset;
   if (d.provider) return switchProvider(d.provider);
   if (d.preset) {
-    if (d.preset === 'custom') openGroup = 'quality';
+    if (d.preset === 'custom') { openGroup = 'quality'; if (matchPreset(setup) !== 'custom') setup = customFrom(setup); }
     else setup = presetConfig(setup.provider, d.preset, pending().mode);
     return render();
   }
@@ -318,7 +340,8 @@ function onChange(e) {
   else if (t.tagName === 'SELECT') v = JSON.parse(t.value);
   else if (t.type === 'number') v = t.value === '' ? null : Number(t.value);
   else if (t.type === 'range') { dragging = false; v = setup.options[k]; } // already set while dragging
-  setup = remake({ options: { ...setup.options, [k]: v } });
+  const faces = k === 'smart_low_poly' && v ? { face_limit: SMART_LOW_POLY.default } : {}; // turned on: 5,000 pieces
+  setup = remake({ options: { ...setup.options, [k]: v, ...faces } });
   render();
 }
 
@@ -369,7 +392,7 @@ async function generate() {
   const total = estimate(s).credits * jobs.length;
   const a = accountOf(s.provider);
   if (a?.balance != null && total > Number(a.balance) && !(await confirmDialog({ title: 'Not enough credits?',
-    text: `This costs about ${total} credits and your ${PROVIDERS[s.provider].name} balance is ${fmtBalance(a.balance)}. Send it anyway?`, ok: 'Generate anyway' }))) return;
+    text: `This costs about ${total} credits. You have ${fmtBalance(a.balance)} with ${PROVIDERS[s.provider].name}. Send it anyway?`, ok: 'Send anyway' }))) return;
   rememberSetup(s).catch((err) => toast(err.message));
   Object.assign(p, { photos: [], views: {}, modelId: null, setup: null });
   jobs.forEach((job, i) => enqueue(job, i === 0));

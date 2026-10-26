@@ -86,8 +86,8 @@ test('options that do not apply are dropped, bad values repaired', () => {
   assert.throws(() => normalize({ provider: 'tripo', engine: 'hitem3d' }));
   assert.throws(() => normalize({ provider: '3daistudio', engine: 'constructor' }));
   assert.equal(engineList('3daistudio').length, 6);
-  assert.equal(summary(presetConfig('3daistudio', 'max'), 'quality'), 'Hitem3D 3.0 · 2048 quality · PBR');
-  assert.equal(summary(presetConfig('tripo', 'balanced'), 'quality'), 'v3.1 · standard geometry · PBR · HD');
+  assert.equal(summary(presetConfig('3daistudio', 'max'), 'quality'), 'Hitem3D 3.0 · 2048 quality · real materials');
+  assert.equal(summary(presetConfig('tripo', 'balanced'), 'quality'), 'v3.1 · standard shape · real materials · HD');
 });
 
 test('3D AI Studio request bodies for every engine', () => {

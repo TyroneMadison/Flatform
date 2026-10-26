@@ -34,26 +34,35 @@ export function statusLight(job, waiting = 0, now = Date.now()) {
   return { light: 'busy', pct, text: `${name}: ${pct}% · ${formatEta(etaSeconds({ ...job, now }))}${more}`, tip: job.phaseText || 'Rendering' };
 }
 
-// One line for a queued render: "Still + 360° turntable · Compose scene, Transparent".
+// What the top-bar light shows while joints are being added (auto-rig) and nothing is rendering. waiting: renders of
+// that model held back until the rig is done.
+export function rigLight(name, waiting = 0) {
+  return { light: 'busy', pct: 0, text: `${name || 'Model'}: Rigging…${waiting ? ` · ${waiting} render${waiting > 1 ? 's' : ''} waiting` : ''}`,
+    tip: `Adding joints in Blender. ${waiting ? 'Renders of this model start when it is done' : 'You can keep working'}` };
+}
+/** A waiting render whose model is being rigged waits for the joints first. */
+export const blockedByRig = (task, rigging) => task?.status === 'waiting' && rigging.has(task.model.id);
+
+// One line for a queued render: "Still + 360° spin · My scene, See-through".
 export function taskLabel(o) {
-  const what = [o.still && 'Still', o.t360 && '360° turntable', o.t180 && '180° half turn', o.models && 'Model files'].filter(Boolean);
+  const what = [o.still && 'Still', o.t360 && '360° spin', o.t180 && '180° half spin', o.models && 'Model files'].filter(Boolean);
   const looks = (o.still || o.t360 || o.t180) ? Object.keys(LOOKS).filter((l) => o[l]).map(lookName) : [];
   return `${what.join(' + ') || 'Nothing'}${looks.length ? ` · ${looks.join(', ')}` : ''}`;
 }
-export const lookName = (l) => ({ showroom: 'Showroom', studio: 'Compose scene', transparent: 'Transparent' })[l] || l;
+export const lookName = (l) => ({ showroom: 'Showroom', studio: 'My scene', transparent: 'See-through' })[l] || l;
 
 // The one file a finished render is best shown by, relative to its handoff folder: the drag-to-spin viewer for a
 // turntable, else the still, else the model file.
-export function resultFile({ slug, still, t360, t180, looks = [], yaw = 0 }) {
+export function resultFile({ slug, still, t360, t180, looks = [], yaw = 0, when = '' }) {
   if (t360 || t180) return 'viewer.html';
-  if (still && looks.length) return `stills/${stillName(slug, looks[0], yaw)}`;
+  if (still && looks.length) return `stills/${stillName(slug, looks[0], yaw, when)}`;
   return `${slug}.glb`;
 }
 
 // The queue tray: tasks run one at a time, in order. Pure helpers over a plain array.
 export const nextTask = (queue) => queue.find((t) => t.status === 'waiting') || null;
 export const waitingCount = (queue) => queue.filter((t) => t.status === 'waiting').length;
-export const STATUS_TEXT = { waiting: 'Waiting', running: 'Rendering', done: 'Done', failed: 'Did not finish', cancelled: 'Cancelled' };
+export const STATUS_TEXT = { rigging: 'Waits for joints', waiting: 'Waiting', running: 'Rendering', done: 'Done', failed: 'Did not finish', cancelled: 'Cancelled' };
 // Keeps the tray short: everything still to do, plus the last few finished ones.
 export function trimQueue(queue, keep = 5) {
   const finished = queue.filter((t) => !['waiting', 'running'].includes(t.status));
@@ -64,8 +73,8 @@ export function trimQueue(queue, keep = 5) {
 // The two connection lights in the top bar.
 export function blenderLight(blender) {
   if (!blender) return { ok: null, text: 'Blender: checking', tip: 'Looking for Blender on this computer' };
-  return blender.found ? { ok: true, text: 'Blender ready', tip: `${blenderStatus(blender)}. Renders can use it for extra realism.` }
-    : { ok: false, text: 'No Blender', tip: 'Blender is optional. Install Blender 4.x or newer, or click Browse in Settings to show Flatform where it is.' };
+  return blender.found ? { ok: true, text: 'Blender ready', tip: `${blenderStatus(blender)}. Renders can use it for more real light.` }
+    : { ok: false, text: 'No Blender', tip: 'Blender is optional. Install Blender 4 or newer, or click Browse in Settings to show where it is.' };
 }
 /** The one-line Blender status in Settings. */
 export const blenderStatus = (b) => (!b ? 'Looking for Blender...' : b.found ? `Blender found: ${b.version || 'ready'}` : 'Blender not found - click Browse');

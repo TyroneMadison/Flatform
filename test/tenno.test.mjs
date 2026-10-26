@@ -9,7 +9,7 @@ import {
 } from '../public/lib/tenno.js';
 
 test('TennoGen slot names and tint channels', () => {
-  assert.deepEqual(SLOTS.map((s) => s.label), ['Primary', 'Secondary', 'Tertiary', 'Accents', 'Emissive', 'Energy']);
+  assert.deepEqual(SLOTS.map((s) => s.label), ['Primary', 'Secondary', 'Tertiary', 'Accents', 'Glow', 'Energy']);
   assert.deepEqual(SLOTS.slice(0, 4).map((s) => s.tint), ['Tint0', 'Tint1', 'Tint2', 'Tint3']);
   assert.deepEqual(TINT_SLOTS, ['primary', 'secondary', 'tertiary', 'accents']);
 });

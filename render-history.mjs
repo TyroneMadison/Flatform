@@ -12,16 +12,17 @@ export function createRenderHistory({ modelsDir }) {
     list,
     /**
      * picture: a finished render's picture file. pass: the render run it came from (its start time); a run renders
-     * several pictures (looks, frames), and only its first one becomes a version.
+     * several pictures (looks, frames), and only its first one becomes a version. stamp: the run's start time as
+     * burned into its pictures (stamp.js), shown in History.
      */
-    add(id, { picture, pass = null, kind, settings, now = new Date() }) {
+    add(id, { picture, pass = null, kind, stamp = '', settings, now = new Date() }) {
       const job = chain.then(async () => {
         const all = await list(id);
         if (pass && all.some((v) => v.pass === pass)) return null;
         const n = (all.at(-1)?.n ?? 0) + 1;
         const name = `history-v${n}${path.extname(picture).toLowerCase()}`;
         await copyFile(picture, path.join(modelsDir, id, name));
-        const v = { n, at: now.toISOString(), pass, kind, picture: name, settings: structuredClone(settings ?? {}) };
+        const v = { n, at: now.toISOString(), pass, kind, ...(stamp && { stamp }), picture: name, settings: structuredClone(settings ?? {}) };
         await writeFile(file(id) + '.tmp', JSON.stringify([...all, v], null, 2));
         await rename(file(id) + '.tmp', file(id));
         return v;

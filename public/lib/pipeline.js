@@ -8,7 +8,7 @@ export const COLUMNS = 12; // sprite sheet columns
 export const WEB_WIDTHS = [512, 256]; // frame widths of the web sprite sheets
 export const LOOKS = {
   showroom: { width: 2048, height: 1536, label: 'Showroom' }, // 4:3, the 3D showroom: Dud Rents' house look
-  studio: { width: 2048, height: 1536, label: 'Composed scene' }, // 4:3, whatever scene was set up in Compose
+  studio: { width: 2048, height: 1536, label: 'Your scene' }, // 4:3, whatever scene was set up in Compose
   transparent: { width: 2048, height: 2048, label: 'Transparent' }, // RGBA with a soft contact shadow
 };
 
@@ -80,8 +80,9 @@ export function cleanGlass(next, base = DEFAULT_GLASS) {
 
 // 3D environments (environments.js): real places in metres. Each has an eye-level car-view camera (envCamera)
 // calibrated so the car stands on the floor where its thumbnail shows it; light = the matched key/fill/rim.
-export { ENVIRONMENTS } from './environments.js';
-export const envThumb = (slug) => `/img/environments/${slug}.jpg`; // picker thumbnails only, never a background
+// World-picker thumbnails (envThumb) are only ever thumbnails, never a background.
+export { ENVIRONMENTS, ROOMS, envThumb, roomFor } from './environments.js';
+export const ROOM_THUMB_SIZE = { w: 320, h: 200 };
 
 // The car-view camera of an environment, for a frame of the given aspect. Calibration in fractions of the frame
 // from the top: horizon = eye level, ground = where the car's centre touches the floor, width = metres visible
@@ -151,7 +152,8 @@ export function sheetSize(look, turn, width) {
 export const sheetName = (look, turn, width, ext = 'webp') => `${look}-${turn}-${width}.${ext}`;
 export const spriteJsonName = (look, turn) => `${look}-sprite-${turn}.json`;
 export const posterName = (look, ext = 'webp') => `${look}-poster.${ext}`;
-export const stillName = (slug, look, angle) => `${slug}_${look}_${pad3(((Math.round(angle) % 360) + 360) % 360)}.png`;
+// when: the render's time for the file name (stamp.js stampFile), so a new render never writes over an older one.
+export const stillName = (slug, look, angle, when = '') => `${slug}_${look}_${pad3(((Math.round(angle) % 360) + 360) % 360)}${when ? `_${when}` : ''}.png`;
 // Every sheet of a turn: WebP at 512 and 256, plus a PNG of the 512 for the 360.
 export const sheetFiles = (look, turn) => [
   ...WEB_WIDTHS.map((width) => ({ width, type: 'image/webp', name: sheetName(look, turn, width) })),
@@ -184,7 +186,7 @@ export function plannedFiles({ slug, looks, turns, stills = [], models = [] }) {
     }
     if (turns.length) files.push(`web/${posterName(look)}`, `web/${posterName(look, 'png')}`);
   }
-  files.push(...stills.map((s) => `stills/${stillName(slug, s.look, s.angle)}`));
+  files.push(...stills.map((s) => `stills/${stillName(slug, s.look, s.angle, s.when)}`));
   files.push(...models.map((m) => `models/${m}`));
   if (turns.length) files.push('spin-viewer.js', 'viewer.html');
   return [...files, 'HANDOFF.md'];

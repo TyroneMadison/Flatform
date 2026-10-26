@@ -84,15 +84,17 @@ test('inspector card: clicking a part opens its colour and material on the right
   assert.match(compose, /data-act="insp-close" title="/);
 });
 
-test('undo note: an edit says "Changed X · Undo", an undo says "Undid X · Redo"', () => {
+test('undo pill: an edit says "X changed · Undo", an undo says "X undone · Redo", and it fades by itself', () => {
   assert.equal(changeName(['preset']), 'World');
   assert.equal(changeName(['paint']), 'Colours');
   assert.equal(changeName(['x', 'y']), 'Position');
   assert.equal(changeName(['look', 'paint']), 'Light and look and more');
   assert.equal(changeName(['whatever']), 'Scene');
   assert.equal(changeName([]), 'Scene');
-  assert.match(compose, /undoNote\(`Changed \$\{name\}`, 'Undo'/);
-  assert.match(compose, /\$\{redo \? 'Redid' : 'Undid'\}/);
+  assert.match(compose, /undoNote\(`\$\{name\} changed`, 'Undo'/);
+  assert.match(compose, /\$\{redo \? 'redone' : 'undone'\}/);
+  assert.match(compose, /pill\?\.classList\.add\('out'\)[\s\S]{0,80}\}, 4000\)/, 'the pill goes away on its own');
+  assert.match(read('styles/stage.css'), /\.toast\.undo \{[^}]*height: 36px/, 'a one-line 36px pill');
 });
 
 test('render pill ring: 0 to 100, clamped and rounded', () => {

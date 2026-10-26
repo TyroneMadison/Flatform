@@ -23,13 +23,13 @@ function draw() {
     const open = i.open && models[i.open] ? ` <a class="link" href="#/compose/${models[i.open]}">Open</a>` : '';
     return `<li class="chk ${res || ''}"><span>${esc(i.text)}${open}</span>
       <span class="chips seg sm" role="group" aria-label="Result">
-        <button class="chip" type="button" data-item="${i.id}" data-result="pass" aria-pressed="${res === 'pass'}">Pass</button>
-        <button class="chip" type="button" data-item="${i.id}" data-result="fail" aria-pressed="${res === 'fail'}">Fail</button>
+        <button class="chip" type="button" data-item="${i.id}" data-result="pass" aria-pressed="${res === 'pass'}" title="It worked (click again to clear)">Pass</button>
+        <button class="chip" type="button" data-item="${i.id}" data-result="fail" aria-pressed="${res === 'fail'}" title="It did not work (click again to clear)">Fail</button>
       </span></li>`;
   };
-  root.innerHTML = `<div class="libhead"><div><h1 class="ph">Flatform Test · v3 checklist</h1>
-    <p class="sub">${done.length} of ${CHECK_IDS.length} checked · ${failed.length} failed. Tripo, 3D AI Studio and Blender are mocks here: nothing is paid for and your Flatform library is never touched.</p></div></div>
-    <p class="fine">Data folder: <code>${esc(state.settings?.libraryDir || '')}</code>${data.seed?.photosDir ? ` · Sample photos: <code>${esc(data.seed.photosDir)}</code> ${native?.openPath ? '<button class="btn sm sec" type="button" data-act="photos">Open folder</button>' : ''}` : ''}</p>
+  root.innerHTML = `<div class="libhead"><div><h1 class="ph">Flatform Test · checklist</h1>
+    <p class="sub keep">${done.length} of ${CHECK_IDS.length} checked · ${failed.length} failed. Tripo, 3D AI Studio and Blender are pretend here: nothing is paid for and your real library is safe.</p></div></div>
+    <p class="fine keep">Data folder: <code>${esc(state.settings?.libraryDir || '')}</code>${data.seed?.photosDir ? ` · Sample photos: <code>${esc(data.seed.photosDir)}</code> ${native?.openPath ? '<button class="btn sm sec" type="button" data-act="photos" title="Show the sample photos in a folder">Open folder</button>' : ''}` : ''}</p>
     ${CHECKLIST.map((g) => `<section class="glass chkgrp"><h2 class="label">${esc(g.group)}</h2><ul class="chklist">${g.items.map(line).join('')}</ul></section>`).join('')}`;
 }
 

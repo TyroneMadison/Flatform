@@ -15,9 +15,9 @@ export function initLighting(c) { ctx = c; thumbs = {}; thumbKey = ''; busy = fa
 export function renderLightingGroup() {
   const on = lightingPresetOf(ctx.scene().look);
   return `<div class="grp" id="grp-lighting"><h3>Lighting studio</h3>
-    <p class="fine">Pick a place to light your model. One click swaps the light and the background.</p>
+    <p class="fine">Pick a place to light your model. One click changes the light and the background.</p>
     <div class="lightgrid" role="radiogroup" aria-label="Lighting">${Object.entries(LIGHTING_PRESETS).map(([k, p]) => `<button class="lightcard" type="button" role="radio" aria-checked="${on === k}" data-light="${k}" title="Light the model in this place. [ and ] step through them.">${thumbs[k] ? `<img src="${thumbs[k]}" alt="">` : '<span class="ph"></span>'}<span>${esc(p.label)}</span></button>`).join('')}</div>
-    <button class="btn big sec" type="button" data-light-compare ${busy ? 'disabled' : ''}>${busy ? 'Making previews…' : Object.keys(thumbs).length ? 'Update the previews' : 'Show my model in each one'}</button>
+    <button class="btn big sec" type="button" data-light-compare title="Show a small picture of your model in each place" ${busy ? 'disabled' : ''}>${busy ? 'Making pictures…' : Object.keys(thumbs).length ? 'Update pictures' : 'Show me each one'}</button>
   </div>`;
 }
 

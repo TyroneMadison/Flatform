@@ -28,31 +28,31 @@ export function estimate({ engine, mode, options: o }) {
     // Free: runs on the user's own graphics card. Nothing is added, so the total is 0.
   } else if (engine === 'tripo-direct') {
     const p = TRIPO_DIRECT;
-    add(textured ? 'Textured model' : 'Untextured model', textured ? p.textured : p.untextured);
+    add(textured ? 'Painted model' : 'Unpainted model', textured ? p.textured : p.untextured);
     if (textured && o.texture_quality === 'detailed') add('HD texture', p.hd);
     if (textured && o.texture_quality === 'extreme') add('8K texture', p.eightK);
-    if (o.geometry_quality === 'detailed') add('Ultra geometry', p.ultra);
-    if (o.quad) add('Quad mesh', p.quad);
-    if (o.smart_low_poly) add('Smart low poly', p.smartLowPoly);
-    if (o.generate_parts) add('Parts', p.parts);
+    if (o.geometry_quality === 'detailed') add('Ultra shape', p.ultra);
+    if (o.quad) add('Square pieces', p.quad);
+    if (o.smart_low_poly) add('Game-ready low detail', p.smartLowPoly);
+    if (o.generate_parts) add('Separate parts', p.parts);
   } else if (/^tripo-3\.\d$/.test(engine)) {
     const p = THREE_D_AI.tripo;
-    add(mode === 'views' ? 'Multiview to 3D' : 'Image to 3D', mode === 'views' ? p.multiview : p.image);
+    add(mode === 'views' ? 'Views to 3D' : 'Photo to 3D', mode === 'views' ? p.multiview : p.image);
     if (textured) add(`Texture (${o.texture_quality})`, p.texture[o.texture_quality]);
-    if (o.geometry_quality === 'detailed') add('Detailed geometry', p.detailedGeometry);
-    if (o.smart_low_poly) add('Smart low poly', p.smartLowPoly);
-    if (o.generate_parts) add('Parts', p.parts);
-    if (o.quad) add('Quad mesh', p.quad);
+    if (o.geometry_quality === 'detailed') add('Detailed shape', p.detailedGeometry);
+    if (o.smart_low_poly) add('Game-ready low detail', p.smartLowPoly);
+    if (o.generate_parts) add('Separate parts', p.parts);
+    if (o.quad) add('Square pieces', p.quad);
   } else if (engine === 'hunyuan-pro') {
     const p = THREE_D_AI.hunyuanPro;
     add('Hunyuan 3D Pro', p.base);
-    if (o.enable_pbr) add('PBR', p.pbr); // never sent with generate_type Geometry
-    if (mode === 'views') add('Multi-view', p.multiview);
+    if (o.enable_pbr) add('Real materials', p.pbr); // never sent with generate_type Geometry
+    if (mode === 'views') add('More views', p.multiview);
   } else if (engine === 'trellis2') {
     const p = THREE_D_AI.trellis2;
-    add(`TRELLIS.2 ${o.resolution}${o.textures ? ` · ${o.texture_size} texture` : ' · geometry'}`,
+    add(`TRELLIS.2 ${o.resolution}${o.textures ? ` · ${o.texture_size} texture` : ' · shape only'}`,
       o.textures ? p.textured[o.resolution][o.texture_size] : p.geometry[o.resolution]);
-    if (o.generate_thumbnail) add('Thumbnail', p.thumbnail);
+    if (o.generate_thumbnail) add('Small preview', p.thumbnail);
   } else if (engine === 'hitem3d') {
     const p = THREE_D_AI.hitem3d[o.resolution];
     add(`Hitem3D ${o.resolution}`, textured ? p.textured : p.geometry);
