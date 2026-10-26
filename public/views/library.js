@@ -1,4 +1,4 @@
-// Library: search, filters and cards. A card opens the model page; the side panel keeps quick actions (downloads,
+﻿// Library: search, filters and cards. A card opens the model page; the side panel keeps quick actions (downloads,
 // retry, regenerate, delete) for the last model looked at.
 import { activeWorkspace } from '../app.js';
 import { $, $$, esc, state, api, send, toast, go, findModel, upsert, fileUrl, thumbOf, statusText, statusClass, isGenerating,
@@ -74,9 +74,13 @@ async function onClick(e) {
   const m = findModel(t.dataset.id || selectedId);
   if (!m) return;
   if (t.dataset.act === 'retry') return busy(t, () => retryModel(m));
+  if (t.dataset.act === 'enhance') {
+    if (!(await confirmDialog({ title: 'Enhance this model?', text: 'Tripo redoes the paint in detailed quality. About 20 credits; the Spend page shows what it really cost.', ok: 'Enhance' }))) return;
+    return busy(t, async () => { try { await api(`/api/models/${m.id}/enhance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'texture' }) }); toast('Enhancing. It shows up as a new file when Tripo is done.', 'info'); } catch (err) { toast(err.message); } });
+  }
   if (t.dataset.act === 'regen') await busy(t, () => setupFor(m).catch((err) => toast(err.message)));
   if (t.dataset.act === 'delete') {
-    if (!(await confirmDialog({ title: `Delete “${m.name}”?`, text: 'This removes the model, every version and its files from this computer. Rendered handoff folders are not touched.', ok: 'Delete model' }))) return;
+    if (!(await confirmDialog({ title: `Delete â€œ${m.name}â€?`, text: 'This removes the model, every version and its files from this computer. Rendered handoff folders are not touched.', ok: 'Delete model' }))) return;
     try {
       await api(`/api/models/${m.id}`, { method: 'DELETE' });
       state.models = state.models.filter((x) => x.id !== m.id); // by id: polling may have swapped the object
@@ -115,7 +119,7 @@ function formatButton(m, f) {
   const e = m.exports?.[f];
   const base = m.slug || 'model';
   if (e?.status === 'ready') return `<a class="fmt ok" href="${fileUrl(m, e.file)}" download="${esc(base + e.file.slice(e.file.lastIndexOf('.')))}" aria-label="Download ${f}">${f}</a>`;
-  if (e?.status === 'converting') return `<span class="fmt busy" role="status">${f}…</span>`;
+  if (e?.status === 'converting') return `<span class="fmt busy" role="status">${f}â€¦</span>`;
   if (e?.status === 'failed') return `<button class="fmt bad" type="button" data-fmt="${f}" title="${esc(e.error || '')}">Retry ${f}</button>`;
   return `<button class="fmt" type="button" data-fmt="${f}" aria-label="Convert to ${f}">${f}</button>`;
 }
@@ -124,7 +128,7 @@ function side(m) {
   if (!m) return '<p class="muted">Select a model to see what you can do with it.</p>';
   const ready = m.status === 'ready';
   const rendered = isRendered(m) ? `rendered ${renderedTurns(m).join(' and ')}` : 'not rendered yet';
-  const sub = [statusText(m), engineLabel(m), `${m.versions.length} version${m.versions.length > 1 ? 's' : ''}`, ready && rendered].filter(Boolean).join(' · ');
+  const sub = [statusText(m), engineLabel(m), `${m.versions.length} version${m.versions.length > 1 ? 's' : ''}`, ready && rendered].filter(Boolean).join(' Â· ');
   const tripo = providerOf(m) === 'tripo';
   return `
     <div class="ls-th"><div class="stage ${m.renders?.poster ? 's-ring' : 's-clear'}">${m.renders?.poster ? '' : '<div class="checker"></div>'}${thumbOf(m) ? `<img class="thumb${m.renders?.poster ? '' : ' contain'}" src="${thumbOf(m)}" alt="${esc(m.name)}">` : ''}</div></div>
@@ -137,12 +141,13 @@ function side(m) {
       ${isGenerating(m) ? `<a class="btn sec" href="#/generate/${m.id}">${icon('eye')}<span>Show progress</span></a>` : ''}
       ${m.status === 'failed' ? `<button class="btn pri" type="button" data-act="retry" data-id="${m.id}">${icon('retry')}<span>Retry</span></button>` : ''}
       <a class="btn ghostbtn" href="#/model/${m.id}">${icon('eye')}<span>Model page</span></a>
-      <button class="btn ghostbtn" type="button" data-act="regen" ${isGenerating(m) ? 'disabled' : ''}>${icon('retry')}<span>Regenerate</span></button>
+      <button class="btn ghostbtn" type="button" data-act="enhance" ${m.status === 'ready' && m.versions?.find?.((v) => v.n === m.activeVersion)?.provider === 'tripo' ? '' : 'hidden'} title="Sharper paint through Tripo, about 20 credits">${icon('light')}<span>Enhance</span></button>
+        <button class="btn ghostbtn" type="button" data-act="regen" ${isGenerating(m) ? 'disabled' : ''}>${icon('retry')}<span>Regenerate</span></button>
     </div>
     <div class="grp"><h3>Download model</h3>
       ${ready ? `<div class="fmts"><a class="fmt ok" href="${fileUrl(m, m.glb)}" download="${esc(m.slug || 'model')}.glb" aria-label="Download GLB">GLB</a>${tripo ? FORMATS.map((f) => formatButton(m, f)).join('') : ''}</div>
       <p class="fine">${tripo ? 'GLB is saved right away. Other formats are converted by Tripo on first click.'
-        : 'GLB is saved right away. Other formats come from Tripo’s converter, which only works on models made with Tripo direct.'}</p>` : '<p class="fine">Downloads unlock when the model is ready.</p>'}
+        : 'GLB is saved right away. Other formats come from Tripoâ€™s converter, which only works on models made with Tripo direct.'}</p>` : '<p class="fine">Downloads unlock when the model is ready.</p>'}
     </div>
     <div class="grp danger"><button class="btn dangerbtn" type="button" data-act="delete">Delete model and its files</button></div>`;
 }

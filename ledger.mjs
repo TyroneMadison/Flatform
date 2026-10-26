@@ -43,9 +43,13 @@ const startOfWeek = (d) => addDays(startOfDay(d), -((d.getDay() + 6) % 7)); // M
 const startOfMonth = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
 export const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
+// What a call really cost: the balance drop when both snapshots exist, else the estimate.
+export const actualOf = (e) => (num(e.delta) != null && e.delta >= 0 ? e.delta : num(e.credits) || 0);
+
 function sum(list, service) {
   const credits = round(list.reduce((s, e) => s + (num(e.credits) || 0), 0));
-  return { credits, usd: usdOf(service, credits), calls: list.length };
+  const actualCredits = round(list.reduce((s, e) => s + actualOf(e), 0));
+  return { credits, usd: usdOf(service, credits), actualCredits, actualUsd: usdOf(service, actualCredits), calls: list.length };
 }
 
 /** Per service: { today, week, month, all } of { credits, usd, calls }, plus unlogged credits over all time. */

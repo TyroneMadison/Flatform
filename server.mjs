@@ -26,6 +26,7 @@ import { RESOLUTIONS, FORMATS as VIDEO_FORMATS, QUALITIES as VIDEO_QUALITIES, ex
 import { threeDAIStudio, createLimiter, THREE_D_AI_BASE, HIGH } from './providers.mjs';
 import { createKeyStore } from './keys.mjs';
 import { createUpdater, parseVersion, updateOptions } from './updates.mjs';
+import { ENHANCE, enhanceBlock } from './enhance.mjs';
 import { SERVICES, CONVERT_CREDITS, entry, append, parse, summary, defaultThresholds } from './ledger.mjs';
 import { createSpinService } from './spin.mjs';
 import { identifyCar } from './public/lib/identify.js';
@@ -729,6 +730,31 @@ export async function startServer({
     return v.exports[fmt];
   }
 
+  async function startEnhance(m, kind) {
+    const e = ENHANCE[kind];
+    if (!e) throw new HttpError(400, 'Pick texture or refine');
+    const v = active(m);
+    const why = enhanceBlock(v);
+    if (why) throw new HttpError(409, why);
+    const { task_id } = await paid('tripo', { task: 'enhance', model: `enhance ${kind}`, credits: e.credits, modelId: m.id }, () => tripo('/task', { json: e.body(v.task_id) }));
+    v.enhance = { status: 'running', kind, task_id };
+    await save();
+    return v.enhance;
+  }
+
+  async function refreshEnhance(m) {
+    const v = active(m);
+    const e = v.enhance;
+    if (e?.status !== 'running') return;
+    const t = await task(e.task_id);
+    if (t.status === 'success') {
+      const url = fileUrl(t.output);
+      if (!url) Object.assign(e, { status: 'failed', error: 'Tripo returned no file URL' });
+      else Object.assign(e, { status: 'ready', file: await download(url, path.join(MODELS, m.id), `${vname('model', v.n)}-enhanced-${e.kind}`, '.glb') });
+    } else if (FAILED.includes(t.status)) Object.assign(e, { status: 'failed', error: failure(t) });
+    await save();
+  }
+
   async function refreshExport(m, fmt) {
     const v = active(m);
     const e = v.exports[fmt];
@@ -1231,6 +1257,8 @@ export async function startServer({
       }
       if (sub === 'retry' && method === 'POST') return send(res, 200, await retry(m));
       if (sub === 'versions' && method === 'POST') return send(res, 201, await addVersion(req, m));
+      if (sub === 'enhance' && method === 'POST') return send(res, 202, await startEnhance(m, (await readJson(req)).kind));
+      if (sub === 'enhance' && method === 'GET') { await once(`${id}:enhance`, () => refreshEnhance(m)); return send(res, 200, active(m).enhance ?? null); }
       if (sub === 'exports' && FORMATS.includes(extra) && method === 'POST') return send(res, 202, await startExport(m, extra));
       if (sub === 'exports' && FORMATS.includes(extra) && method === 'GET') {
         await once(`${id}:${m.activeVersion}:${extra}`, () => refreshExport(m, extra));
