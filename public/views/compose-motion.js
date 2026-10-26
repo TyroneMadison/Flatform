@@ -16,7 +16,7 @@ function presetChips(kind, model, current) {
   if (!PRESETS) { loadPresets(); return '<p class="fine">Loading poses...</p>'; }
   const found = kind === 'car' && model ? detectParts(listPieces(model).map((p) => ({ name: p.name }))) : {};
   const list = posesFor(PRESETS, kind, found);
-  return `<h4 class="fine">Pick a pose</h4><div class="chips big" role="group" aria-label="Pose presets">${list.map((p) => `<button class="chip" type="button" data-mo-preset="${esc(p.id)}" aria-pressed="${current === p.id}" title="${esc(p.description || '')}">${esc(p.icon || '')} ${esc(p.name)}</button>`).join('')}</div>`;
+  return `<h4 class="fine">${kind === 'car' ? 'Pick a stance' : 'Pick a pose'}</h4><div class="chips big" role="group" aria-label="${kind === 'car' ? 'Stance' : 'Pose'} presets">${list.map((p) => `<button class="chip" type="button" data-mo-preset="${esc(p.id)}" aria-pressed="${current === p.id}" title="${esc(p.description || '')}">${esc(p.icon || '')} ${esc(p.name)}</button>`).join('')}</div>`;
 }
 
 let ctx; // same ctx as compose-paint

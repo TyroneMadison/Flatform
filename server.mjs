@@ -1195,7 +1195,7 @@ export async function startServer({
           '--look', look, '--frames', String(frames), '--step', String(STEP), '--res', `${width}x${height}`,
           ...(existsSync(sceneFile) ? ['--scene', sceneFile] : []),
           '--rig', JSON.stringify({ lighting: settings.lighting, glass: settings.glass }),
-          ...lookArg, '--materials', materialsFile, ...poseArg,
+          ...lookArg, '--materials', materialsFile, ...poseArg, '--kind', m.kind === 'humanoid' ? 'humanoid' : 'car',
           ...roomArg(look),
           ...(still !== undefined ? ['--still', String(still), '--still-out', path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still))] : []),
         ]);

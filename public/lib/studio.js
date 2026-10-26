@@ -790,7 +790,8 @@ export class Studio {
     const box = new THREE.Box3();
     const size = new THREE.Vector3();
     const measure = () => { this.pivot.updateMatrixWorld(true); box.setFromObject(m); return box.getSize(size); };
-    if (s.autoOrient && measure().x > size.z) m.rotation.y = -Math.PI / 2; // scans lie along X, nose on +X: turn it to +Z
+    // Car scans lie along X, nose on +X: turn it to +Z. A person in a T-pose is wide too, but already faces the camera.
+    if (s.autoOrient && this.kind !== 'humanoid' && measure().x > size.z) m.rotation.y = -Math.PI / 2;
     if (s.flip) m.rotation.y += Math.PI; // a scan can't tell its nose from its tail
     measure();
     this.carLike = isCarShape(size); // tall models (humanoids) are never size-locked, see pipeline.js modelScale
@@ -805,6 +806,10 @@ export class Studio {
     this.carSize = size.clone();
     // motion.js: stance, pose, clip frame. The model's kind (humanoid or car, set by the page) wins over the scene's.
     if (s.motion) applyMotion(this, { ...s.motion, type: this.kind || s.motion.type }, this.clipTime ?? null);
+    if (s.motion?.pose && s.snap && this.kind === 'humanoid' && this.clipTime == null) { // a kneel stands on the floor too
+      this.pivot.updateMatrixWorld(true);
+      m.position.y -= box.setFromObject(m, true).min.y; // precise: the posed (skinned) vertices
+    }
     // The room round the model at the model's real size: a car is 4.6 m long, a person 1.8 m tall (rooms.js).
     this.stage.scale.setScalar(ROOMS[s.preset] ? roomScale(size, this.kind || (this.carLike ? 'car' : 'humanoid')) : 1);
     this.applyMirror();
@@ -983,9 +988,9 @@ export class Studio {
     this.target = target;
     const tanV = Math.tan(THREE.MathUtils.degToRad(cam.vfov) / 2);
     this.fitFrame(tanV, aspect, 0.1, 200);
-    if (this.state.fit === 'all' && this.model) {
-      // "Frame all": the photo's camera aims at the floor, not the model, so pull back along its own line of
-      // sight until every corner of the model projects inside the frame (at most 10× the photo's distance).
+    if ((this.state.fit === 'all' || this.kind === 'humanoid' || this.carLike === false) && this.model) {
+      // "Frame all" (always for a tall model, a person): the room's camera aims at the floor, not the model, so pull
+      // back along its own line of sight until every corner of the model projects inside the frame (at most 10×).
       for (let k = 0; k < 40 && !this.framesModel(0.92); k++) this.camera.position.sub(target).multiplyScalar(1.06).add(target);
       this.camera.updateMatrixWorld();
     }

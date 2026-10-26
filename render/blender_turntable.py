@@ -91,6 +91,7 @@ def parse_args():
     p.add_argument("--materials")
     # A humanoid pose: Euler degrees per standard bone (motion.js poseBones) and motion.js RETARGET for other names.
     p.add_argument("--pose")
+    p.add_argument("--kind", choices=["car", "humanoid"], default="car")  # the model's kind: a humanoid is never auto-turned
     return p.parse_args(argv)
 
 
@@ -329,7 +330,8 @@ def import_car(path, s):
     for o in imported:
         if o.parent is None:
             o.parent = model
-    meshes = [o for o in imported if o.type == "MESH"]
+    # Visible meshes only: Blender's glTF importer adds a hidden "Icosphere" as the bones' display shape.
+    meshes = [o for o in imported if o.type == "MESH" and o.visible_get()]
 
     def bounds():
         bpy.context.view_layer.update()
@@ -340,7 +342,7 @@ def import_car(path, s):
 
     lo, hi = bounds()
     size = hi - lo
-    if s["autoOrient"] and size.x > size.y:
+    if s["autoOrient"] and s.get("kind") != "humanoid" and size.x > size.y:
         model.rotation_euler.z = -math.pi / 2  # Tripo: along X, nose on +X; turn the nose to -Y, the camera
     if s["flip"]:
         model.rotation_euler.z += math.pi
@@ -919,6 +921,7 @@ def render_to(path):
 def main():
     args = parse_args()
     s = dict(DEFAULTS)
+    s["kind"] = args.kind
     if args.scene and os.path.exists(args.scene):
         with open(args.scene, encoding="utf-8") as f:
             s.update({k: v for k, v in json.load(f).items() if k in DEFAULTS})
@@ -934,6 +937,11 @@ def main():
     pivot, meshes, size, sphere = import_car(args.glb, s)
     if args.pose:  # after normalising, like studio.js applyModel, so the model is placed exactly as in the app
         print(f"FLATFORM_POSE {apply_pose(json.loads(args.pose))}", flush=True)
+        if s["snap"]:  # the posed body back on the floor, as studio.js
+            deps = bpy.context.evaluated_depsgraph_get()
+            low = min((o.evaluated_get(deps).matrix_world @ v.co).z for o in meshes for v in o.evaluated_get(deps).data.vertices)
+            pivot.children[0].location.z -= low
+            bpy.context.view_layer.update()
     if args.look == "transparent":
         build_transparent()
     elif photo:
@@ -962,7 +970,8 @@ def main():
     elif s["view"] == "free" and s["orbit"]:
         free_camera(s)
     elif plate or (room and room.get("camera")):
-        plate_camera((plate or room)["camera"], width / height, s, sphere)
+        tall = args.kind == "humanoid" or not is_car_shape(size)  # always "Frame all", as studio.js
+        plate_camera((plate or room)["camera"], width / height, {**s, "fit": "all"} if tall else s, sphere)
     else:
         place_camera(s, args.look, size, sphere)
     os.makedirs(args.out, exist_ok=True)
