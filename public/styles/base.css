@@ -226,3 +226,12 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16
 .exportvideo { margin-top: 12px; padding: 14px; display: grid; gap: 8px; }
 .batchlist { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; font-size: 12px; }
 .batchlist li { display: flex; gap: 8px; align-items: center; }
+
+/* Sadie half: Tools group, big plain buttons (redesign mock-up) */
+.btn.big { font-size: 17px; font-weight: 700; padding: 14px 20px; min-height: 54px; border-radius: 14px; }
+.chips.big .chip { font-size: 15px; padding: 10px 14px; min-height: 44px; }
+.hud.measure { position: absolute; transform: translate(-50%, -140%); background: var(--accent, #ff7a66); color: #fff; font-weight: 700; padding: 4px 10px; border-radius: 10px; pointer-events: none; }
+.warnbox { border: 2px solid #f2b56b; border-radius: 12px; padding: 8px 12px; margin: 6px 0; }
+.warnbox p { margin: 2px 0; }
+.chipset { display: inline-flex; gap: 2px; margin: 0 6px 6px 0; }
+.chip.sm { padding: 4px 8px; min-height: 0; }

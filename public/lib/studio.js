@@ -25,6 +25,7 @@ import { mergeLook, effectsFor, hdriUrl } from './look.js';
 import { Post, PathTraced, TONE } from './post.js';
 import { applyPaint, regroup, pickPiece, listPieces } from './paint.js';
 import { applyMotion } from './rig.js';
+import { mirrorAttributes, depthRange, boneWeights, heat } from './model-tools.js';
 import { STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, PLATES, plateUrl, plateThumb, plateCamera, CAR_LENGTH, hfovOf, isCarShape, modelScale, fitDistance, frameOrbit } from './pipeline.js';
 
 RectAreaLightUniformsLib.init();
@@ -459,6 +460,7 @@ export class Studio {
     draco.dispose();
     if (this.model) { this.pivot.remove(this.model); disposeTree(this.model); }
     this.model = gltf.scene;
+    this.mirrorKey = "";
     this.model.traverse((o) => {
       if (!o.isMesh) return;
       o.layers.enable(1); // seen by the contact shadow camera
@@ -670,6 +672,81 @@ export class Studio {
     this.carHeight = size.y;
     this.carSize = size.clone();
     if (s.motion) applyMotion(this, s.motion, this.clipTime ?? null); // motion.js: stance, pose, clip frame
+    this.applyMirror();
+  }
+
+  // Mirror tool (model-tools.js): keep one half of every mesh, mirror it across the axis through the mesh's
+  // centre, seam welded. The original geometry is kept, so turning it off (or another axis) restores it.
+  applyMirror() {
+    const mi = this.state.mirror;
+    const key = mi?.axis ? `${mi.axis}:${mi.keep || 1}` : '';
+    if (!this.model || this.mirrorKey === key) return;
+    this.mirrorKey = key;
+    this.model.traverse((o) => {
+      if (!o.isMesh || o.isSkinnedMesh) return;
+      if (!o.userData.origGeometry) o.userData.origGeometry = o.geometry;
+      const orig = o.userData.origGeometry;
+      if (o.geometry !== orig) o.geometry.dispose();
+      if (!key) { o.geometry = orig; return; }
+      const g0 = orig.index ? orig.toNonIndexed() : orig;
+      g0.computeBoundingBox();
+      const plane = (g0.boundingBox.min[mi.axis] + g0.boundingBox.max[mi.axis]) / 2;
+      const attrs = {};
+      for (const [n, at] of Object.entries(g0.attributes)) if (!at.isInterleavedBufferAttribute) attrs[n] = { array: at.array, itemSize: at.itemSize };
+      const out = mirrorAttributes(attrs, mi.axis, { keep: mi.keep || 1, plane, tol: (g0.boundingBox.max[mi.axis] - g0.boundingBox.min[mi.axis]) * 0.002 });
+      const g = new THREE.BufferGeometry();
+      for (const [n, a] of Object.entries(out)) g.setAttribute(n, new THREE.BufferAttribute(a.array, a.itemSize));
+      if (!out.normal) g.computeVertexNormals();
+      o.geometry = g;
+    });
+    this.ptDirty = true;
+  }
+
+  // Click-to-measure: the model surface point under a canvas point (CSS px), in scene space, or null.
+  pickPoint(x, y) {
+    if (!this.model) return null;
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2((x / this.width) * 2 - 1, -(y / this.height) * 2 + 1), this.camera);
+    const hit = ray.intersectObject(this.model, true)[0];
+    return hit ? hit.point.toArray() : null;
+  }
+  // The measure line between two points (null clears it). Compose only; hidden in renders by the caller.
+  setMeasure(a, b) {
+    if (this.measureLine) { this.scene.remove(this.measureLine); this.measureLine.geometry.dispose(); this.measureLine.material.dispose(); this.measureLine = null; }
+    if (!a) return;
+    const pts = [new THREE.Vector3(...a), new THREE.Vector3(...(b || a))];
+    const mat = new THREE.LineBasicMaterial({ color: 0xff7a66, depthTest: false });
+    this.measureLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat);
+    this.measureLine.renderOrder = 999;
+    this.scene.add(this.measureLine);
+  }
+  // A scene point in canvas CSS px (for the measure label).
+  toScreen(p) {
+    const v = new THREE.Vector3(...p).project(this.camera);
+    return [(v.x + 1) / 2 * this.width, (1 - v.y) / 2 * this.height];
+  }
+
+  // Rigging preview: the bone names of the first skinned mesh, and a heat view of one bone's weights.
+  bones() {
+    let sk = null;
+    this.model?.traverse((o) => { if (!sk && o.isSkinnedMesh) sk = o; });
+    return sk ? sk.skeleton.bones.map((b) => b.name) : [];
+  }
+  showWeights(boneName) {
+    this.model?.traverse((o) => {
+      if (!o.isSkinnedMesh) return;
+      if (o.userData.weightMat) { o.material.dispose(); o.material = o.userData.weightMat; delete o.userData.weightMat; }
+      if (boneName == null) return;
+      const bi = o.skeleton.bones.findIndex((b) => b.name === boneName);
+      const g = o.geometry;
+      const w = boneWeights(g.attributes.skinIndex.array, g.attributes.skinWeight.array, bi);
+      const col = new Float32Array(w.length * 3);
+      for (let i = 0; i < w.length; i++) col.set(heat(w[i]), i * 3);
+      g.setAttribute('weightColor', new THREE.BufferAttribute(col, 3));
+      g.setAttribute('color', g.attributes.weightColor);
+      o.userData.weightMat = o.material;
+      o.material = new THREE.MeshBasicMaterial({ vertexColors: true });
+    });
   }
 
   // Animation preview: show the clip at time t (seconds), or null for the still pose.
@@ -752,7 +829,8 @@ export class Studio {
     this.camera.position.set(target.x, target.y + distance * Math.sin(el), target.z + distance * Math.cos(el));
     this.camera.lookAt(target);
     this.target = target;
-    this.fitFrame(Math.tan(hfov / 2) / aspect, aspect, 0.1, distance * 6);
+    const dr = depthRange(distance, sphere ? sphere.radius : Math.hypot(size.x, size.y, size.z) / 2);
+    this.fitFrame(Math.tan(hfov / 2) / aspect, aspect, dr.near, Math.max(dr.far, distance * 6));
   }
 
   // A photo scene: the camera the photo was taken with (pipeline.js plateCamera), fitted inside the canvas like
@@ -805,7 +883,9 @@ export class Studio {
     this.camera.lookAt(target);
     this.target = target;
     if (this.controls) { this.controls.target.copy(target); this.controls.enabled = true; }
-    this.fitFrame(Math.tan(hfovOf(s.lens) / 2) / aspect, aspect, 0.05, 2000);
+    const sp = this.sphere();
+    const dr = sp ? depthRange(this.camera.position.distanceTo(sp.center), sp.radius) : { near: 0.05, far: 2000 };
+    this.fitFrame(Math.tan(hfovOf(s.lens) / 2) / aspect, aspect, Math.min(dr.near, 0.05), Math.max(dr.far, 400));
     this.coverBackground();
   }
 

@@ -8,6 +8,7 @@ import { icon } from '../lib/icons.js';
 import { FRAMES, HALF, STEP, pad3, LOOKS, PLATES } from '../lib/pipeline.js';
 import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf } from '../lib/studio.js';
 import { initMotion, renderMotionGroup, onMotionClick, onMotionInput, onMotionChange, stopMotion } from './compose-motion.js';
+import { initTools, renderToolsGroup, onToolsClick, onToolsChange, onCanvasClick, onToolsKey } from './compose-tools.js';
 import { initPaint, renderPaintGroups, afterRender, onPaintClick, onPaintInput, onPaintChange, selectPiece } from './compose-paint.js';
 
 let root;
@@ -43,6 +44,7 @@ export async function mount(el, { id }) {
   scene = { ...defaultScene(state.settings), ...(activeWorkspace()?.camera === 'free' && { view: 'free' }), ...m.scene }; // Warframe workspaces start in free roam
   initPaint({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
+  initTools({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   el.innerHTML = `
   <div class="comp-top">${stepper('compose', m)}
     <div class="ctop-act">
@@ -64,6 +66,7 @@ export async function mount(el, { id }) {
         <div class="hud h2" id="hudCam"></div>
         <div class="hud h3" id="hudLook"></div>
         <div class="hud dims" id="hudDims" hidden></div>
+        <div class="hud measure" id="hudMeasure" hidden></div>
         <div class="hud msg" id="hudMsg" role="status">Loading model…</div>
         <div class="vtool" role="toolbar" aria-label="Viewport tools">
           <button class="vt" type="button" data-tool="move" aria-pressed="false" title="Move the car" aria-label="Move the car">${icon('move')}</button>
@@ -90,6 +93,7 @@ export async function mount(el, { id }) {
       <div class="chips tabs" id="tabs">
         <button class="chip" type="button" data-jump="modelGroup" aria-selected="true">Model</button>
         <button class="chip" type="button" data-jump="grp-model">Place</button>
+        <button class="chip" type="button" data-jump="grp-tools">Tools</button>
         <button class="chip" type="button" data-jump="grp-camera">Camera</button>
         <button class="chip" type="button" data-jump="grp-light">Light</button>
         <button class="chip" type="button" data-jump="grp-ground">Ground</button>
@@ -361,7 +365,7 @@ function renderInspector() {
     <div class="grp" id="grp-ground"><h3>Ground</h3>
       ${slider('reflection', 'Reflection', 0, 1, 0.01, s.reflection, hasFloor() ? level(s.reflection) : 'n/a', !hasFloor())}
       ${slider('shadow', 'Shadow', 0, 1, 0.01, s.shadow, softness(s.shadow))}
-    </div>${renderMotionGroup()}${renderPaintGroups()}`;
+    </div>${renderToolsGroup()}${renderMotionGroup()}${renderPaintGroups()}`;
   afterRender();
 }
 
@@ -418,6 +422,7 @@ function bind() {
   el.addEventListener('click', async (e) => {
     const t = e.target.closest('button');
     if (!t) return;
+    if (await onToolsClick(t)) return;
     if (await onMotionClick(t)) return;
     if (await onPaintClick(t)) return;
     if (t.dataset.render) { state.renderIntent = t.dataset.render; location.hash = `#/render/${m.id}`; }
@@ -474,6 +479,7 @@ function bind() {
     change({ [k]: v }, { inspector: false });
   });
   el.addEventListener('change', async (e) => {
+    if (onToolsChange(e.target)) return;
     if (await onMotionChange(e.target)) return;
     if (await onPaintChange(e.target)) return;
     const k = e.target.dataset.key;
@@ -535,6 +541,7 @@ function bind() {
 
   // F frames the whole model, anywhere on the screen but in a text field.
   el.addEventListener('keydown', (e) => {
+    if (onToolsKey(e)) return;
     if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest('input, textarea, select')) { e.preventDefault(); frameAll(); }
   });
 
@@ -561,6 +568,7 @@ function bind() {
   cv.addEventListener('click', (e) => {
     if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4 || !studio?.model) return;
     const r = cv.getBoundingClientRect();
+    if (onCanvasClick(e.clientX - r.left, e.clientY - r.top)) return;
     const key = studio.pick(e.clientX - r.left, e.clientY - r.top);
     if (key) { selectPiece(key); $('#grp-parts', el)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
   });
