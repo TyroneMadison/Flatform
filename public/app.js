@@ -429,6 +429,7 @@ function renderFrame() {
     ['Share', 'external', target ? `#/share/${target.id}` : '#/share', ['share']],
     ['Usage', 'eye', '#/usage', ['usage']],
     ['Settings', 'settings', '#/settings', ['settings']],
+    ...(state.settings?.testMode ? [['Test', 'check', '#/test', ['test']]] : []), // Flatform Test's checklist
   ];
   const html = links.map(([label, ic, href, names]) => {
     const on = names.includes(route.name);
@@ -440,7 +441,8 @@ function renderFrame() {
   const { name } = PROVIDERS[provider];
   const a = state.accounts[provider];
   const text = !a ? `Connecting to ${name}` : a.error ? `${name} unreachable` : a.hasKey ? `${name} connected` : `No ${name} API key`;
-  $('#accountStatus').textContent = `${text}${state.settings ? ` · v${state.settings.version}` : ''}`;
+  if (state.settings?.testMode) document.title = 'Flatform Test';
+  $('#accountStatus').textContent = `${state.settings?.testMode ? 'Flatform Test · mocks · ' : ''}${text}${state.settings ? ` · v${state.settings.version}` : ''}`;
   $('#railAccount .dot').className = `dot ${!a ? 'wait' : a.hasKey && !a.error ? 'ok' : ''}`;
   $('#railAccount .acctname').textContent = provider === 'tripo' ? 'Tripo' : '3D AI';
   $('#railAccount').title = text;
@@ -448,7 +450,7 @@ function renderFrame() {
 }
 
 // ---- routing ----
-const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings', 'warframe', 'spin', 'preview', 'finish', 'share', 'usage'];
+const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings', 'warframe', 'spin', 'preview', 'finish', 'share', 'usage', 'test'];
 export let route = { name: 'drop', id: null };
 let current = null;
 let navToken = 0;

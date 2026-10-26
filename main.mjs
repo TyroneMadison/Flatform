@@ -11,12 +11,23 @@ import { PROVIDERS } from './public/lib/engines.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
+// Flatform Test (Launch-Flatform-Test.cmd runs `electron . --flatform-test`): its own name, app id and data folder
+// (test-app/data in this checkout, never the real %APPDATA%\Flatform), no update checks, and mock Tripo, 3D AI Studio
+// and Blender (test-app/), so testing never touches the real library or spends a credit. Set before the
+// single-instance lock, which is per data folder.
+const TEST = process.argv.includes('--flatform-test') && !app.isPackaged; // test-app/ ships only in the source
+const APP_ID = TEST ? 'io.github.tyronemadison.flatform.test' : 'io.github.tyronemadison.tripostudio';
+if (TEST) {
+  app.setName('Flatform Test');
+  app.setPath('userData', path.join(ROOT, 'test-app', 'data'));
+}
+
 // One Flatform at a time. The lock is per userData folder (%APPDATA%\Flatform), the same for `npm run app` and the
 // installed app. A second launch hands its files to the first one (see 'second-instance') and quits.
 const primary = app.requestSingleInstanceLock();
 if (!primary) app.quit();
 // Same as package.json build.appId, so dev and installed builds share one taskbar and notification identity.
-if (process.platform === 'win32') app.setAppUserModelId('io.github.tyronemadison.tripostudio');
+if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 
 // The app used to be called "Tripo Studio". Move its library and saved key once so an upgrade keeps them.
 // (On a Mac the old key can't be decrypted under the new name, so the app asks for it again.)
@@ -93,7 +104,7 @@ ipcMain.handle('open-path', async (e, p) => {
 function createWindow(port) {
   win = new BrowserWindow({
     width: 1440, height: 900, minWidth: 1100, minHeight: 700,
-    backgroundColor: '#070605', title: 'Flatform', autoHideMenuBar: true,
+    backgroundColor: '#070605', title: TEST ? 'Flatform Test' : 'Flatform', autoHideMenuBar: true,
     // The page draws the 38 px title bar; the system window buttons sit on top of it.
     titleBarStyle: 'hidden',
     titleBarOverlay: process.platform === 'darwin' ? true : { color: '#050404', symbolColor: '#ff9a88', height: 38 },
@@ -133,7 +144,9 @@ function notifyLow(service, { balance, threshold }) {
 
 app.whenReady().then(async () => {
   if (!primary) return;
-  migrateOldData();
+  const mocks = TEST ? await import('./test-app/mocks.mjs') : null;
+  const services = mocks && await mocks.startMocks();
+  if (!TEST) migrateOldData();
   // API keys are encrypted by the OS (Windows DPAPI / macOS Keychain) before they touch disk. The Tripo key saved by
   // v0.3 (userData/tripo-key.bin) is moved into the per-provider store on first launch; see keys.mjs.
   const keyStore = createKeyStore({
@@ -141,7 +154,7 @@ app.whenReady().then(async () => {
     encrypt: (text) => safeStorage.encryptString(text),
     decrypt: (data) => safeStorage.decryptString(data),
     canEncrypt: () => safeStorage.isEncryptionAvailable(),
-    env: process.env,
+    env: TEST ? mocks.MOCK_KEYS : process.env, // the test app never sees a real key
   });
   const { port } = await startApp({
     dataDir: path.join(app.getPath('userData'), 'library'),
@@ -149,7 +162,8 @@ app.whenReady().then(async () => {
     defaultOutputRoot: suggestedOutputRoot(), // E:\Claude Stuff\car-360-pipeline\handoff on Tyrone's PC
     keyStore,
     // Looks for a newer release on GitHub; Download links open in the browser through the window-open handler below.
-    ...updateOptions(process.env),
+    ...(!TEST && updateOptions(process.env)),
+    ...(TEST && { apiBase: services.tripoBase, threeDAIBase: services.threeDAIBase, defaultOutputRoot: path.join(app.getPath('userData'), 'handoff'), testMode: true }),
     onLowBalance: notifyLow,
     // Blender runs the render script as a separate program, so it can't be read from inside app.asar.
     // The three.js addons ship next to it because electron-builder leaves dependencies' examples/ folders out.
@@ -161,6 +175,11 @@ app.whenReady().then(async () => {
     }),
   });
   console.log(`Flatform server on 127.0.0.1:${port}`);
+  if (TEST) {
+    const { seedTestApp } = await import('./test-app/seed.mjs');
+    await seedTestApp({ base: `http://127.0.0.1:${port}`, dataDir: path.join(app.getPath('userData'), 'library'), photosDir: path.join(app.getPath('userData'), 'sample-photos') })
+      .catch((e) => console.error('Seeding the test app failed:', e));
+  }
   createWindow(port);
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(port); });
 });

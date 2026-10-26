@@ -35,6 +35,7 @@ import { normalizeTemplate } from './public/lib/templates.js';
 import { localEngine as createLocalEngine, downloadWeights, weightsReady, checkCuda, UPSCALER_FILES } from './local.mjs';
 import { loadPoses } from './public/lib/poses.js';
 import { blenderRoom } from './public/lib/rooms.js';
+import { CHECK_IDS } from './public/lib/checklist.js';
 import { RETARGET, deserializePose, poseBones } from './public/lib/motion.js';
 const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
 import { ENHANCE, enhanceBlock } from './enhance.mjs';
@@ -172,6 +173,7 @@ export async function startServer({
   keepAwake, // the app passes Electron's powerSaveBlocker on/off while the overnight queue runs
   defaultOutputRoot, // the app passes suggestedOutputRoot(): Send to Dud Rents and renders go there until Tyrone picks another folder
   basePath, // (tests, Sadie's branch) the local base path Generate Spin Set prepares with; realism.mjs stubs it
+  testMode = false, // Flatform Test (main.mjs --flatform-test): the page shows the v3 checklist; the services are mocks
 }) {
   const MODELS = path.join(dataDir, 'models');
   const BACKDROPS = path.join(dataDir, 'backdrops');
@@ -1033,7 +1035,7 @@ export async function startServer({
 
   // keys: where each provider's key comes from ('saved', 'env' or 'none'), never the key.
   const settingsView = () => ({
-    ...settings, apiBase: apiBase(), regions: REGIONS, version: VERSION, libraryDir: dataDir,
+    ...settings, apiBase: apiBase(), regions: REGIONS, version: VERSION, libraryDir: dataDir, testMode,
     suggestedOutputRoot: suggestedOutputRoot(), platform: process.platform, keys: keySources(),
     visionKey: keyStore.source('anthropic'), // the car material inference's vision model (saved, env or none)
   });
@@ -1550,6 +1552,19 @@ export async function startServer({
     }
     if (area === 'video' && !id && method === 'POST') {
       try { return send(res, 200, await exportVideo(await readJson(req))); } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(e.status || 500, e.message); }
+    }
+    // Flatform Test's checklist: pass/fail per item (public/lib/checklist.js), and the sample models seeded for it.
+    if (area === 'test-checklist' && testMode && !id) {
+      const file = path.join(dataDir, 'test-checklist.json');
+      const results = existsSync(file) ? JSON.parse(await readFile(file, 'utf8')) : {};
+      if (method === 'POST') {
+        const { item, result } = await readJson(req, 4096);
+        if (!CHECK_IDS.includes(item) || !['pass', 'fail', null].includes(result)) throw new HttpError(400, 'Unknown item or result');
+        results[item] = result ? { result, at: new Date().toISOString() } : undefined;
+        await writeAtomic(file, results);
+      }
+      const seedFile = path.join(dataDir, 'test-seed.json');
+      return send(res, 200, { results, seed: existsSync(seedFile) ? JSON.parse(await readFile(seedFile, 'utf8')) : {} });
     }
     if (area === 'blender' && !id && method === 'GET') {
       const found = findBlender();
