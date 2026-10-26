@@ -20,6 +20,8 @@ import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/
 import { resolveColors, deserializeMaterial, blenderMaterial } from './public/lib/tenno.js';
 import { glbPieces, locatePieces } from './glb-pieces.mjs';
 import { trimGlb } from './glb-trim.mjs';
+import { fillGlb } from './glb-fill.mjs';
+import { fillNote } from './public/lib/holes.js';
 import { cleanExtras } from './public/lib/render-types.js';
 import { inferRegions, checkAnthropicKey } from './inference.mjs';
 import { createQueue } from './batch.mjs';
@@ -89,7 +91,7 @@ const REGIONS = { global: 'https://openapi.tripo3d.ai/v3', china: 'https://opena
 const SCENES = Object.keys(ENVIRONMENTS); // the one room list every workspace shares (environments.js ROOMS)
 // Version fields mirrored at the top level of each library entry, so v0.2 readers and the UI see the active version.
 const VERSION_FIELDS = ['task_id', 'status', 'progress', 'tripo_status', 'glb', 'thumb', 'credits', 'error', 'exports', 'source',
-  'provider', 'engine', 'mode', 'views', 'upstream_status', 'note', 'generation', 'file', 'fileName'];
+  'provider', 'engine', 'mode', 'views', 'upstream_status', 'note', 'generation', 'file', 'fileName', 'fillNote'];
 const RESULTS_KEPT = 24 * 60 * 60 * 1000; // 3D AI Studio deletes results after 24 hours
 const EXPIRED = '3D AI Studio keeps results for 24 hours and this job is older, so its model is gone. Retry to generate it again.';
 const KEY_FORMAT = /^[\x21-\x7e]{10,300}$/; // printable, no spaces; it goes into an Authorization header
@@ -193,6 +195,7 @@ export async function startServer({
   const defaults = {
     region: 'global', model, texture: true, pbr: true, provider: DEFAULT_PROVIDER, setups: {},
     localEngine: { weightsDir: '', python: '' }, // '' = <data folder>/local-engine/weights and "python" on PATH
+    fillHoles: true, // Setup's Clean up: fill small holes in every new model
     renderer: 'three', blenderPath: '', ffmpegPath: '', outputRoot: '', defaultScene: 'white-cyc-studio', alsoTransparent: true, backdrops: {},
     lighting: DEFAULT_LIGHTING, glass: DEFAULT_GLASS,
     studioPresets: {}, // the user's saved scene looks (look.js), by name; the shipped ones live in the page
@@ -562,6 +565,7 @@ export async function startServer({
       else {
         v.glb = await download(url, dir, vname('model', v.n), '.glb');
         if (t.output.rendered_image_url) v.thumb = await download(t.output.rendered_image_url, dir, vname('preview', v.n), '.png');
+        await cleanUp(m, v);
         Object.assign(v, { status: 'ready', progress: 100, credits: t.credits_consumed });
       }
     } else if (FAILED.includes(t.status)) Object.assign(v, { status: 'failed', error: failure(t) });
@@ -580,8 +584,36 @@ export async function startServer({
       const glb = await local().result(v.task_id);
       const name = vname('model', v.n) + '.glb';
       await writeFile(path.join(MODELS, m.id, name), glb);
-      Object.assign(v, { glb: name, status: 'ready', progress: 100, credits: 0 });
+      await cleanUp(m, Object.assign(v, { glb: name }));
+      Object.assign(v, { status: 'ready', progress: 100, credits: 0 });
     } else if (t.status === 'failed') Object.assign(v, { status: 'failed', error: `Local engine: ${t.error || 'failed'}` });
+  }
+
+  // Fill small holes (Setup's Clean up, on unless turned off) in a model that was just made: in Blender when Blender
+  // is the renderer, else in the app (glb-fill.mjs), which also takes over if Blender fails. The file is replaced; a
+  // failure only leaves it as it came. The result is one plain line (fillNote) on the version and in the log.
+  async function cleanUp(m, v) {
+    if (settings.fillHoles === false || !/\.glb$/i.test(v.glb || '')) return;
+    const file = path.join(MODELS, m.id, v.glb);
+    let r = null;
+    const bin = settings.renderer === 'blender' && findBlender();
+    if (bin) {
+      const tmp = `${file}.${randomUUID()}`;
+      try {
+        await runBlender({}, bin, ['-b', '-P', path.join(path.dirname(blenderScript), 'blender_fillholes.py'), '--', '--glb', file, '--out', `${tmp}.glb`, '--report', `${tmp}.json`]);
+        r = JSON.parse(await readFile(`${tmp}.json`, 'utf8'));
+        if (r.holes || r.cracks) await rename(`${tmp}.glb`, file);
+      } catch (e) { console.error(`Fill small holes in Blender: ${e.message}`); r = null; }
+      await Promise.all([rm(`${tmp}.glb`, { force: true }), rm(`${tmp}.json`, { force: true })]);
+    }
+    if (!r) {
+      try {
+        r = fillGlb(await readFile(file));
+        if (r.holes || r.cracks) await writeFile(file, r.glb);
+      } catch (e) { console.error(`Fill small holes: ${e.message}`); return; }
+    }
+    v.fillNote = fillNote(r);
+    console.log(`${m.name} v${v.n}: ${v.fillNote}`);
   }
 
   // ---- Local engine (local.mjs): TRELLIS on the user's GPU, started on first use, stopped on close ----
@@ -675,6 +707,7 @@ export async function startServer({
     const done = { glb: await downloadAsset(glb.asset, dir, vname('model', v.n), ['.glb']), status: 'ready', progress: 100, credits: v.estimate };
     if (image?.asset) done.thumb = await downloadAsset(image.asset, dir, vname('preview', v.n), ['.png', '.jpg', '.jpeg', '.webp']).catch(() => undefined);
     wallet.at = 0; // the balance changed
+    if (library.includes(m)) await cleanUp(m, Object.assign(v, { glb: done.glb }));
     return finishAiJob(m, v, done);
   }
   async function finishAiJob(m, v, changes) {
@@ -982,7 +1015,7 @@ export async function startServer({
         const okPath = (x) => x === '' || (typeof x === 'string' && x.length < 1024 && path.isAbsolute(x));
         if (!l || typeof l !== 'object' || !okPath(l.weightsDir ?? '') || !okPath(l.python ?? '')) throw new HttpError(400, 'localEngine needs full folder and file paths');
         next.localEngine = { weightsDir: l.weightsDir ?? settings.localEngine.weightsDir, python: l.python ?? settings.localEngine.python };
-      } else if (['texture', 'pbr', 'alsoTransparent', 'showHelp'].includes(k)) bool(k);
+      } else if (['texture', 'pbr', 'alsoTransparent', 'showHelp', 'fillHoles'].includes(k)) bool(k);
       else if (k === 'theme') next.theme = normalizeTheme(body.theme);
       else if (k === 'gridUnit') { if (!['m', 'ft'].includes(body.gridUnit)) throw new HttpError(400, 'Grid unit must be m or ft'); next.gridUnit = body.gridUnit; }
       else if (k === 'gitRepo') {

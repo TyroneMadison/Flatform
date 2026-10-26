@@ -558,3 +558,4 @@ button.mini { width: 100%; padding: 0; font: inherit; color: inherit; text-align
 .palette li img, .palette .pal-ico { width: 40px; height: 30px; object-fit: cover; border-radius: 4px; flex: none; background: var(--line); }
 .palette li small { margin-left: auto; color: var(--muted); font-size: 12px; }
 .fine.wrap { overflow-wrap: anywhere; }
+.su-panel .groups + .k { margin-top: 22px; }

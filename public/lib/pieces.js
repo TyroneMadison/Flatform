@@ -17,10 +17,27 @@ export function weldTol(pos) {
 // for seams (their copies are bit-for-bit equal), add a neighbour-cell check if near misses ever matter.
 export function findPieces(pos, index = null, tol = weldTol(pos)) {
   const nv = pos.length / 3;
+  const parent = weld(pos, tol);
+  const find = (v) => { while (parent[v] !== v) { parent[v] = parent[parent[v]]; v = parent[v]; } return v; };
+  const join = (a, b) => { a = find(a); b = find(b); if (a !== b) parent[a < b ? b : a] = a < b ? a : b; };
+  const triangles = (index ? index.length : nv) / 3;
+  const at = index ? (i) => index[i] : (i) => i;
+  for (let t = 0; t < triangles; t++) { const a = at(t * 3); join(a, at(t * 3 + 1)); join(a, at(t * 3 + 2)); }
+  const vertexPiece = new Int32Array(nv).fill(-1);
+  let n = 0;
+  for (let v = 0; v < nv; v++) { const r = find(v); if (vertexPiece[r] < 0) vertexPiece[r] = n++; vertexPiece[v] = vertexPiece[r]; }
+  const sizes = new Int32Array(n);
+  for (let t = 0; t < triangles; t++) sizes[vertexPiece[at(t * 3)]]++;
+  return { vertexPiece, sizes, triangles };
+}
+
+/** Weld: every vertex's first vertex in the same `tol` grid cell (itself when it is first). Int32Array. */
+export function weld(pos, tol) {
+  const nv = pos.length / 3;
   const parent = new Int32Array(nv);
   const q = new Int32Array(nv * 3);
   for (let i = 0; i < nv * 3; i++) q[i] = Math.round(pos[i] / tol);
-  // Weld: an open hash table of grid cells; the first vertex in a cell is the parent of the rest.
+  // An open hash table of grid cells; the first vertex in a cell is the parent of the rest.
   let size = 1;
   while (size < nv * 2) size <<= 1;
   const table = new Int32Array(size).fill(-1);
@@ -34,17 +51,7 @@ export function findPieces(pos, index = null, tol = weldTol(pos)) {
       h = (h + 1) & (size - 1);
     }
   }
-  const find = (v) => { while (parent[v] !== v) { parent[v] = parent[parent[v]]; v = parent[v]; } return v; };
-  const join = (a, b) => { a = find(a); b = find(b); if (a !== b) parent[a < b ? b : a] = a < b ? a : b; };
-  const triangles = (index ? index.length : nv) / 3;
-  const at = index ? (i) => index[i] : (i) => i;
-  for (let t = 0; t < triangles; t++) { const a = at(t * 3); join(a, at(t * 3 + 1)); join(a, at(t * 3 + 2)); }
-  const vertexPiece = new Int32Array(nv).fill(-1);
-  let n = 0;
-  for (let v = 0; v < nv; v++) { const r = find(v); if (vertexPiece[r] < 0) vertexPiece[r] = n++; vertexPiece[v] = vertexPiece[r]; }
-  const sizes = new Int32Array(n);
-  for (let t = 0; t < triangles; t++) sizes[vertexPiece[at(t * 3)]]++;
-  return { vertexPiece, sizes, triangles };
+  return parent;
 }
 
 /** The triangle list without one piece: a new index (Uint32Array). */

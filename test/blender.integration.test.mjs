@@ -25,6 +25,10 @@ import { createKeyStore } from '../keys.mjs';
 import { humanoidMesh } from './fixtures/humanoid-mesh.mjs';
 import { loadGlb, poseDamage } from './rig-check.mjs';
 import { fromPreset } from '../public/lib/handpose.js';
+import { holeyGlb, HOLEY } from './fixtures/holey-mesh.mjs';
+import { fillHoles } from '../public/lib/holes.js';
+import { readGlb, accessor, INDEX_TYPES } from '../glb-trim.mjs';
+import { presetConfig } from '../public/lib/engines.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const SCRIPT = path.join(ROOT, 'render', 'blender_turntable.py');
@@ -78,7 +82,7 @@ if (!BIN) {
   const outputs = [];
   before(async () => {
     console.log(`Blender ${await blenderVersion(BIN)}: ${BIN}\nRenders: ${OUT}`);
-    for (const d of ['fixtures', 'environments', 'pose', 'compose', 'ideas', 'autorig']) await rm(path.join(OUT, d), { recursive: true, force: true });
+    for (const d of ['fixtures', 'environments', 'pose', 'compose', 'ideas', 'autorig', 'fill']) await rm(path.join(OUT, d), { recursive: true, force: true });
     const r = await blender(['-P', path.join(ROOT, 'test', 'blender', 'make_fixtures.py'), '--', FIX]);
     ok(r);
     assert.ok(existsSync(path.join(FIX, 'car.glb')) && existsSync(path.join(FIX, 'mixamo-rig.glb')), 'test models were not made');
@@ -291,6 +295,49 @@ if (!BIN) {
         await rig(process.env.FLATFORM_RIG_SAMPLE, 'sample', markers);
       }
       console.log(['Rig times:', ...times.map((t) => `  ${t}`)].join('\n'));
+    } finally { await app.close(); }
+  });
+
+  test('Fill small holes in Blender: the same holes and cracks as the app, UVs and paint kept, the big opening left open', LONG, async () => {
+    const dir = path.join(OUT, 'fill');
+    await mkdir(dir, { recursive: true });
+    const src = path.join(dir, 'holey.glb'), out = path.join(dir, 'filled.glb'), report = path.join(dir, 'fill.json');
+    await writeFile(src, holeyGlb());
+    ok(await blender(['-P', path.join(ROOT, 'render', 'blender_fillholes.py'), '--', '--glb', src, '--out', out, '--report', report]));
+    assert.deepEqual(JSON.parse(await readFile(report, 'utf8')), HOLEY);
+    const { json, bin } = readGlb(await readFile(out));
+    const prim = json.meshes[0].primitives[0];
+    assert.ok(prim.attributes.TEXCOORD_0 != null && prim.attributes.NORMAL != null, 'UVs and normals are still there');
+    assert.equal(json.materials[prim.material].name, 'Paint');
+    const pos = accessor(json, bin, prim.attributes.POSITION, Float32Array, 3);
+    const index = accessor(json, bin, prim.indices, INDEX_TYPES[json.accessors[prim.indices].componentType], 1);
+    const left = fillHoles(pos, index);
+    assert.deepEqual([left.holes, left.cracks], [0, 0], 'nothing small left to fill');
+    assert.equal(fillHoles(pos, index, { maxEdges: 100, maxSize: 10 }).holes, 1, 'the cut-off bottom is still open');
+    outputs.push(out);
+    // Through the real server: Blender as the renderer fills a newly made model in Blender.
+    const data = path.join(dir, 'app');
+    await rm(data, { recursive: true, force: true });
+    await mkdir(path.join(data, 'local-engine', 'weights'), { recursive: true });
+    await writeFile(path.join(data, 'local-engine', 'weights', 'complete.json'), '{}');
+    const eng = { submit: async () => ({ task_id: 't1' }), status: async () => ({ status: 'success', progress: 100 }), result: async () => holeyGlb(), stop() {} };
+    const app = await startServer({ dataDir: data, keyStore: createKeyStore({ env: {} }), localEngine: eng, cudaCheck: async () => ({ name: 'test' }),
+      apiBase: 'http://127.0.0.1:9/v3', threeDAIBase: 'http://127.0.0.1:9', updateUrl: 'http://127.0.0.1:9/latest', updateDelayMs: 3600000 });
+    const base = `http://127.0.0.1:${app.port}`;
+    try {
+      const set = (body) => fetch(`${base}/api/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      assert.equal((await set({ blenderPath: BIN })).status, 200);
+      assert.equal((await set({ renderer: 'blender' })).status, 200);
+      const form = new FormData();
+      form.append('name', 'Ball');
+      form.append('setup', JSON.stringify(presetConfig('local', 'balanced')));
+      form.append('front', new Blob([Buffer.from('89504e470d0a1a0a', 'hex')], { type: 'image/png' }), 'front.png');
+      const m = await (await fetch(`${base}/api/models`, { method: 'POST', body: form })).json();
+      let got;
+      for (let i = 0; i < 5; i++) { got = await (await fetch(`${base}/api/models/${m.id}`)).json(); if (got.status === 'ready') break; }
+      assert.equal(got.fillNote, 'Filled 3 small holes and closed 28 tiny cracks');
+      const saved = await readFile(path.join(data, 'models', m.id, got.glb));
+      assert.match(JSON.stringify(readGlb(saved).json.asset), /Khronos glTF Blender I\/O/, 'Blender wrote the saved model');
     } finally { await app.close(); }
   });
 }

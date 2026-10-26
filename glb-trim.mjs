@@ -4,8 +4,8 @@
 import { glbPieces } from './glb-pieces.mjs';
 import { findPieces, removePiece } from './public/lib/pieces.js';
 
-const pad4 = (n) => (n + 3) & ~3;
-const INDEX_TYPES = { 5121: Uint8Array, 5123: Uint16Array, 5125: Uint32Array };
+export const pad4 = (n) => (n + 3) & ~3;
+export const INDEX_TYPES = { 5121: Uint8Array, 5123: Uint16Array, 5125: Uint32Array };
 
 export function readGlb(buf) {
   const b = Buffer.from(buf);
@@ -27,7 +27,7 @@ export function writeGlb(json, bin) {
 }
 
 // An accessor's numbers as a typed array (copied out, so the stride and alignment never matter).
-function accessor(json, bin, i, Type, comps) {
+export function accessor(json, bin, i, Type, comps) {
   const a = json.accessors[i], bv = json.bufferViews[a.bufferView];
   if (!bv || (bv.buffer ?? 0) !== 0 || a.sparse) throw new Error('unsupported');
   const size = Type.BYTES_PER_ELEMENT, base = (bv.byteOffset || 0) + (a.byteOffset || 0), stride = bv.byteStride || size * comps;

@@ -191,8 +191,14 @@ function panelHtml() {
     <div class="presets" role="radiogroup" aria-labelledby="suPresetK">${presets.map((x) => radio(x.id === current, `data-preset="${x.id}" data-fk="pre:${x.id}"`,
       `<b>${x.name}</b><p>${x.desc}</p><em>${x.credits}${typeof x.credits === 'number' ? '<span class="sr-only"> credits</span>' : ''}</em>`, 'pre', esc(x.id === 'custom' ? 'Change the details yourself' : `${x.name}: ${x.desc}`))).join('')}</div>
     <h2 class="k">Change details</h2>
-    <div class="groups">${GROUPS.map(groupHtml).join('')}</div>`;
+    <div class="groups">${GROUPS.map(groupHtml).join('')}</div>
+    <h2 class="k">Clean up</h2>
+    <div class="groups"><div class="g">${cleanRow()}</div></div>`;
 }
+
+// Fill small holes: an app setting (on unless turned off), done after every model is made (server.mjs cleanUp).
+const FILL_TIP = 'Close small gaps and cracks in each part after the model is made. Big openings stay open.';
+const cleanRow = () => row('fill', 'Fill small holes', `<span class="tgc"><input type="checkbox" role="switch" class="sw" aria-labelledby="su-l-fill" title="${FILL_TIP}" data-setting="fillHoles" data-fk="fillHoles"${state.settings?.fillHoles === false ? '' : ' checked'}></span>`, info(FILL_TIP));
 
 function groupHtml(g) {
   const rows = rowsOf(g);
@@ -330,6 +336,10 @@ function onChange(e) {
   if (t.id === 'suPick') {
     if (t.files.length) addPhotos(t.files, t.dataset.slot);
     t.value = '';
+    return;
+  }
+  if (t.dataset.setting === 'fillHoles') {
+    send('/api/settings', 'POST', { fillHoles: t.checked }).then((s) => { state.settings = s; }, (err) => { toast(err.message); t.checked = !t.checked; });
     return;
   }
   if (t.dataset.engine !== undefined) { setup = normalize({ provider: setup.provider, engine: t.value, mode: pending().mode, options: setup.options }); return render(); }

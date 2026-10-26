@@ -14,7 +14,7 @@
   "scripts": {
     "app": "electron .",
     "web": "node --env-file=.env server.mjs",
-    "test": "node --test test.mjs test/pipeline.test.mjs test/pricing.test.mjs test/providers.test.mjs test/threedai.test.mjs test/updates.test.mjs test/ledger.test.mjs test/camera.test.mjs test/tenno.test.mjs test/look.test.mjs test/infer.test.mjs test/motion.test.mjs test/turntable.test.mjs test/batch.test.mjs test/phase4.test.mjs test/tennogen.test.mjs test/import.test.mjs test/poses.test.mjs test/model-tools.test.mjs test/camera-path.test.mjs test/lighting.test.mjs test/local.test.mjs test/textures.test.mjs test/decals.test.mjs test/templates.test.mjs test/spin.test.mjs test/theme-contrast.test.mjs test/enhance.test.mjs test/groupb.test.mjs test/groupc.test.mjs test/groupd.test.mjs test/groupe.test.mjs test/handpose.test.mjs test/testrig.test.mjs test/render-compose.test.mjs test/session.test.mjs test/shortcuts.test.mjs test/versioning.test.mjs test/environments.test.mjs test/undo.test.mjs test/stage.test.mjs test/blender.test.mjs test/v3gaps.test.mjs test/rig.test.mjs test/testapp.test.mjs test/shelf.test.mjs test/history.test.mjs test/share.test.mjs test/polish.test.mjs test/recipe.test.mjs test/colorwheel.test.mjs test/autorig.test.mjs test/rig-look.test.mjs test/rooms.test.mjs test/rig-quality.test.mjs test/rooms-car.test.mjs test/stamp.test.mjs test/joint-place.test.mjs test/trim.test.mjs",
+    "test": "node --test test.mjs test/pipeline.test.mjs test/pricing.test.mjs test/providers.test.mjs test/threedai.test.mjs test/updates.test.mjs test/ledger.test.mjs test/camera.test.mjs test/tenno.test.mjs test/look.test.mjs test/infer.test.mjs test/motion.test.mjs test/turntable.test.mjs test/batch.test.mjs test/phase4.test.mjs test/tennogen.test.mjs test/import.test.mjs test/poses.test.mjs test/model-tools.test.mjs test/camera-path.test.mjs test/lighting.test.mjs test/local.test.mjs test/textures.test.mjs test/decals.test.mjs test/templates.test.mjs test/spin.test.mjs test/theme-contrast.test.mjs test/enhance.test.mjs test/groupb.test.mjs test/groupc.test.mjs test/groupd.test.mjs test/groupe.test.mjs test/handpose.test.mjs test/testrig.test.mjs test/render-compose.test.mjs test/session.test.mjs test/shortcuts.test.mjs test/versioning.test.mjs test/environments.test.mjs test/undo.test.mjs test/stage.test.mjs test/blender.test.mjs test/v3gaps.test.mjs test/rig.test.mjs test/testapp.test.mjs test/shelf.test.mjs test/history.test.mjs test/share.test.mjs test/polish.test.mjs test/recipe.test.mjs test/colorwheel.test.mjs test/autorig.test.mjs test/rig-look.test.mjs test/rooms.test.mjs test/rig-quality.test.mjs test/rooms-car.test.mjs test/stamp.test.mjs test/joint-place.test.mjs test/trim.test.mjs test/holes.test.mjs",
     "test:blender": "node --test --test-concurrency=1 test/blender.integration.test.mjs",
     "dist": "electron-builder --publish never"
   },
@@ -60,6 +60,8 @@
       "handoff.mjs",
       "session.mjs",
       "glb-pieces.mjs",
+      "glb-trim.mjs",
+      "glb-fill.mjs",
       "autorig.mjs",
       "preload.cjs",
       "blender.mjs",
