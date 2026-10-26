@@ -216,9 +216,10 @@ function localCard() {
     <div class="ph2"><div class="av" aria-hidden="true">PC</div><div><b id="pc-local">Local (free)</b><p><span>TRELLIS on your graphics card · $0 per model</span></p></div>
       <span class="pill ${l.ready ? 'ok' : 'none'}">● ${l.ready ? 'Ready' : 'Not set up'}</span></div>
     <p class="fine">Graphics card: ${l.gpu?.ok ? `${esc(l.gpu.name)} · ${l.gpu.memoryGB} GB` : esc(l.gpu?.error || 'unknown')}</p>
+    <p class="fine">Detail Boost upscaler: ${l.upscaler ? 'ready' : 'downloads with the engine (64 MB)'}</p>
     <p class="fine">Saved in <span class="mono">${esc(l.weightsDir || '')}</span></p>
     ${d.running ? `<progress max="${3.3 * 1024 ** 3}" value="${d.done || 0}" style="width:100%"></progress>` : ''}
-    <div class="kf"><button class="btn sm pri" type="button" data-act="local-download"${d.running || l.ready ? ' disabled' : ''}>${d.error ? 'Try again' : 'Download local engine'}</button></div>
+    <div class="kf"><button class="btn sm pri" type="button" data-act="local-download"${d.running || (l.ready && l.upscaler) ? ' disabled' : ''}>${d.error ? 'Try again' : 'Download local engine'}</button></div>
     <div class="res${d.error ? ' bad' : l.ready ? ' ok' : ''}" role="status">${esc(status)}</div>
   </div>`;
 }

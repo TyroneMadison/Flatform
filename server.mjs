@@ -11,7 +11,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, PLATES, plateCamera } from './public/lib/pipeline.js';
-import { PROVIDERS, VIEWS, DEFAULT_PROVIDER, normalize, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
+import { PROVIDERS, VIEWS, DEFAULT_PROVIDER, normalize, baseSetup, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
 import { estimate } from './public/lib/pricing.js';
 import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
 import { resolveColors, deserializeMaterial, blenderMaterial } from './public/lib/tenno.js';
@@ -29,7 +29,7 @@ import { createUpdater, parseVersion, updateOptions } from './updates.mjs';
 import { SERVICES, LOCAL, CONVERT_CREDITS, entry, append, parse, summary, defaultThresholds } from './ledger.mjs';
 import { check as checkTennogen, fixPlan, CONTENT_TYPES, EXPORT_MODES } from './public/lib/tennogen.js';
 import { pngSize, resizePng } from './png.mjs';
-import { localEngine as createLocalEngine, downloadWeights, weightsReady, checkCuda } from './local.mjs';
+import { localEngine as createLocalEngine, downloadWeights, weightsReady, checkCuda, UPSCALER_FILES } from './local.mjs';
 import { loadPoses } from './public/lib/poses.js';
 const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
 
@@ -345,6 +345,8 @@ export async function startServer({
     }
     let setup;
     try { setup = normalize(JSON.parse(String(form.get('setup')))); } catch { throw new HttpError(400, 'Unknown provider or engine'); }
+    // path=base (Generate Spin Set, thumbnails): always the free local Detail Boost setup, whatever was sent.
+    if (form.get('path') === 'base') setup = { ...baseSetup(), options: { ...baseSetup().options, ...(setup.provider === 'local' ? { seed: setup.options.seed } : {}) } };
     const views = {};
     for (const view of VIEWS) {
       const file = form.get(view);
@@ -549,6 +551,7 @@ export async function startServer({
 
   // ---- Local engine (local.mjs): TRELLIS on the user's GPU, started on first use, stopped on close ----
   const weightsDir = () => settings.localEngine?.weightsDir || path.join(dataDir, 'local-engine', 'weights');
+  const upscalerDir = () => path.join(path.dirname(weightsDir()), 'upscaler');
   let localInst = localEngine;
   let localFor = null;
   function local() {
@@ -563,12 +566,15 @@ export async function startServer({
   const weightsJob = { running: false, done: 0, file: null, error: null };
   async function localView() {
     const gpu = await cudaCheck().then((g) => ({ ok: true, ...g }), (e) => ({ ok: false, error: e.message }));
-    return { weightsDir: weightsDir(), ready: weightsReady(weightsDir()), python: settings.localEngine?.python || '', gpu, download: { running: weightsJob.running, done: weightsJob.done, file: weightsJob.file, error: weightsJob.error } };
+    return { weightsDir: weightsDir(), ready: weightsReady(weightsDir()), upscaler: weightsReady(upscalerDir()), python: settings.localEngine?.python || '', gpu, download: { running: weightsJob.running, done: weightsJob.done, file: weightsJob.file, error: weightsJob.error } };
   }
   function startDownload() {
     if (weightsJob.running) return;
     Object.assign(weightsJob, { running: true, done: 0, file: null, error: null });
-    weightsJob.promise = downloadWeights({ dir: weightsDir(), fetch: weightsFetch, onProgress: (p) => Object.assign(weightsJob, p) })
+    const onProgress = (p) => Object.assign(weightsJob, p);
+    // TRELLIS first, then the small Real-ESRGAN file Detail Boost uses. Both resume if stopped.
+    weightsJob.promise = downloadWeights({ dir: weightsDir(), fetch: weightsFetch, onProgress })
+      .then(() => downloadWeights({ dir: upscalerDir(), files: UPSCALER_FILES, fetch: weightsFetch, onProgress }))
       .catch((e) => { weightsJob.error = e.message; })
       .finally(() => { weightsJob.running = false; });
   }
@@ -1226,6 +1232,7 @@ export async function startServer({
     }
     if (area === 'local' && !id && method === 'GET') return send(res, 200, await localView());
     if (area === 'local' && id === 'download' && method === 'POST') { startDownload(); return send(res, 202, await localView()); }
+    if (area === 'local' && id === 'base' && method === 'GET') return send(res, 200, baseSetup()); // what Generate Spin Set and thumbnails use
     if (area === 'keys' && id && !sub) {
       const provider = providerParam(id, true);
       if (method === 'PUT') return send(res, 200, { ...(await saveKey(provider, (await readJson(req)).key)), keys: keySources() });

@@ -5,9 +5,10 @@ Started and stopped by Flatform (local.mjs). Needs Python 3.10+, PyTorch with CU
 Routes: GET /health, POST /generate {images: {front: data-uri, ...}, options}, GET /status/<id>, GET /result/<id>,
 POST /shutdown. One job runs at a time; others wait in order.
 """
-import argparse, base64, io, json, os, queue, tempfile, threading, uuid
+import argparse, base64, io, json, os, queue, sys, tempfile, threading, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # detail_boost.py sits next to this file
 args = argparse.ArgumentParser()
 args.add_argument('--port', type=int, default=41730)
 args.add_argument('--weights', required=True)
@@ -52,6 +53,12 @@ def run():
                                               texture_size=int(o.get('texture_size', 1024)))
             path = os.path.join(tempfile.gettempdir(), f'flatform-{jid}.glb')
             glb.export(path)
+            if o.get('detail_boost'):  # local finishing pass, see detail_boost.py
+                job['progress'] = 90
+                from detail_boost import boost_glb
+                boosted = path.replace('.glb', '-boost.glb')
+                job['boost'] = boost_glb(path, boosted, weights=job.get('upscaler'), target=int(o.get('texture_size', 4096)))
+                path = boosted
             job.update(status='success', progress=100, file=path)
         except Exception as e:
             job.update(status='failed', error=str(e)[:300])
@@ -71,7 +78,7 @@ class H(BaseHTTPRequestHandler):
         kind, _, jid = self.path.strip('/').partition('/')
         job = jobs.get(jid)
         if not job: return self.reply(404, {'error': 'no such job'})
-        if kind == 'status': return self.reply(200, {k: job.get(k) for k in ('status', 'progress', 'error')})
+        if kind == 'status': return self.reply(200, {k: job.get(k) for k in ('status', 'progress', 'error', 'boost')})
         if kind == 'result' and job['status'] == 'success':
             with open(job['file'], 'rb') as f: return self.reply(200, f.read(), 'model/gltf-binary')
         self.reply(404, {'error': 'not ready'})
@@ -82,7 +89,8 @@ class H(BaseHTTPRequestHandler):
         if self.path != '/generate' or not state['ok']: return self.reply(503, {'error': state['error'] or 'not ready'})
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         jid = uuid.uuid4().hex
-        jobs[jid] = {'status': 'queued', 'progress': 0, 'images': body['images'], 'options': body.get('options', {})}
+        jobs[jid] = {'status': 'queued', 'progress': 0, 'images': body['images'], 'options': body.get('options', {}),
+                     'upscaler': body.get('upscaler')}
         work.put(jid)
         self.reply(200, {'task_id': jid})
 

@@ -11,3 +11,11 @@ One-time setup on the PC:
 
 Flatform starts `trellis_service.py` when you generate with **Local (free)** and stops it when the app closes.
 Local generations are logged in the spend ledger at $0.
+
+## Detail Boost (free, local)
+
+Turned on by the "Max detail" preset, the Detail Boost toggle, and always by the base path that Generate Spin Set uses.
+After TRELLIS makes the model, `detail_boost.py` upscales the texture with Real-ESRGAN x4plus (BSD-3-Clause, downloaded
+with the engine, 64 MB), builds a height and normal map from the photo-baked texture, and projects the height onto the
+mesh. Extra Python packages: `pip install trimesh realesrgan basicsr`. Without `realesrgan` it falls back to a Lanczos
+resize. No step calls Tripo or 3D AI Studio.

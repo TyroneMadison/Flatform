@@ -169,3 +169,107 @@ test('server: a Local (free) generation never calls a paid provider and logs $0 
   }
   assert.equal(f.state.up, false, 'closing the app stops the local service');
 });
+
+test('Detail Boost: max preset and the base path turn it on; the upscaler file is optional and resumable', async () => {
+  const { BASE_PATH_SETUP, baseSetup } = await import('../public/lib/engines.js');
+  const { UPSCALER_FILES, upscalerPath } = await import('../local.mjs');
+  assert.equal(presetConfig('local', 'max').options.detail_boost, true);
+  assert.equal(presetConfig('local', 'balanced').options.detail_boost, false);
+  assert.deepEqual(baseSetup().options, { ...normalize(BASE_PATH_SETUP).options });
+  assert.equal(baseSetup().provider, 'local');
+  assert.match(UPSCALER_FILES[0].url, /^https:\/\/github\.com\/xinntao\/Real-ESRGAN\//);
+  const dir = await tmp();
+  assert.equal(upscalerPath(dir), null);
+  await writeFile(path.join(dir, 'complete.json'), '{}');
+  assert.equal(upscalerPath(dir), path.join(dir, 'RealESRGAN_x4plus.pth'));
+  await rm(dir, { recursive: true });
+});
+
+test('base path (Generate Spin Set uses it): zero network calls to Tripo or 3D AI Studio, even when a paid setup is sent', async () => {
+  const { startServer } = await import('../server.mjs');
+  const { createKeyStore } = await import('../keys.mjs');
+  const dataDir = await tmp();
+  const weights = path.join(dataDir, 'local-engine', 'weights');
+  const upscaler = path.join(dataDir, 'local-engine', 'upscaler');
+  await mkdir(weights, { recursive: true });
+  await mkdir(upscaler, { recursive: true });
+  // Weights folders are empty; the download is mocked and counted. Nothing real is fetched.
+  const downloads = [];
+  const weightsFetch = async (url) => { downloads.push(url); return new Response(Buffer.from('w'), { headers: { 'content-length': '1' } }); };
+  const f = fakeService();
+  const eng = localEngine({ weightsDir: weights, spawn: f.spawn, fetch: f.fetch, cuda: async () => ({ name: 'RTX 4090' }), pollMs: 1 });
+  // The network layer: every outgoing call is recorded. Paid hosts get a hard failure so a slip can't pass quietly.
+  const realFetch = globalThis.fetch;
+  const paid = [];
+  globalThis.fetch = (url, init) => {
+    const u = new URL(typeof url === 'string' ? url : url.url);
+    if (/tripo|3daistudio|:9\b|127\.0\.0\.1:9\//.test(u.href) || u.port === '9') { paid.push(u.href); return Promise.reject(new Error('paid call')); }
+    return realFetch(url, init);
+  };
+  const keyStore = createKeyStore({ env: { TRIPO_API_KEY: 'tsk_should_not_be_used', THREE_D_AI_STUDIO_KEY: 'should-not-be-used' } });
+  const srv = await startServer({
+    dataDir, keyStore, localEngine: eng, cudaCheck: async () => ({ name: 'RTX 4090', memoryGB: 24 }), weightsFetch,
+    apiBase: 'http://127.0.0.1:9/v3', threeDAIBase: 'http://127.0.0.1:9', updateUrl: 'http://127.0.0.1:9/latest', updateDelayMs: 3600000,
+  });
+  try {
+    const base = `http://127.0.0.1:${srv.port}`;
+    const dl = await realFetch(`${base}/api/local/download`, { method: 'POST' });
+    assert.equal(dl.status, 202);
+    for (let i = 0; i < 50 && !(await (await realFetch(`${base}/api/local`)).json()).upscaler; i++) await new Promise((ok) => setTimeout(ok, 10));
+    const view = await (await realFetch(`${base}/api/local`)).json();
+    assert.deepEqual([view.ready, view.upscaler], [true, true]);
+    assert.ok(downloads.some((u) => /Real-ESRGAN/.test(u)) && downloads.some((u) => /TRELLIS-image-large/.test(u)));
+    assert.deepEqual(await (await realFetch(`${base}/api/local/base`)).json(), JSON.parse(JSON.stringify(presetConfig('local', 'max'))));
+    // A Tripo setup sent on the base path still runs locally.
+    const form = new FormData();
+    form.append('name', 'Spin car');
+    form.append('path', 'base');
+    form.append('setup', JSON.stringify(presetConfig('tripo', 'balanced')));
+    form.append('front', new Blob([Buffer.from('89504e470d0a1a0a', 'hex')], { type: 'image/png' }), 'front.png');
+    const res = await realFetch(`${base}/api/models`, { method: 'POST', body: form });
+    const m = await res.json();
+    assert.equal(res.status, 201, JSON.stringify(m));
+    assert.equal(m.provider, 'local');
+    assert.equal(f.state.bodies[0].options.detail_boost, true);
+    assert.equal(f.state.bodies[0].options.texture_size, 4096);
+    assert.equal(f.state.bodies[0].upscaler, path.join(upscaler, 'RealESRGAN_x4plus.pth'));
+    let got;
+    for (let i = 0; i < 5; i++) { got = await (await realFetch(`${base}/api/models/${m.id}`)).json(); if (got.status === 'ready') break; }
+    assert.equal(got.status, 'ready');
+    await new Promise((ok) => setTimeout(ok, 50));
+    const ledger = L.parse(await readFile(path.join(dataDir, 'spend.jsonl'), 'utf8'));
+    assert.ok(ledger.every((e) => e.service === 'local' && e.credits === 0 && e.usd === 0));
+    assert.deepEqual(paid, [], 'no request to Tripo or 3D AI Studio');
+  } finally {
+    globalThis.fetch = realFetch;
+    await srv.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('detail_boost.py: height, normal and displacement math (skipped without Python + numpy + Pillow)', async (t) => {
+  const { spawnSync } = await import('node:child_process');
+  const py = ['python3', 'python'].find((p) => spawnSync(p, ['-c', 'import numpy, PIL'], { stdio: 'ignore' }).status === 0);
+  if (!py) return t.skip('no python with numpy and Pillow');
+  const code = `
+import sys, json; sys.path.insert(0, ${JSON.stringify(path.resolve('local'))})
+import numpy as np; from PIL import Image
+from detail_boost import upscale, height_map, normal_map, displace
+img = Image.fromarray((np.indices((16, 16)).sum(0) % 2 * 255).astype('uint8')).convert('RGB')
+big, how = upscale(img, None, 32)
+h = height_map(big)
+flat = normal_map(np.zeros((4, 4)))
+ramp = normal_map(np.tile(np.linspace(0, 1, 8), (8, 1)))
+moved = displace(np.zeros((2, 3)), np.array([[0, 0, 1.], [0, 1, 0.]]), np.array([[0, 0], [0.99, 0.99]]), np.array([[1., 0.], [0., 0.5]]), 2)
+print(json.dumps({'size': big.size, 'how': how, 'h': [float(h.min()), float(h.max())], 'flat': flat[0, 0].tolist(), 'rampx': int(ramp[4, 4, 0]), 'moved': moved.tolist()}))
+`;
+  const r = spawnSync(py, ['-c', code], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const o = JSON.parse(r.stdout);
+  assert.deepEqual(o.size, [32, 32]);
+  assert.equal(o.how, 'lanczos');
+  assert.ok(o.h[0] >= 0 && o.h[1] <= 1);
+  assert.deepEqual(o.flat, [128, 128, 255]);
+  assert.ok(o.rampx < 128, 'a slope to the right tilts the normal left');
+  assert.deepEqual(o.moved, [[0, 0, 1], [0, 0, 0]]);
+});

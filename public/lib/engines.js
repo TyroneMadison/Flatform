@@ -121,6 +121,11 @@ export const ENGINES = {
         key: 'simplify', group: 'mesh', label: 'Simplify', type: 'slider', default: 0.9, range: () => [0, 0.98], step: 0.01, format: (v) => `${Math.round(v * 100)}%`,
         info: 'How much of the raw mesh to remove. Lower keeps more detail and makes a bigger file.', brief: (v) => `simplify ${Math.round(v * 100)}%`,
       },
+      {
+        key: 'detail_boost', group: 'quality', label: 'Detail Boost', type: 'toggle', default: false,
+        info: 'A free finishing pass on your PC: sharper textures, surface detail from the photo. Adds a minute or two.',
+        brief: (v) => (v ? 'Detail Boost' : ''),
+      },
       seed('seed', 'Seed'),
     ],
   },
@@ -190,7 +195,7 @@ export const PRESETS = {
   local: [
     { id: 'fast', name: 'Quick look', desc: 'Free · 1024 texture', engine: 'local-trellis', options: { texture_size: 1024, steps: 12, simplify: 0.95 } },
     { id: 'balanced', name: 'Balanced', desc: 'Free · 2048 texture', engine: 'local-trellis', options: {} },
-    { id: 'max', name: 'Max detail', desc: 'Free · 4096 texture, most mesh', engine: 'local-trellis', options: { texture_size: 4096, steps: 50, simplify: 0.5 } },
+    { id: 'max', name: 'Max detail', desc: 'Free · 4096 texture, most mesh, Detail Boost', engine: 'local-trellis', options: { texture_size: 4096, steps: 50, simplify: 0.5, detail_boost: true } },
   ],
   tripo: [
     { id: 'fast', name: 'Fast draft', desc: 'Quick look, fast texture', engine: 'tripo-direct', options: { texture: 'color', texture_model: '3.5', texture_quality: 'fast' } },
@@ -353,3 +358,7 @@ export function threeDAIRequest({ engine, mode, options: o }, images) {
   }
   throw new Error(`No request for ${engine}`);
 }
+
+// The base render path: 100% local and free, never Tripo or 3D AI Studio. Generate Spin Set and thumbnails use only this.
+export const BASE_PATH_SETUP = Object.freeze({ provider: 'local', engine: 'local-trellis', options: Object.freeze({ texture_size: 4096, steps: 50, simplify: 0.5, detail_boost: true }) });
+export const baseSetup = () => normalize({ ...BASE_PATH_SETUP, options: { ...BASE_PATH_SETUP.options } });

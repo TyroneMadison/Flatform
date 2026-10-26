@@ -78,6 +78,9 @@ export async function downloadWeights({ dir, files = TRELLIS_FILES, fetch = glob
   onProgress({ done, total: done, file: null });
   return { skipped: false, dir };
 }
+// Real-ESRGAN x4plus (BSD-3-Clause) for Detail Boost's texture upscale. 64 MB, optional: without it the pass uses Lanczos.
+export const UPSCALER_FILES = [{ path: 'RealESRGAN_x4plus.pth', url: 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth' }];
+export const upscalerPath = (dir) => (existsSync(path.join(dir, 'complete.json')) ? path.join(dir, UPSCALER_FILES[0].path) : null);
 export const weightsReady = (dir) => existsSync(path.join(dir, 'complete.json'));
 
 /**
@@ -85,7 +88,7 @@ export const weightsReady = (dir) => existsSync(path.join(dir, 'complete.json'))
  * submit(images, options) → { task_id }; status(id) → { status: queued|running|success|failed, progress, error };
  * result(id) → Buffer (GLB). stop() on app exit.
  */
-export function localEngine({ weightsDir, python = 'python', port = LOCAL_PORT, spawn = nodeSpawn, fetch = globalThis.fetch,
+export function localEngine({ weightsDir, upscalerDir = weightsDir && path.join(path.dirname(weightsDir), 'upscaler'), python = 'python', port = LOCAL_PORT, spawn = nodeSpawn, fetch = globalThis.fetch,
   cuda = checkCuda, script = SERVICE_SCRIPT, startTimeoutMs = 120000, pollMs = 1000 } = {}) {
   const base = `http://127.0.0.1:${port}`;
   let child = null;
@@ -120,7 +123,7 @@ export function localEngine({ weightsDir, python = 'python', port = LOCAL_PORT, 
     get running() { return Boolean(child); },
     async submit(images, options = {}) {
       await ensure();
-      return call('/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ images, options }) });
+      return call('/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ images, options, upscaler: options.detail_boost && upscalerDir ? upscalerPath(upscalerDir) : null }) });
     },
     status: (id) => call(`/status/${encodeURIComponent(id)}`),
     result: (id) => call(`/result/${encodeURIComponent(id)}`),
