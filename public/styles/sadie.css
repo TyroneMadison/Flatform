@@ -90,3 +90,9 @@
 .compare button.sel { border-color: var(--accent); }
 .compare canvas, .compare img, .compare .ph2 { display: block; width: 150px; height: 100px; object-fit: cover; margin-bottom: 6px; background: #0a0908; }
 @media (max-width: 1320px) { .gt .g4, .gt .g6 { grid-template-columns: repeat(3, 1fr); } }
+
+/* Template gallery */
+.tpls { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; }
+.tpl { display: flex; gap: 4px; }
+.tpl > .btn:first-child { flex: 1; display: flex; flex-direction: column; align-items: flex-start; text-align: left; min-height: 52px; padding: 8px 10px; }
+.tpl .fine { margin: 2px 0 0; }

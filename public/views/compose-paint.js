@@ -12,6 +12,7 @@ import { REGIONS } from '../lib/infer.js';
 import { DEFAULT_LOOK, mergeLook, STUDIO_PRESETS, LIGHT_PRESETS, lightsFromPreset, HDRIS, TONE_MAPPINGS, QUALITIES, BACKGROUND_KINDS, isHdri, isBackgroundImage } from '../lib/look.js';
 import { compareSet, lumaStats } from '../lib/compare.js';
 import { ColorPicker } from '../lib/color-picker.js';
+import { templatesFor, templateScene } from '../lib/templates.js';
 import { normalizeDecals, FINISHES, FINISH_VALUES, finishOf, decalUrl } from '../lib/decals.js';
 import { inferFromPhoto, revertInference, exportTennoGen, exportGlb, setTextureWorkspace } from '../lib/paint.js';
 
@@ -53,6 +54,28 @@ function applyTexture(key, id) {
   updateMaterial({ texture: { id, scale: cur?.scale ?? 4, rotation: cur?.rotation ?? 0 } });
   selected = prev ?? key;
 }
+// ---- Templates: a whole starting scene in one click, plus your own saved ones ----
+let myTemplates = null;
+let myTemplatesFor = null;
+async function loadMyTemplates(force = false) {
+  const w = texWs();
+  if (myTemplates && myTemplatesFor === w && !force) return;
+  myTemplatesFor = w;
+  try { myTemplates = await api(`/api/templates?workspace=${encodeURIComponent(w)}`); } catch { myTemplates = []; }
+  ctx?.renderInspector();
+}
+const templateKind = () => ctx.model()?.workspace || activeWorkspace()?.kind || 'car';
+function templateGroup() {
+  if (!myTemplates || myTemplatesFor !== texWs()) loadMyTemplates();
+  const card = (t, mine) => `<div class="tpl"><button class="btn" type="button" data-tpl="${esc(t.id)}" title="${esc(t.note || '')}"><b>${esc(t.name)}</b><span class="fine">${esc(t.note || '')}</span></button>${mine ? `<button class="btn ghost" type="button" data-tpl-del="${esc(t.id)}" aria-label="Delete ${esc(t.name)}">${icon('close', 13)}</button>` : ''}</div>`;
+  return `<div class="grp" id="grp-templates"><h3>${icon('image', 14)} Templates</h3>
+    <p class="fine">Pick one to set the lighting, camera and background in one go.</p>
+    <div class="tpls">${templatesFor(templateKind()).map((t) => card(t, false)).join('')}</div>
+    ${(myTemplates || []).length ? `<h3 style="margin-top:6px">Yours</h3><div class="tpls">${myTemplates.map((t) => card(t, true)).join('')}</div>` : ''}
+    <div class="row"><input id="tplName" type="text" maxlength="60" placeholder="Template name"><button class="btn" type="button" data-act="tpl-save">Save current scene as template</button></div></div>`;
+}
+const findTemplate = (id) => templatesFor(templateKind()).find((t) => t.id === id) || (myTemplates || []).find((t) => t.id === id);
+
 // ---- Decals: add a PNG/SVG, click the model to place it, then size, turn, nudge and finish it ----
 let decalSel = null; // selected decal id
 let placing = null; // { file, name, aspect } waiting for a click on the model, or { move: id }
@@ -255,7 +278,7 @@ export function renderPaintGroups() {
       ${lastCompare ? `<div class="checklist" role="group" aria-label="TennoGen compare"><p class="fine"><b>${lastCompare.pass ? 'Ready to submit' : 'Fix before submitting'}</b> · checked against the TennoGen template set</p><ul>${lastCompare.checks.map((c) => `<li class="${c.pass ? 'ok' : 'bad'}">${c.pass ? 'Pass' : 'Fail'}: ${esc(c.label)}${!c.pass && c.got != null ? ` (got ${esc(String(c.got))})` : ''}</li>`).join('')}</ul></div>` : ''}
       ${lastWarnings.length ? `<ul class="warnlist">${lastWarnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     </div>`;
-  return parts + color + material + decalGroup() + sceneGrp + exportGrp;
+  return templateGroup() + parts + color + material + decalGroup() + sceneGrp + exportGrp;
 }
 
 // After the inspector HTML is in place: mount the picker.
@@ -316,6 +339,26 @@ export function onPaintDragStart(e) {
 export async function onPaintClick(t) {
   const act = t.dataset.act;
   if (t.dataset.select) { selectPiece(t.dataset.select); return true; }
+  if (t.dataset.tpl) {
+    const tpl = findTemplate(t.dataset.tpl);
+    if (tpl) { ctx.change(templateScene(tpl.scene)); toast(`${tpl.name} applied`); ctx.renderInspector(); }
+    return true;
+  }
+  if (t.dataset.tplDel) {
+    try { myTemplates = await api(`/api/templates/${encodeURIComponent(t.dataset.tplDel)}?workspace=${encodeURIComponent(texWs())}`, { method: 'DELETE' }); } catch (e) { toast(e.message); }
+    ctx.renderInspector();
+    return true;
+  }
+  if (act === 'tpl-save') {
+    const name = $('#tplName', ctx.root)?.value.trim();
+    if (!name) { toast('Give the template a name first'); return true; }
+    try {
+      await send(`/api/templates?workspace=${encodeURIComponent(texWs())}`, 'POST', { name, scene: templateScene(ctx.scene()) });
+      await loadMyTemplates(true);
+      toast(`Saved ${name}`);
+    } catch (e) { toast(e.message); }
+    return true;
+  }
   if (t.dataset.rename) {
     const key = t.dataset.rename;
     const row = t.closest('.part');

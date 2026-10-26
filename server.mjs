@@ -31,6 +31,7 @@ import { check as checkTennogen, fixPlan, CONTENT_TYPES, EXPORT_MODES } from './
 import { pngSize, resizePng } from './png.mjs';
 import { createTextureLibrary } from './textures.mjs';
 import { decalKind, DECAL_FILE } from './public/lib/decals.js';
+import { normalizeTemplate } from './public/lib/templates.js';
 import { localEngine as createLocalEngine, downloadWeights, weightsReady, checkCuda, UPSCALER_FILES } from './local.mjs';
 import { loadPoses } from './public/lib/poses.js';
 const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
@@ -1238,6 +1239,26 @@ export async function startServer({
     }
     if (area === 'local' && !id && method === 'GET') return send(res, 200, await localView());
     if (area === 'local' && id === 'download' && method === 'POST') { startDownload(); return send(res, 202, await localView()); }
+    // Your scene templates ("Save current scene as template"), per workspace, in templates.json.
+    if (area === 'templates') {
+      const w = /^[a-z0-9][a-z0-9-]{0,39}$/.test(url.searchParams.get('workspace') || '') ? url.searchParams.get('workspace') : 'car';
+      const file = path.join(dataDir, 'templates.json');
+      const all = await readFile(file, 'utf8').then(JSON.parse).catch(() => ({}));
+      const mine = Array.isArray(all[w]) ? all[w] : [];
+      const save = async (list) => { await writeFile(`${file}.tmp`, JSON.stringify({ ...all, [w]: list }, null, 2)); await rename(`${file}.tmp`, file); return list; };
+      if (!id && method === 'GET') return send(res, 200, mine);
+      if (!id && method === 'POST') {
+        const t = normalizeTemplate({ ...(await readJson(req, 256 * 1024)), id: undefined, savedAt: undefined });
+        if (!t) throw new HttpError(400, 'Give the template a name');
+        if (mine.length >= 50) throw new HttpError(400, 'You have 50 templates here. Delete one first.');
+        await save([...mine, t]);
+        return send(res, 201, t);
+      }
+      if (id && !sub && method === 'DELETE') {
+        if (!mine.some((t) => t.id === id)) throw new HttpError(404, 'No such template');
+        return send(res, 200, await save(mine.filter((t) => t.id !== id)));
+      }
+    }
     // Decals: a PNG or SVG goes in, its stored name comes back. The scene keeps the placement.
     if (area === 'decals' && !id && method === 'POST') {
       const buf = await readBody(req, 10 * 1024 * 1024, 'Decal too large (max 10 MB)');
