@@ -311,3 +311,9 @@ test('rig: running swings the left leg forward when the right swings back; roll 
   assert.ok(wp(bones.Head).y > wp(bones.Hips).y);
   assert.ok(body.quaternion.angleTo(new THREE.Quaternion()) < 1e-6);
 });
+
+test('a frame stamped before the last one (negative time) leaves the player where it was, never NaN', () => {
+  const s = step(newPlayer(START), { z: 1 }, -0.02);
+  assert.deepEqual(s.pos, START);
+  assert.ok(step(s, { z: 1 }, DT).pos.every(Number.isFinite));
+});

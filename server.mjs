@@ -13,6 +13,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, ENVIRONMENTS, envCamera } from './public/lib/pipeline.js';
 import { blenderEnvironment } from './public/lib/environments.js';
 import { findBlender as findBlenderOn, blenderVersion, blenderPose } from './blender.mjs';
+import { runAutoRig } from './autorig.mjs';
 import { PROVIDERS, VIEWS, DEFAULT_PROVIDER, normalize, baseSetup, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
 import { estimate } from './public/lib/pricing.js';
 import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
@@ -1164,6 +1165,7 @@ export async function startServer({
     if (![FRAMES, HALF, 0].includes(frames)) throw new HttpError(400, `Render ${FRAMES} or ${HALF} frames`);
     if (still !== undefined && !(Number.isFinite(still) && still >= 0 && still < 360)) throw new HttpError(400, 'Bad still angle');
     if (jobs.get(m.id)?.status === 'running') throw new HttpError(409, 'Blender is already rendering this car');
+    if (rigging(m.id)) throw new HttpError(423, 'Rigging… Joints are being added to this model. The render starts when they are done.');
     const v = active(m);
     const sceneFile = path.join(MODELS, m.id, 'scene.json');
     // 3D environments: Blender builds the same place (environments.js) around the car, with its eye-level camera
@@ -1242,33 +1244,48 @@ export async function startServer({
     return list.length ? ['--extras', JSON.stringify(list)] : [];
   }
 
-  // ---- Free auto-rig (render/blender_autorig.py): a Mixamo-named skeleton, bound with automatic weights, saved
-  // as a new version (rigged.glb). Humanoids only; Blender runs on this computer, nothing is paid for.
-  const rigJobs = new Map(); // model id → { status, error, version }
-  const rigView = (job) => job && { status: job.status, error: job.error, version: job.version };
-  function startRig(m) {
+  // ---- Free auto-rig (autorig.mjs): a Mixamo-named skeleton placed on the model's own limbs, saved as a new version
+  // (rigged-vN.glb). Humanoids only; Blender runs on this computer, nothing is paid for. Each job works in its own
+  // folder (rig-jobs/<model>-<time>), never in the model folder or a render's; the model's file is only read. The
+  // rigged file joins the model only once it passed every check, and only then does the model switch to it.
+  // While a model is being rigged its Blender renders wait (startBlender says so); the page shows "Rigging…".
+  const rigJobs = new Map(); // model id → { status, step, error, fallback, version, seconds }
+  const rigView = (job) => job && { status: job.status, step: job.step, error: job.error, fallback: job.fallback, version: job.version, seconds: job.seconds };
+  const rigging = (id) => rigJobs.get(id)?.status === 'running';
+  function startRig(m, { markers = null } = {}) {
     if ((m.kind || 'car') !== 'humanoid') throw new HttpError(409, 'Only humanoids are rigged. Set this model to Humanoid first; cars are never rigged.');
     const v = active(m);
     if (v.status !== 'ready' || !v.glb) throw new HttpError(409, 'The model is not ready yet');
+    if (v.rigged) throw new HttpError(409, 'This version already has joints. Pick the version before them to add joints again.');
     const bin = findBlender();
     if (!bin) throw new HttpError(409, 'Auto-rig runs in Blender, which was not found. Install Blender 4.x or locate it in Settings.');
-    if (rigJobs.get(m.id)?.status === 'running') throw new HttpError(409, 'Already rigging this model');
+    if (rigging(m.id)) throw new HttpError(409, 'Already rigging this model');
+    if (jobs.get(m.id)?.status === 'running') throw new HttpError(409, 'This model is rendering in Blender. Add joints when the render is done.');
+    if (markers !== null && (typeof markers !== 'object' || Array.isArray(markers))) throw new HttpError(400, 'Bad landmarks');
     const n = Math.max(...m.versions.map((x) => x.n)) + 1;
     const out = n > 1 ? `rigged-v${n}.glb` : 'rigged.glb';
-    const job = { status: 'running', error: null, version: null };
+    const dir = path.join(dataDir, 'rig-jobs', `${m.id}-${Date.now()}`);
+    const job = { status: 'running', step: 'Starting', error: null, fallback: null, version: null, seconds: null };
     rigJobs.set(m.id, job);
-    runBlender(job, bin, ['-b', '-P', rigScript, '--', '--glb', path.join(MODELS, m.id, v.glb), '--out', path.join(MODELS, m.id, out)])
-      .then(async () => {
-        if (!existsSync(path.join(MODELS, m.id, out))) throw new Error('Blender finished without writing the rigged model');
+    const clean = () => rm(dir, { recursive: true, force: true }).catch(() => {});
+    (async () => {
+      try {
+        const { file, report } = await runAutoRig({ glb: path.join(MODELS, m.id, v.glb), dir, script: rigScript, markers, run: (args) => runBlender(job, bin, args), onStep: (t) => { job.step = t; } });
+        await copyFile(file, path.join(MODELS, m.id, out));
+        await clean();
         const now = new Date().toISOString();
         m.versions.push({ n, created_at: now, provider: 'rig', status: 'ready', progress: 100, glb: out, thumb: v.thumb, source: v.source,
-          exports: {}, credits: 0, generation: null, rigged: true, note: `Auto-rigged from version ${v.n} in Blender` });
+          exports: {}, credits: 0, generation: null, rigged: true, from: v.n, rig: { seconds: report.seconds, pieces: report.islands, markers: report.markers },
+          note: `Auto-rigged from version ${v.n} in Blender` });
         m.activeVersion = n;
         mirror(m);
         await save();
-        Object.assign(job, { status: 'done', version: n });
-      })
-      .catch((e) => Object.assign(job, { status: 'failed', error: e.message.replace(/^.*FLATFORM_ERROR /, '') }));
+        Object.assign(job, { status: 'done', version: n, seconds: report.seconds });
+      } catch (e) {
+        await clean();
+        Object.assign(job, { status: 'failed', error: e.message.replace(/^.*FLATFORM_ERROR /, ''), fallback: e.fallback || null });
+      }
+    })();
     return rigView(job);
   }
 
@@ -1682,7 +1699,7 @@ export async function startServer({
         const s = Object.keys(rig).length ? await saveSettings(rig) : settingsView();
         return send(res, 200, { model: m, settings: s });
       }
-      if (sub === 'rig' && method === 'POST') return send(res, 202, startRig(m));
+      if (sub === 'rig' && method === 'POST') return send(res, 202, startRig(m, { markers: (await readJson(req, 16384)).markers ?? null }));
       if (sub === 'rig' && method === 'GET') return send(res, 200, rigView(rigJobs.get(id)) ?? null);
       if (sub === 'versions' && method === 'POST') return send(res, 201, await addVersion(req, m));
       if (sub === 'enhance' && method === 'POST') return send(res, 202, await startEnhance(m, (await readJson(req)).kind));

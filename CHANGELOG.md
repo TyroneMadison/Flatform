@@ -2,6 +2,20 @@
 
 Newest first. Numbering: [VERSIONING.md](VERSIONING.md).
 
+## Unreleased
+
+- **Auto-rig that holds together.** Add joints now finds the arms, legs, head and joints from the model's own shape
+  (which way it faces, slices through the body, paths along each limb), so armoured Tripo models no longer tear or
+  smear when posed. Separate armour pieces move whole with the limb they sit on; bigger pieces bend only with their
+  own limb. If the limbs can't be found, Flatform says so plainly and lets you click the chin, groin, elbows, wrists,
+  knees and ankles instead.
+- **Rigging runs on its own.** The model on screen stays as it is until the version with joints is ready and checked,
+  then swaps in. Renders started meanwhile wait in the queue ("Rigging…" in the title bar).
+- **Undo covers poses and joints.** Ctrl+Z, the Undo buttons and the Undo on every note share one history that now
+  includes the model version: undo takes back hand-posed bones, moments, adding joints and Reset scene.
+- **Reset scene goes back to the model before joints.** The versions with joints stay under Versions.
+- **Test rig fix.** On slow computers the Test rig could open to a black view; it now always starts on its feet.
+
 ## 1.1 (1.1.0)
 
 The first 1.x release. Flatform drops the 0.x numbers: from here releases go 1.1, 1.2 … 1.9, 2.0.

@@ -6,7 +6,7 @@
 // A render belongs to the car it started on and keeps going if you leave Compose; the top-bar light follows it.
 import { mountExport } from './compose-video.js';
 import { $, $$, esc, state, api, send, toast, findModel, fileUrl, upsert, refresh, native, announce, providerOf, FORMATS, setRenderLight, go, pickDock } from '../app.js';
-import { statusLight, taskLabel, resultFile, nextTask, waitingCount, trimQueue, STATUS_TEXT } from '../lib/render-status.js';
+import { statusLight, rigLight, blockedByRig, taskLabel, resultFile, nextTask, waitingCount, trimQueue, STATUS_TEXT } from '../lib/render-status.js';
 import { icon } from '../lib/icons.js';
 import * as P from '../lib/pipeline.js';
 import { Studio, defaultScene, kelvinColor } from '../lib/studio.js';
@@ -277,7 +277,7 @@ function renderRight() {
 function trayHtml() {
   if (!queue.length) return '<div class="tray" aria-label="Queue"><h3>Queue</h3><p class="fine keep">Nothing waiting. Renders you start line up here and run one after another.</p></div>';
   const row = (t) => `<li class="tq ${t.status}" title="${esc(t.error || STATUS_TEXT[t.status])}"><i class="dot ${t.status === 'done' ? 'ok' : t.status === 'running' ? 'busy' : t.status === 'waiting' ? 'wait' : ''}"></i>
-    <span><b>${esc(t.model.name)}</b><small>${esc(t.label)}</small></span><em>${t.status === 'running' && job?.task === t ? `${statusLight(job).pct}%` : STATUS_TEXT[t.status]}</em>
+    <span><b>${esc(t.model.name)}</b><small>${esc(t.label)}</small></span><em>${t.status === 'running' && job?.task === t ? `${statusLight(job).pct}%` : STATUS_TEXT[blockedByRig(t, rigs()) ? 'rigging' : t.status]}</em>
     ${t.status === 'waiting' ? `<button class="link" type="button" data-remove="${t.id}" title="Take this one out of the queue">Remove</button>` : ''}
     ${t.status === 'done' && t.file ? `<button class="link" type="button" data-reveal="${t.id}" title="Show the finished file in its folder" ${native ? '' : 'hidden'}>Show</button>` : ''}</li>`;
   return `<div class="tray" aria-label="Queue"><h3>Queue <button class="link" type="button" data-act="clear-tray" title="Clear finished renders from this list">Clear finished</button></h3><ol>${queue.map(row).join('')}</ol></div>`;
@@ -296,9 +296,12 @@ function drawTray() {
   else if (running() && trayShownFor !== job) { trayShownFor = job; tray.hidden = false; }
 }
 
+// Models being rigged (compose-motion.js sets state.rigging): their renders wait in the queue until the joints are in.
+const rigs = () => state.rigging || new Set();
 function renderBar() {
   const other = job && job.model.id !== m?.id;
-  const light = statusLight(job, waitingCount(queue));
+  const rigId = !running() && [...rigs()][0];
+  const light = rigId ? rigLight(findModel(rigId)?.name, queue.filter((t) => blockedByRig(t, rigs())).length) : statusLight(job, waitingCount(queue));
   setRenderLight(light, job?.model.id); // the top bar shows it on every screen
   drawTray();
   document.getElementById('vp')?.classList.toggle('rendering', running()); // the Compose viewport glows while rendering
@@ -508,6 +511,7 @@ function enqueue(patch = {}, label = null) {
   const snap = { ...o, formats: new Set(opts.formats), yaw: stillYaw(m) }; // the still uses the angle on screen now
   queue = trimQueue([...queue, { id: crypto.randomUUID(), model: m, opts: snap, label: label || taskLabel(snap), status: 'waiting' }]);
   if (running()) toast(`Added to the queue. It starts when the current render is done.`, 'info');
+  else if (rigs().has(m.id)) toast('Added to the queue. It starts when the joints are added (Rigging…).', 'info');
   renderRight();
   renderBar();
   pump();
@@ -524,8 +528,12 @@ async function track(model, label, fn) {
 function pump() {
   if (running()) return;
   const t = nextTask(queue);
-  if (t) start(t).finally(pump);
+  if (!t) return;
+  if (blockedByRig(t, rigs())) { renderBar(); return; } // rigChanged() starts it once the joints are in
+  start(t).finally(pump);
 }
+/** compose-motion.js: a rig started or finished. Redraws the light and the tray, and starts a render that waited. */
+export function rigChanged() { renderBar(); pump(); }
 
 const join = (dir, rel) => `${dir}${sep()}${rel.replaceAll('/', sep())}`;
 function reveal(t) {

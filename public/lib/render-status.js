@@ -34,6 +34,15 @@ export function statusLight(job, waiting = 0, now = Date.now()) {
   return { light: 'busy', pct, text: `${name}: ${pct}% · ${formatEta(etaSeconds({ ...job, now }))}${more}`, tip: job.phaseText || 'Rendering' };
 }
 
+// What the top-bar light shows while joints are being added (auto-rig) and nothing is rendering. waiting: renders of
+// that model held back until the rig is done.
+export function rigLight(name, waiting = 0) {
+  return { light: 'busy', pct: 0, text: `${name || 'Model'}: Rigging…${waiting ? ` · ${waiting} render${waiting > 1 ? 's' : ''} waiting` : ''}`,
+    tip: `Adding joints in Blender. ${waiting ? 'Renders of this model start when it is done' : 'You can keep working'}` };
+}
+/** A waiting render whose model is being rigged waits for the joints first. */
+export const blockedByRig = (task, rigging) => task?.status === 'waiting' && rigging.has(task.model.id);
+
 // One line for a queued render: "Still + 360° spin · My scene, See-through".
 export function taskLabel(o) {
   const what = [o.still && 'Still', o.t360 && '360° spin', o.t180 && '180° half spin', o.models && 'Model files'].filter(Boolean);
@@ -53,7 +62,7 @@ export function resultFile({ slug, still, t360, t180, looks = [], yaw = 0 }) {
 // The queue tray: tasks run one at a time, in order. Pure helpers over a plain array.
 export const nextTask = (queue) => queue.find((t) => t.status === 'waiting') || null;
 export const waitingCount = (queue) => queue.filter((t) => t.status === 'waiting').length;
-export const STATUS_TEXT = { waiting: 'Waiting', running: 'Rendering', done: 'Done', failed: 'Did not finish', cancelled: 'Cancelled' };
+export const STATUS_TEXT = { rigging: 'Waits for joints', waiting: 'Waiting', running: 'Rendering', done: 'Done', failed: 'Did not finish', cancelled: 'Cancelled' };
 // Keeps the tray short: everything still to do, plus the last few finished ones.
 export function trimQueue(queue, keep = 5) {
   const finished = queue.filter((t) => !['waiting', 'running'].includes(t.status));

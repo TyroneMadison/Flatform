@@ -477,6 +477,8 @@ export class Studio {
     partNames(gltf);
     this.mirrorKey = "";
     this.model.traverse((o) => {
+      // The bind pose, kept now: every pose (rig.js, Pose by hand, Test rig) starts again from it, never from the last.
+      if (o.isBone) o.userData.rest = { p: o.position.clone(), q: o.quaternion.clone() };
       if (!o.isMesh) return;
       o.layers.enable(1); // seen by the contact shadow camera
       o.castShadow = o.receiveShadow = true;
@@ -552,9 +554,11 @@ export class Studio {
     });
   }
 
-  async setState(next) {
+  // replace: next is the whole scene (Compose, undo, reset): a key it no longer has (a removed pose) is gone here too,
+  // never left over from the last state. Without it next is a patch on top.
+  async setState(next, { replace = false } = {}) {
     const prev = this.state;
-    this.state = { ...prev, ...next };
+    this.state = replace ? { ...defaultScene(), ...next } : { ...prev, ...next };
     const lookRebuild = lookNeedsRebuild(prev.look, this.state.look);
     if (!this.built || prev.preset !== this.state.preset || prev.backdrop !== this.state.backdrop || lookRebuild) await this.buildPreset();
     this.applyModel();
@@ -873,7 +877,8 @@ export class Studio {
     this.carHeight = size.y;
     this.carSize = size.clone();
     // motion.js: stance, pose, clip frame. The model's kind (humanoid or car, set by the page) wins over the scene's.
-    if (s.motion) applyMotion(this, { ...s.motion, type: this.kind || s.motion.type }, this.clipTime ?? null);
+    // Always, so a scene with no pose (after undo or Reset scene) puts every bone back to its bind pose.
+    applyMotion(this, { ...(s.motion || {}), type: this.kind || s.motion?.type }, this.clipTime ?? null);
     if (s.motion?.pose && s.snap && this.kind === 'humanoid' && this.clipTime == null) { // a kneel stands on the floor too
       this.pivot.updateMatrixWorld(true);
       m.position.y -= box.setFromObject(m, true).min.y; // precise: the posed (skinned) vertices

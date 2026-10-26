@@ -2,7 +2,7 @@
 // never rigged, and a humanoid's pose reaches the Blender render. Runs the fake Blender, never the real one.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,9 +66,12 @@ test('kind on create and PATCH; cars are never rigged; a humanoid rig is a new v
     assert.equal(job.status, 'done', job.error);
     const rigged = (await json(`/api/models/${hero.id}`)).body;
     assert.deepEqual([rigged.activeVersion, rigged.glb, rigged.versions.at(-1).rigged, rigged.versions.length], [2, 'rigged-v2.glb', true, 2]);
-    const rigArgs = JSON.parse(await readFile(path.join(data, 'models', hero.id, 'rigged-v2.glb.args.json'), 'utf8'));
+    // Blender only read the model and worked in the job's own folder, which is cleaned away afterwards.
+    const rigArgs = JSON.parse(await readFile(path.join(data, 'models', hero.id, 'model.glb.dump-args.json'), 'utf8'));
     assert.match(rigArgs[2], /render[\\/]blender_autorig\.py$/);
-    assert.match(rigArgs[rigArgs.indexOf('--glb') + 1], /model\.glb$/);
+    assert.match(rigArgs[rigArgs.indexOf('--dump') + 1], /rig-jobs[\\/][\w-]+-\d+$/);
+    assert.deepEqual(await readdir(path.join(data, 'rig-jobs')), []);
+    assert.equal(rigged.versions.at(-1).from, 1);
 
     // The pose goes to the turntable as Euler degrees per standard bone; the car gets none.
     const renderArgs = async (m) => {
@@ -126,4 +129,67 @@ test('an environment model is parented to its own empty, never to itself (Blende
   const py = await readFile(path.join(ROOT, 'render', 'blender_turntable.py'), 'utf8');
   const i = py.indexOf('imported = set(bpy.context.scene.objects) - before');
   assert.ok(i > 0 && i < py.indexOf('root = bpy.data.objects.new(f"env glb'));
+});
+
+test('rigging runs as its own job: the model stays as it is until the rig is checked, Blender renders wait, a failed rig offers the landmark clicks', async () => {
+  const { humanoidMesh } = await import('./fixtures/humanoid-mesh.mjs');
+  const data = await mkdtemp(path.join(tmpdir(), 'flatform-rigjob-'));
+  temps.push(data);
+  const app = await startServer({ dataDir: data, defaultOutputRoot: path.join(data, 'out'), keyStore: createKeyStore({ env: {} }), apiBase: 'http://127.0.0.1:9/v3', threeDAIBase: 'http://127.0.0.1:9' });
+  const base = `http://127.0.0.1:${app.port}`;
+  const json = async (url, method = 'GET', body) => {
+    const r = await fetch(base + url, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body && JSON.stringify(body) });
+    return { status: r.status, body: await r.json() };
+  };
+  const add = async (name) => {
+    const form = new FormData();
+    form.append('glb', new Blob([await readFile(path.join(ROOT, 'test-app', 'seed', 'humanoid.glb'))]), 'model.glb');
+    form.append('name', name); form.append('kind', 'humanoid');
+    return (await fetch(`${base}/api/models/import`, { method: 'POST', body: form })).json();
+  };
+  const wait = async (id) => { let j; for (let i = 0; i < 200 && (j = (await json(`/api/models/${id}/rig`)).body).status === 'running'; i++) await new Promise((ok) => setTimeout(ok, 50)); return j; };
+  try {
+    await json('/api/settings', 'POST', { blenderPath: FAKE_BLENDER });
+    const hero = await add('Hero');
+    process.env.FAKE_RIG_DELAY = '700';
+    assert.equal((await json(`/api/models/${hero.id}/rig`, 'POST', {})).status, 202);
+    const during = (await json(`/api/models/${hero.id}`)).body;
+    assert.deepEqual([during.activeVersion, during.versions.length, during.glb], [1, 1, 'model.glb'], 'the model on screen is untouched while rigging');
+    const job = (await json(`/api/models/${hero.id}/rig`)).body;
+    assert.equal(job.status, 'running');
+    assert.ok(job.step, 'a plain step for the panel');
+    assert.equal((await json(`/api/models/${hero.id}/rig`, 'POST', {})).status, 409);
+    assert.equal((await json(`/api/renders/${hero.id}/start`, 'POST', { looks: [] })).status, 200);
+    const held = await json(`/api/renders/${hero.id}/blender`, 'POST', { looks: ['studio'], frames: 0 });
+    assert.equal(held.status, 423);
+    assert.match(held.body.error, /^Rigging… .*The render starts when they are done\.$/);
+    delete process.env.FAKE_RIG_DELAY;
+    assert.equal((await wait(hero.id)).status, 'done');
+    const after = (await json(`/api/models/${hero.id}`)).body;
+    assert.deepEqual([after.activeVersion, after.glb, after.versions.at(-1).from], [2, 'rigged-v2.glb', 1]);
+    assert.equal((await json(`/api/renders/${hero.id}/blender`, 'POST', { looks: ['studio'], frames: 0 })).status, 202, 'the render goes once the joints are in');
+    assert.equal((await json(`/api/models/${hero.id}/rig`, 'POST', {})).status, 409, 'a version with joints is not rigged again');
+
+    // Limbs it can't find by itself: a plain error, the landmark clicks offered, the model untouched; the clicks work.
+    const bent = await add('Bent');
+    process.env.FAKE_RIG_ARMS = 'bent';
+    await json(`/api/models/${bent.id}/rig`, 'POST', {});
+    const fail = await wait(bent.id);
+    assert.equal(fail.status, 'failed');
+    assert.equal(fail.fallback, 'markers');
+    assert.match(fail.error, /^Could not place the joints by itself: .+Show me where the joints are instead\.$/);
+    assert.equal((await json(`/api/models/${bent.id}`)).body.versions.length, 1);
+    const t = humanoidMesh({ arms: 'bent' }).truth;
+    const front = (p, dz = 0.05) => [p[0], p[1], p[2] + dz];
+    const markers = { chin: [0, 1.56, 0.1], groin: [0, 0.86, 0.09], leftElbow: front(t.LeftForeArm), leftWrist: front(t.LeftHand, 0.03), rightElbow: front(t.RightForeArm), rightWrist: front(t.RightHand, 0.03), leftKnee: front(t.LeftLeg), leftAnkle: front(t.LeftFoot, 0.03), rightKnee: front(t.RightLeg), rightAnkle: front(t.RightFoot, 0.03) };
+    assert.equal((await json(`/api/models/${bent.id}/rig`, 'POST', { markers: [1, 2] })).status, 400);
+    await json(`/api/models/${bent.id}/rig`, 'POST', { markers });
+    assert.equal((await wait(bent.id)).status, 'done');
+    assert.equal((await json(`/api/models/${bent.id}`)).body.versions.at(-1).rig.markers, true);
+    assert.deepEqual(await readdir(path.join(data, 'rig-jobs')), [], 'every job folder is cleaned away');
+  } finally {
+    delete process.env.FAKE_RIG_DELAY;
+    delete process.env.FAKE_RIG_ARMS;
+    await app.close();
+  }
 });

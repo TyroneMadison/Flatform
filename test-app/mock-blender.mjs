@@ -4,6 +4,7 @@
 //   model fails with a clear message.
 // - Renders: every frame is the environment's picker thumbnail (or the showroom's), so a render looks like its place.
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { humanoidMesh } from '../test/fixtures/humanoid-mesh.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,11 +14,19 @@ const args = process.argv.slice(process.argv.indexOf('--') + 1);
 const opt = (name) => (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : undefined);
 const out = opt('out');
 
-if (/\.glb$/i.test(out || '')) {
+if (opt('dump') || /\.glb$/i.test(out || '')) {
   const sample = path.join(HERE, 'seed', 'humanoid.glb');
   if (statSync(opt('glb')).size !== statSync(sample).size) {
     console.log('FLATFORM_ERROR Mock Blender only rigs the sample humanoid. Set the real Blender in Settings to rig your own model.');
     process.exit(1);
+  }
+  if (opt('dump')) { // a made-up person stands in for the sample's mesh while Flatform finds the limbs
+    const m = humanoidMesh({ arms: 'a' });
+    mkdirSync(opt('dump'), { recursive: true });
+    writeFileSync(path.join(opt('dump'), 'positions.f32'), m.positions);
+    writeFileSync(path.join(opt('dump'), 'tris.u32'), m.tris);
+    writeFileSync(path.join(opt('dump'), 'mesh.json'), JSON.stringify({ verts: m.positions.length / 3 }));
+    process.exit(0);
   }
   copyFileSync(path.join(HERE, 'seed', 'humanoid-rigged.glb'), out);
   console.log('FLATFORM_RIG 22 0');

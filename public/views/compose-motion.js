@@ -1,11 +1,14 @@
 // Compose, the Pose and motion group: model type (auto or set), car stance or humanoid pose, part tags for wheels,
 // doors, hood and trunk, and the animation preview (play, pause, speed, loop, scrub). Saved in scene.motion.
+import * as THREE from 'three';
 import { $, esc, api, send, toast, state } from '../app.js';
 import { MODEL_TYPES, STANCES, STANCE_DEFAULT, STANCE_LIMITS, applyStance, availableStances, POSES, BONES, clipsFor, TAGS, deserializePose } from '../lib/motion.js';
 import { tagsFor, modelInfo } from '../lib/rig.js';
 import { listPieces } from '../lib/paint.js';
 import { posesFor, detectParts, carStance } from '../lib/poses.js';
 import { fromPreset } from '../lib/handpose.js';
+import { MARKERS, MARKER_LABELS, nextMarker } from '../lib/autorig.js';
+import { rigChanged } from './compose-render.js';
 
 let PRESETS = null; // from /api/poses (public/poses/*.json plus <library>/poses/*.json)
 async function loadPresets() {
@@ -26,7 +29,7 @@ let ctx; // same ctx as compose-paint
 let playing = false, raf = 0, t0 = 0, clipT = 0, boneSel = 'Spine';
 const CLIP_LEN = 4;
 
-export function initMotion(c) { ctx = c; stop(); clipT = 0; }
+export function initMotion(c) { ctx = c; stop(); clipT = 0; marking = null; }
 const motionOf = () => ctx.scene().motion || { type: 'auto', stance: { ...STANCE_DEFAULT }, tags: {}, pose: null, clip: null, speed: 30, loop: true };
 const setMotion = (patch, opts) => ctx.change({ motion: { ...motionOf(), ...patch } }, opts);
 
@@ -83,26 +86,76 @@ export function renderMotionGroup() {
   }
   return `<div class="grp" id="grp-motion"><h3>Pose and motion</h3>${typeSel}${body}<h4 class="fine">Try a movement</h4>${preview}</div>`;
 }
-// A humanoid with no bones: poses would do nothing, so say so and offer the free Blender rig instead.
-let rigging = null; // model id being rigged
+// A humanoid with no bones: poses would do nothing, so say so and offer the free Blender rig instead. Adding joints
+// runs on its own (its own job in Blender); the model on screen stays as it is until the rigged version is ready and
+// checked, then swaps in as one undo step. If the limbs can't be found by themselves, the user clicks them.
+let rigging = null; // { id, step } while joints are being added
+let failed = null; // { id, error, fallback } after a rig that did not work
+let marking = null; // { id, points: { chin: [x, y, z], ... } } while the user clicks the landmarks
 function rigPanel() {
-  const busy = rigging === ctx.model()?.id;
+  const id = ctx.model()?.id;
+  const busy = rigging?.id === id;
   const noBlender = state.blender && !state.blender.found; // checked at startup and in Settings (/api/blender)
-  return `<div class="warnbox" role="alert"><b>No joints yet</b><p>This model has no joints, so poses and movements can't move it. Add joints first.</p></div>
+  if (marking?.id === id) {
+    const next = nextMarker(marking.points);
+    const done = MARKERS.filter((k) => marking.points[k]).length;
+    return `<div class="warnbox" role="status"><b>Show me where the joints are</b>
+      <p>${next ? `Click <b>${esc(MARKER_LABELS[next])}</b> on the model. (${done + 1} of ${MARKERS.length})` : 'All done. Add joints to use these spots.'}</p></div>
+      <ol class="fine marks">${MARKERS.map((k) => `<li class="${marking.points[k] ? 'ok' : ''}">${marking.points[k] ? '✓ ' : ''}${esc(MARKER_LABELS[k])}</li>`).join('')}</ol>
+      <div class="mg-row"><button class="btn pri" type="button" data-mo-act="rig-marks" title="Add joints where you clicked" ${next ? 'disabled' : ''}>Add joints</button>
+        <button class="btn ghostbtn" type="button" data-mo-act="marks-undo" title="Take back the last click" ${done ? '' : 'disabled'}>Back one</button>
+        <button class="btn ghostbtn" type="button" data-mo-act="marks-cancel" title="Stop clicking spots">Cancel</button></div>`;
+  }
+  const err = failed?.id === id ? `<div class="warnbox" role="alert"><b>The joints could not be added</b><p>${esc(failed.error)}</p>
+      ${failed.fallback === 'markers' ? '<button class="btn pri" type="button" data-mo-act="marks" title="Click the chin, groin, elbows, wrists, knees and ankles on the model, then add joints there">Show me where the joints are</button>' : ''}</div>` : '';
+  return `<div class="warnbox" role="alert"><b>No joints yet</b><p>This model has no joints, so poses and movements can't move it. Add joints first.</p></div>${err}
     ${noBlender ? '<p class="fine keep" id="noBlender"><b>Blender is not on this computer.</b> Adding joints needs Blender 4 or later (free from blender.org). Install it, or show where it is in Settings, then come back.</p>' : ''}
-    <button class="btn pri" type="button" data-mo-act="rig" title="Add joints to this model for free, using Blender" ${busy || noBlender ? 'disabled' : ''}>${busy ? 'Adding joints…' : 'Add joints'}</button>
-    <p class="fine">Adds joints so the model can pose, and saves it as a new version. Works best standing up, facing you, arms out or down.</p>`;
+    <button class="btn pri" type="button" data-mo-act="rig" title="Add joints to this model for free, using Blender. The model stays as it is on screen until the joints are ready." ${busy || noBlender ? 'disabled' : ''}>${busy ? `Rigging… ${esc(rigging.step || '')}` : 'Add joints'}</button>
+    <p class="fine">Adds joints so the model can pose, and saves it as a new version. Renders of this model wait until it is done. Works best standing up, arms out or down.</p>`;
 }
-async function rig() {
+const setRigging = (on) => { state.rigging ||= new Set(); if (on) state.rigging.add(on); else state.rigging.clear(); rigChanged(); };
+async function rig(markers = null) {
   const m = ctx.model();
-  try { await send(`/api/models/${m.id}/rig`, 'POST', {}); } catch (e) { toast(e.message); return; }
-  rigging = m.id; ctx.renderInspector();
+  const before = m.activeVersion;
+  try { await send(`/api/models/${m.id}/rig`, 'POST', markers ? { markers } : {}); } catch (e) { toast(e.message); return; }
+  rigging = { id: m.id, step: 'Starting' }; failed = null; marking = null;
+  setRigging(m.id);
+  ctx.renderInspector();
   let job;
-  do { await new Promise((ok) => setTimeout(ok, 1000)); job = await api(`/api/models/${m.id}/rig`).catch(() => null); } while (job?.status === 'running');
+  do {
+    await new Promise((ok) => setTimeout(ok, 1000));
+    job = await api(`/api/models/${m.id}/rig`).catch(() => null);
+    if (job?.step && job.step !== rigging.step) { rigging.step = job.step; if (ctx.model()?.id === m.id) ctx.renderInspector(); }
+  } while (job?.status === 'running');
   rigging = null;
-  if (job?.status !== 'done') { toast(`Could not add joints: ${job?.error || 'no answer from Flatform'}`); ctx.renderInspector(); return; }
-  toast(`Joints added · version ${job.version}`, 'info');
-  if (ctx.model()?.id === m.id) await ctx.reload(await api(`/api/models/${m.id}`));
+  setRigging(null);
+  if (job?.status !== 'done') {
+    failed = { id: m.id, error: job?.error || 'no answer from Flatform', fallback: job?.fallback || null };
+    toast(`Could not add joints: ${failed.error}`);
+    if (ctx.model()?.id === m.id) ctx.renderInspector();
+    return;
+  }
+  toast(`Joints added · version ${job.version}${job.seconds ? ` · ${job.seconds} s` : ''}. Undo takes them off again.`, 'info');
+  if (ctx.model()?.id !== m.id) return;
+  await ctx.swapVersion(job.version, 'Add joints', { from: before }); // one undo step, the model swapped in once loaded
+  const shown = ctx.studio()?.model;
+  if (shown && !hasSkeleton(shown)) { // the file loaded but shows no joints: go back
+    toast('The new version did not load with its joints, so the model stays as it was.');
+    await ctx.swapVersion(before, 'Model version');
+  }
+  ctx.renderInspector();
+}
+/** Compose canvas click: while clicking landmarks, the spot on the model goes to the next landmark. */
+export function onMotionCanvasClick(x, y) {
+  if (!marking || marking.id !== ctx.model()?.id) return false;
+  const studio = ctx.studio();
+  const next = nextMarker(marking.points);
+  const p = next && studio?.pickPoint(x, y);
+  if (!p) { if (next) toast(`Click right on the model, on ${MARKER_LABELS[next]}`, 'info'); return true; }
+  const v = studio.model.worldToLocal(new THREE.Vector3(...p)); // the model's own (glTF) coordinates
+  marking.points[next] = [v.x, v.y, v.z].map((n) => Math.round(n * 1e5) / 1e5);
+  ctx.renderInspector();
+  return true;
 }
 const hasSkeleton = (m) => { let b = false; m.traverse((o) => { if (o.isBone) b = true; }); return b; };
 
@@ -118,6 +171,10 @@ export async function onMotionClick(t) {
   if (t.dataset.moStance) { stop(); await setMotion({ stance: applyStance(motionOf().stance, t.dataset.moStance) }); return true; }
   if (t.dataset.moPose) { const p = deserializePose(motionOf().pose || {}); await setMotion({ pose: { preset: t.dataset.moPose, bones: t.dataset.moPose === p.preset ? p.bones : {} } }); return true; }
   if (t.dataset.moAct === 'rig') { await rig(); return true; }
+  if (t.dataset.moAct === 'marks') { marking = { id: ctx.model().id, points: {} }; failed = null; ctx.renderInspector(); return true; }
+  if (t.dataset.moAct === 'marks-undo') { const done = MARKERS.filter((k) => marking?.points[k]); if (done.length) delete marking.points[done.at(-1)]; ctx.renderInspector(); return true; }
+  if (t.dataset.moAct === 'marks-cancel') { marking = null; ctx.renderInspector(); return true; }
+  if (t.dataset.moAct === 'rig-marks') { const pts = marking?.points; if (pts && !nextMarker(pts)) await rig(pts); return true; }
   if (t.dataset.moAct === 'play') {
     if (playing) { stop(); ctx.renderInspector(); return true; }
     playing = true; t0 = performance.now() - clipT * 1000; raf = requestAnimationFrame(tick); ctx.renderInspector(); return true;

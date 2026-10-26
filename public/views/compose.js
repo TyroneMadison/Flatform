@@ -12,7 +12,8 @@ import { modelInfo } from '../lib/rig.js';
 import { icon } from '../lib/icons.js';
 import { FRAMES, HALF, STEP, pad3, LOOKS, ENVIRONMENTS } from '../lib/pipeline.js';
 import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf, toggleView, FREE_TIP } from '../lib/studio.js';
-import { initMotion, renderMotionGroup, onMotionClick, onMotionInput, onMotionChange, stopMotion } from './compose-motion.js';
+import { initMotion, renderMotionGroup, onMotionClick, onMotionInput, onMotionChange, stopMotion, onMotionCanvasClick } from './compose-motion.js';
+import { unriggedVersion } from '../lib/autorig.js';
 import { initHandPose, renderHandPoseGroup, onHandPoseClick, onHandPoseInput, onHandPoseChange, syncHandPose, stopHandPose, isPosing } from './compose-handpose.js';
 import { initTestRig, renderTestRigGroup, onTestRigClick, stopTestRig } from './compose-testrig.js';
 import { initTools, renderToolsGroup, onToolsClick, onToolsChange, onCanvasClick, onToolsKey } from './compose-tools.js';
@@ -61,7 +62,7 @@ export async function mount(el, { id }) {
   scene = { ...baseScene(), ...m.scene };
   initSession({ root: el, model: () => m, scene: () => scene, frame: () => frame });
   initPaint({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
-  initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector, reload: async (next, { glb = true } = {}) => { m = upsert(next); if (studio) studio.kind = m.kind; renderModel(); if (glb) await loadModel(); refresh(); } });
+  initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector, swapVersion, reload: async (next, { glb = true } = {}) => { m = upsert(next); if (studio) studio.kind = m.kind; renderModel(); if (glb) await loadModel(); refresh(); } });
   initHandPose({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initTestRig({ scene: () => scene, studio: () => studio, draw });
   initTools({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
@@ -103,7 +104,7 @@ export async function mount(el, { id }) {
         <input type="file" id="backdropFile" accept=".hdr,.exr,.jpg,.jpeg,.png" hidden>
         <div class="grp" id="startover"><h3>Start over</h3>
           <div class="mg-row trio">
-            <button class="btn" type="button" data-act="reset-scene" title="Put the world, lights, colours, materials, camera, pose and render options back to how a new scene starts. Your library and saved renders are not touched, and you can undo it. (${keyOf('reset')})">Reset scene</button>
+            <button class="btn" type="button" data-act="reset-scene" title="Put the world, lights, colours, materials, camera, pose and render options back to how a new scene starts, and the model back to how it was before joints were added. Your library, saved renders and versions are not touched, and you can undo it. (${keyOf('reset')})">Reset scene</button>
             <button class="btn" type="button" data-act="restore-session" title="Bring back the scene from your last auto-save">Last session</button>
             <button class="btn" type="button" data-act="versions" title="See past renders of this model and go back to one">Versions</button>
           </div>
@@ -256,14 +257,14 @@ async function change(next, { inspector = true, fromHistory = false, record = tr
   let step = fromHistory; // undo, redo and reset count as big edits for auto-save
   if (!fromHistory && record && Object.keys(next).length) {
     const name = changeName(Object.keys(next));
-    step = hist.record(scene, name); // one step per drag or burst
+    step = hist.record(snap(), name); // one step per drag or burst
     if (step) undoNote(`${name} changed`, 'Undo', false);
   }
   if (Object.keys(next).length) noteEdit(step);
   Object.assign(scene, next);
   renderUndo();
   if (studio) {
-    await studio.setState(scene);
+    await studio.setState(scene, { replace: true }); // the whole scene: whatever undo or reset took out goes from the view too
     if (scene.view === 'free') scene.orbit = studio.state.orbit; // the first switch starts from the car camera
   }
   clearTimeout(saveTimer);
@@ -287,35 +288,63 @@ function undoNote(text, action, redo) {
   pill?.classList.add('undo');
   setTimeout(() => { pill?.classList.add('out'); setTimeout(() => pill?.remove(), 220); }, 4000);
 }
+// What one undo step holds: the whole scene (pose, hand-posed bones and moments included) and which version of the
+// model is on screen, so undo also takes back adding joints, a version switch and Reset scene.
+const snap = () => ({ scene, version: m.activeVersion });
+async function restore(v) {
+  if (v.version && v.version !== m.activeVersion) await setVersion(v.version);
+  await replaceScene(v.scene);
+}
+// Undo, Redo, Ctrl+Z, Ctrl+Y, the header buttons and the Undo on every note all come here: one history.
 async function stepHistory(redo) {
   const label = redo ? hist.redoLabel : hist.undoLabel;
-  const prev = redo ? hist.redo(scene) : hist.undo(scene);
+  const prev = redo ? hist.redo(snap()) : hist.undo(snap());
   if (!prev) return toast(redo ? 'Nothing to redo' : 'Nothing to undo', 'info');
   noteAt = 0;
   undoNote(`${label || 'Last change'} ${redo ? 'redone' : 'undone'}`, redo ? 'Undo' : 'Redo', !redo);
-  for (const k of Object.keys(scene)) if (!(k in prev)) delete scene[k];
-  await change(prev, { fromHistory: true });
-  renderGrid();
+  try { await restore(prev); } catch (err) { toast(err.message); }
+}
+// Shows another version of the model. The model on screen stays until the new one has loaded (studio.load); poses
+// and test moves on the old skeleton stop first. Not an undo step by itself: swapVersion is.
+async function setVersion(n) {
+  if (n === m.activeVersion && m.glb === m.versions.find((v) => v.n === n)?.glb) return;
+  stopMotion(); stopHandPose(); stopTestRig();
+  m = upsert(await send(`/api/models/${m.id}`, 'PATCH', { activeVersion: n }));
+  if (studio) studio.kind = m.kind;
+  renderModel();
+  await loadModel();
+  setHumanoid(isHumanoid());
+  refresh();
+}
+/** A version change as one undo step (a version picked, joints added). from: the version on screen before it. */
+async function swapVersion(n, label = 'Model version', { from = m.activeVersion } = {}) {
+  hist.push({ scene, version: from }, label);
+  renderUndo();
+  try { await setVersion(n); } catch (err) { toast(err.message); }
 }
 // Reset scene: everything about the look back to how a new scene starts, after a confirm. The model's own fixes
 // (auto-orient, center, flip) stay, and nothing in the library or the render folder is touched. Ctrl+Z brings the
 // scene back; the Undo on the note also brings back the render options and light rig.
+// It also puts the model back as it was before joints were added (the version they were added to): hand-posed bones,
+// moments and movements go, and the skeleton leaves the view. The versions with joints stay under Versions.
 async function resetAll() {
-  const ok = await confirmDialog({ title: 'Reset this scene?', text: 'The background, lights, colours, materials, camera, pose and render options go back to how a new scene starts. Your library and saved renders stay as they are. You can undo this.', ok: 'Reset scene' });
+  const original = unriggedVersion(m);
+  const back = original !== m.activeVersion ? ` The model goes back to version ${original}, from before joints were added (the version with joints stays under Versions).` : '';
+  const ok = await confirmDialog({ title: 'Reset this scene?', text: `The background, lights, colours, materials, camera, pose and render options go back to how a new scene starts.${back} Your library and saved renders stay as they are. You can undo this.`, ok: 'Reset scene' });
   if (!ok || !root?.isConnected) return;
-  const before = structuredClone(scene);
   const undoRender = resetRenderOptions();
-  hist.push(scene, 'Reset scene');
+  hist.push(snap(), 'Reset scene');
+  renderUndo();
+  if (original !== m.activeVersion) { try { await setVersion(original); } catch (err) { toast(err.message); } }
   await replaceScene(resetScene(scene, baseScene()));
-  toast('Scene reset to how a new scene starts.', 'info', [{ label: 'Undo', title: 'Bring back the scene and render options you had', run: async () => {
+  toast('Scene reset to how a new scene starts.', 'info', [{ label: 'Undo', title: 'Bring back the scene, the model version and the render options you had (Ctrl+Z)', run: async () => {
     undoRender();
-    hist.push(scene, 'Undo reset');
-    await replaceScene(before);
+    await stepHistory(false);
   } }]);
 }
 async function replaceScene(next) {
   for (const k of Object.keys(scene)) if (!(k in next)) delete scene[k];
-  await change(next, { fromHistory: true });
+  await change(structuredClone(next), { fromHistory: true });
   renderModel();
   renderGrid();
 }
@@ -496,7 +525,8 @@ function renderModel() {
 }
 
 // ---- the v3 Stage: the dock tool's card, the inspector card and the Render ideas ----
-const isHumanoid = () => Boolean(studio?.model) && modelInfo(studio, scene.motion?.type || 'auto').type === 'humanoid';
+// The model's own kind wins (a person with no joints yet still gets Pose, where Add joints is); else what detection sees.
+const isHumanoid = () => Boolean(studio?.model) && (m.kind ? m.kind === 'humanoid' : modelInfo(studio, scene.motion?.type || 'auto').type === 'humanoid');
 const ALL_GROUPS = [...new Set(Object.values(SCENE_GROUPS).flat())];
 /** The dock picked a tool (app.js pickDock): show that tool's groups in the card. */
 export function onDock(id) {
@@ -582,6 +612,7 @@ function bind() {
     const t = e.target.closest('button');
     if (!t) return;
     if (t.dataset.aside) return toggleShelf(t.dataset.aside);
+    if (t.dataset.act === 'undo') return stepHistory(false); // Pose by hand's own Undo button: the same history as Ctrl+Z
     if (onShelfClick(e)) return;
     if (await onToolsClick(t)) return;
     if (await onPathClick(t)) return;
@@ -596,12 +627,7 @@ function bind() {
     if (t.dataset.act === 'insp-rename') { const key = selectedPiece(); inspOpen = false; pickDock('look'); renderInspector(); return $(`.part[data-piece="${CSS.escape(key)}"] [data-rename]`, el)?.click(); }
     if (t.dataset.act === 'restore-session') return restoreLastSession();
     if (t.dataset.act === 'versions') return go(`#/history/${m.id}`);
-    if (t.dataset.version) {
-      try { m = upsert(await send(`/api/models/${m.id}`, 'PATCH', { activeVersion: Number(t.dataset.version) })); } catch (err) { return toast(err.message); }
-      renderModel();
-      await loadModel();
-      refresh();
-    }
+    if (t.dataset.version) return swapVersion(Number(t.dataset.version), 'Model version');
     if (t.dataset.act === 'approve') {
       try { m = upsert(await send(`/api/models/${m.id}`, 'PATCH', { approved: !m.approved })); } catch (err) { return toast(err.message); }
       renderModel();
@@ -701,7 +727,7 @@ function bind() {
   // A pointer drag (slider, colour picker, orbit, move tool) is one undo step from pointer down to pointer up.
   listeners = new AbortController();
   const { signal } = listeners;
-  el.addEventListener('pointerdown', () => hist.begin(scene), { capture: true, signal });
+  el.addEventListener('pointerdown', () => hist.begin(snap()), { capture: true, signal });
   for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, () => hist.end(), { signal });
   // Grid controls live in the World card.
   el.addEventListener('click', async (e) => {
@@ -751,6 +777,7 @@ function bind() {
   cv.addEventListener('click', (e) => {
     if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4 || !studio?.model) return;
     const r = cv.getBoundingClientRect();
+    if (onMotionCanvasClick(e.clientX - r.left, e.clientY - r.top)) return; // clicking the landmarks for Add joints
     if (onDecalCanvasClick(e.clientX - r.left, e.clientY - r.top)) return;
     if (onCanvasClick(e.clientX - r.left, e.clientY - r.top)) return;
     const key = studio.pick(e.clientX - r.left, e.clientY - r.top);

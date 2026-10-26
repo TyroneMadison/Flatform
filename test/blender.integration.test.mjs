@@ -21,6 +21,9 @@ import { decode } from '../png.mjs';
 import { blenderMaterial, deserializeMaterial, resolveColors } from '../public/lib/tenno.js';
 import { startServer } from '../server.mjs';
 import { createKeyStore } from '../keys.mjs';
+import { humanoidMesh } from './fixtures/humanoid-mesh.mjs';
+import { loadGlb, poseDamage } from './rig-check.mjs';
+import { fromPreset } from '../public/lib/handpose.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const SCRIPT = path.join(ROOT, 'render', 'blender_turntable.py');
@@ -74,7 +77,7 @@ if (!BIN) {
   const outputs = [];
   before(async () => {
     console.log(`Blender ${await blenderVersion(BIN)}: ${BIN}\nRenders: ${OUT}`);
-    for (const d of ['fixtures', 'environments', 'pose', 'compose', 'ideas']) await rm(path.join(OUT, d), { recursive: true, force: true });
+    for (const d of ['fixtures', 'environments', 'pose', 'compose', 'ideas', 'autorig']) await rm(path.join(OUT, d), { recursive: true, force: true });
     const r = await blender(['-P', path.join(ROOT, 'test', 'blender', 'make_fixtures.py'), '--', FIX]);
     ok(r);
     assert.ok(existsSync(path.join(FIX, 'car.glb')) && existsSync(path.join(FIX, 'mixamo-rig.glb')), 'test models were not made');
@@ -219,6 +222,73 @@ if (!BIN) {
       // A character posed by hand in Compose, saved in the scene the way Compose saves it.
       const rig = await add(path.join(FIX, 'mixamo-rig.glb'), 'Test Character');
       await still(rig, { preset: 'cyclorama', camera: 'front34', fit: 'all', motion: { type: 'auto', pose: { preset: 'tpose', bones: { LeftArm: [0, 0, -70], RightArm: [0, 0, 70], LeftUpLeg: [-30, 0, 0], LeftLeg: [50, 0, 0] }, hips: null } } });
+    } finally { await app.close(); }
+  });
+
+  // Auto-rig for real: Flatform's own server, Blender, a multi-piece armoured person facing sideways (open,
+  // non-manifold plates, the way Tripo makes them) and the test humanoid. Each rig is timed, posed in the Hero
+  // landing the way the app does it (three.js, rig.js) and checked for tearing, then rendered by Blender in that pose.
+  // FLATFORM_RIG_SAMPLE=<a GLB> rigs that too (Tyrone's Warframe); FLATFORM_RIG_MARKERS=<json> gives its landmarks.
+  test('auto-rig: armoured and plain humanoids rig in Blender, hold together in the Hero landing and render', LONG, async () => {
+    const dir = path.join(OUT, 'autorig');
+    await mkdir(dir, { recursive: true });
+    const armour = path.join(dir, 'armoured.glb');
+    const m = humanoidMesh({ arms: 'a', facing: [1, 0, 0] });
+    await writeFile(path.join(dir, 'armoured.json'), JSON.stringify({ positions: [...m.positions], tris: [...m.tris] }));
+    ok(await blender(['-P', path.join(ROOT, 'test', 'blender', 'mesh_from_json.py'), '--', path.join(dir, 'armoured.json'), armour]));
+    const hero = JSON.parse(await readFile(path.join(ROOT, 'public', 'poses', 'hero-landing.json'), 'utf8'));
+    const motion = { type: 'humanoid', pose: { preset: 'tpose', ...fromPreset(hero) } };
+    const app = await startServer({ dataDir: path.join(dir, 'library'), apiBase: 'http://127.0.0.1:9/v3', threeDAIBase: 'http://127.0.0.1:9', keyStore: createKeyStore({ env: {} }) });
+    const base = `http://127.0.0.1:${app.port}`;
+    const j = async (p, method = 'GET', body) => {
+      const res = await fetch(base + p, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body && JSON.stringify(body) });
+      return { status: res.status, body: await res.json() };
+    };
+    const times = [];
+    try {
+      assert.equal((await j('/api/settings', 'POST', { blenderPath: BIN })).status, 200);
+      const rig = async (file, name, markers = null) => {
+        const form = new FormData();
+        form.append('glb', new Blob([await readFile(file)]), path.basename(file));
+        form.append('name', name); form.append('kind', 'humanoid');
+        const model = await (await fetch(`${base}/api/models/import`, { method: 'POST', body: form })).json();
+        const t0 = Date.now();
+        let job = (await j(`/api/models/${model.id}/rig`, 'POST', {})).body;
+        while (job.status === 'running') { await new Promise((r) => setTimeout(r, 250)); job = (await j(`/api/models/${model.id}/rig`)).body; }
+        let seconds = (Date.now() - t0) / 1000;
+        if (job.status === 'failed' && job.fallback === 'markers' && markers) { // the landmark clicks, as the panel offers
+          times.push(`${name}: found by itself? no (${job.error}) after ${seconds.toFixed(1)} s`);
+          const t1 = Date.now();
+          job = (await j(`/api/models/${model.id}/rig`, 'POST', { markers })).body;
+          while (job.status === 'running') { await new Promise((r) => setTimeout(r, 250)); job = (await j(`/api/models/${model.id}/rig`)).body; }
+          seconds = (Date.now() - t1) / 1000;
+        }
+        assert.equal(job.status, 'done', `${name}: ${job.error}`);
+        const after = (await j(`/api/models/${model.id}`)).body;
+        const file2 = path.join(dir, 'library', 'models', model.id, after.glb);
+        const damage = poseDamage(await loadGlb(await readFile(file2)), motion);
+        times.push(`${name}: ${seconds.toFixed(1)} s, ${damage.edges} edges checked, ${(damage.share * 100).toFixed(2)}% stretched past 3x`);
+        assert.ok(damage.share < 0.01, `${name} tore in the Hero landing: ${JSON.stringify(damage)}`);
+        // Blender renders it in the Hero landing (the render path's own pose code) and from three sides.
+        const pose = blenderPose(await readFile(file2), motion);
+        const r = await render(['--glb', file2, '--out', path.join(dir, name), '--slug', name, '--look', 'studio', '--frames', '1', '--res', '480x360', '--samples', '16', '--kind', 'humanoid', '--pose', JSON.stringify(pose)]);
+        ok(r);
+        const pic = path.join(dir, name, `${name}_000.png`);
+        const st = await stats(pic);
+        assert.ok(st.spread > 4 && st.mean > 8, `${name}: the render is flat`);
+        outputs.push(pic);
+        ok(await blender(['-P', path.join(ROOT, 'test', 'blender', 'posed_views.py'), '--', file2, JSON.stringify(pose), path.join(dir, `${name}-hero`)]));
+        for (const v of ['front', 'side', 'threequarter']) outputs.push(path.join(dir, `${name}-hero-${v}.png`));
+        return { model: after, seconds };
+      };
+      const a = await rig(armour, 'armoured');
+      assert.ok(a.model.versions.at(-1).rig.pieces > 7, 'the plates are separate pieces');
+      await rig(path.join(ROOT, 'test-app', 'seed', 'humanoid.glb'), 'humanoid');
+      if (process.env.FLATFORM_RIG_SAMPLE) {
+        const markers = process.env.FLATFORM_RIG_MARKERS ? JSON.parse(await readFile(process.env.FLATFORM_RIG_MARKERS, 'utf8')) : null;
+        await rig(process.env.FLATFORM_RIG_SAMPLE, 'sample', markers);
+      }
+      console.log(['Rig times:', ...times.map((t) => `  ${t}`)].join('\n'));
     } finally { await app.close(); }
   });
 }
