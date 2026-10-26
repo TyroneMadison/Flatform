@@ -136,7 +136,7 @@ export const ENGINES = {
       seed('seed', 'Result number'),
     ],
   },
-  'tripo-direct': { provider: 'tripo', label: 'Tripo', views: false, options: tripoOptions(true) },
+  'tripo-direct': { provider: 'tripo', label: 'Tripo', views: true, options: tripoOptions(true) },
   'tripo-3.2': { provider: '3daistudio', label: 'Tripo 3.2', views: true, version: '3.2', options: tripoOptions(false, '3.2') },
   'tripo-3.1': { provider: '3daistudio', label: 'Tripo 3.1', views: true, version: '3.1', options: tripoOptions(false, '3.1') },
   'tripo-3.0': { provider: '3daistudio', label: 'Tripo 3.0', views: true, version: '3.0', options: tripoOptions(false, '3.0') },
@@ -311,13 +311,15 @@ export { valuesOf };
 // ---- request bodies ----
 
 /**
- * Tripo direct (POST /v3/generation/image-to-model). input, model, texture and pbr are what v0.3 sent to the live
+ * Tripo direct (POST /v3/generation/image-to-model, or multiview-to-model when input is { front, left, back, right }
+ * of file tokens: sent as inputs [{ front }, { left }, ...], front first, as developers.tripo3d.com documents). input, model, texture and pbr are what v0.3 sent to the live
  * API. The other names mirror Tripo's own task parameters as 3D AI Studio's Tripo proxy documents them; Flatform has
  * names checked against developers.tripo3d.ai v3 docs; only sent when they differ from Tripo's defaults.
  */
 export function tripoDirectBody(o, input) {
   const t = textured(o);
-  const body = { input, model: o.model, texture: t, pbr: o.texture === 'pbr' };
+  const body = { ...(typeof input === 'object' ? { inputs: VIEWS.filter((v) => input[v]).map((v) => ({ [v]: input[v] })) } : { input }),
+    model: o.model, texture: t, pbr: o.texture === 'pbr' };
   const set = (k, v, skip) => { if (v !== undefined && v !== null && v !== skip) body[k] = v; };
   set('geometry_quality', o.geometry_quality, 'standard');
   if (t) {

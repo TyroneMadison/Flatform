@@ -1,14 +1,14 @@
 // 02 · Generate setup: the photos, the provider, a preset and (only if you want) the engine's own options, then
 // Generate. Calm rows: a label on the left, a fixed-width control on the right. Groups stay collapsed to a one-line
 // summary, one open at a time; options that don't apply to the current choices are hidden or explained by a tooltip.
-import { $, esc, state, stepper, findModel, toast, go, refresh, refreshAccount, openKeyDialog, takePhotos, addFiles, enqueue,
+import { $, esc, state, stepper, findModel, toast, go, refresh, refreshAccount, openKeyDialog, addFiles, enqueue,
   savedSetup, rememberSetup, accountOf, fmtBalance, busy, send, arrowRadios, confirmDialog } from '../app.js';
 import { icon } from '../lib/icons.js';
 import { PROVIDERS, ENGINES, PRESETS, VIEWS, GROUPS, groupName, normalize, presetConfig, matchPreset, summary, optionSpecs,
   valuesOf, valueLabel, engineList, customFrom, detailWarning, SMART_LOW_POLY } from '../lib/engines.js';
 import { estimate } from '../lib/pricing.js';
+import { ANGLES, ANGLE_NAMES, planJobs, planLine, guessPhotos } from '../lib/photo-set.js';
 
-const VIEW_NAMES = { front: 'Front', left: 'Left', back: 'Back', right: 'Right' };
 // The hover tip of each Recipe option, in plain words (option keys are the engines' own names).
 const TIPS = {
   model: 'Which Tripo version makes the model', geometry_quality: 'How much shape detail. Ultra costs more.',
@@ -40,15 +40,27 @@ const photoUrl = (p) => {
   return urls.get(p.id);
 };
 const remake = (changes) => normalize({ ...setup, ...changes, mode: pending().mode });
-// In single-photo mode: the photos, or the front view if you picked 4 views for an engine that takes one.
-const singlePhotos = () => (pending().mode === 'views' ? [pending().views.front].filter(Boolean) : pending().photos);
-const jobCount = () => (setup.mode === 'views' ? (pending().views.front ? 1 : 0) : Math.min(singlePhotos().length, model ? 1 : Infinity));
+// All the photos make one model (the default), or each its own when Separate models is on (never when remaking one).
+const separate = () => Boolean(pending().separate && !model);
+const plan = () => planJobs(pending().photos, setup, { separate: separate() });
+// The mode follows the photos: 2 or more sides sent together is 'views', else 'single'.
+function syncMode() {
+  const mode = plan().jobs[0]?.setup.mode || 'single';
+  pending().mode = mode;
+  if (setup.mode !== mode) setup = remake({});
+}
+// Photos the drawing kit (or an older screen) put in side slots join the list with their side already set.
+function foldViews(p) {
+  for (const v of VIEWS) if (p.views?.[v]) p.photos.push({ ...p.views[v], angle: v, sure: 1, angleSet: true });
+  p.views = {};
+}
 
 export function mount(el, { id }) {
   root = el;
   model = id ? findModel(id) : null;
   const p = pending();
   if (!model && p.modelId) Object.assign(p, { photos: [], views: {}, modelId: null, setup: null }); // left a regeneration
+  foldViews(p);
   p.mode ||= 'single';
   const provider = state.settings?.provider || 'tripo';
   try { setup = normalize({ ...(model && p.setup?.engine ? p.setup : savedSetup(provider)), mode: p.mode }); } catch { setup = presetConfig(provider, 'balanced', p.mode); }
@@ -72,18 +84,18 @@ export function mount(el, { id }) {
   el.addEventListener('pointerdown', (e) => { if (e.target.matches?.('.range')) dragging = true; });
   el.addEventListener('pointerup', () => { dragging = false; });
   el.addEventListener('dragover', (e) => {
-    const zone = e.target.closest('[data-drop], [data-slot]');
+    const zone = e.target.closest('[data-drop]');
     if (!zone) return;
     e.preventDefault();
     zone.classList.add('hot');
   });
-  el.addEventListener('dragleave', (e) => e.target.closest?.('[data-drop], [data-slot]')?.classList.remove('hot'));
+  el.addEventListener('dragleave', (e) => e.target.closest?.('[data-drop]')?.classList.remove('hot'));
   el.addEventListener('drop', (e) => {
-    const zone = e.target.closest('[data-drop], [data-slot]');
+    const zone = e.target.closest('[data-drop]');
     if (!zone) return;
     e.preventDefault();
     zone.classList.remove('hot');
-    addPhotos(e.dataTransfer.files, zone.dataset.slot);
+    addFiles(e.dataTransfer.files);
   });
   render();
   if (!accountOf(setup.provider)) refreshAccount(setup.provider);
@@ -98,13 +110,16 @@ export function update() { render(); }
 
 function render() {
   if (!root?.isConnected) return;
-  if (model && pending().photos.length > 1) pending().photos = pending().photos.slice(-1); // one photo per regeneration
+  foldViews(pending());
+  const unread = pending().photos.filter((ph) => !ph.angle && !ph.reading);
+  if (unread.length) { unread.forEach((ph) => { ph.reading = true; }); guessPhotos(unread).then(() => render()); }
+  syncMode();
   put('#suLeft', leftHtml());
   if (!dragging) put('#suPanel', panelHtml());
   put('#suFoot', footHtml());
   // Quad or game-ready low detail caps the detail: say so where Make 3D model is, so it is seen before paying.
   put('#suWarn', detailWarning(setup) ? `<p class="su-warn" role="status">${esc(detailWarning(setup))}</p>` : '');
-  const photo = setup.mode === 'views' ? pending().views.front : singlePhotos()[0];
+  const photo = frontPhoto();
   const preset = PRESETS[setup.provider].find((x) => x.id === matchPreset(setup))?.name || 'Custom';
   $('#suReadyLine', root).textContent = `${photo ? photo.name : 'No photo yet'} · ${preset} recipe`;
   const main = $('#suMain', root);
@@ -122,56 +137,53 @@ function put(selector, html) {
 }
 
 // ---- left: the photos ----
+const byId = (id) => pending().photos.find((ph) => ph.id === id);
+// The photo shown big: the one sent as the front.
+function frontPhoto() {
+  const j = plan().jobs[0];
+  return j ? byId(j.files.front) : null;
+}
+const ANGLE_TIP = 'Which side of the thing this photo shows. Click to change it.';
+const SEP_TIP = 'Make one model from each photo, instead of one model from all of them';
+
 function leftHtml() {
-  const p = pending();
-  const e = ENGINES[setup.engine];
-  const views = setup.mode === 'views';
-  const photos = singlePhotos();
-  const title = model ? `Make ${esc(model.name)} again` : !views && photos.length > 1 ? `Set up ${photos.length} models` : 'Set up this model';
-  const lede = !views && photos.length > 1 && !model ? 'Each photo becomes its own model, all with this recipe.'
-    : 'Pick a recipe. Open a group only to change it.';
+  const photos = pending().photos;
+  const n = photos.length;
+  const many = n > 1 && separate();
+  const title = model ? `Make ${esc(model.name)} again` : many ? `Set up ${n} models` : 'Set up this model';
+  const lede = many ? 'Each photo becomes its own model, all with this recipe.'
+    : n > 1 ? 'These photos show one thing from different sides. They make one model.' : 'Pick a recipe. Open a group only to change it.';
+  const { jobs } = plan();
+  const sent = new Set(jobs.flatMap((j) => Object.values(j.files)));
+  const front = frontPhoto();
   let stage;
-  if (views) {
-    stage = `<div class="su-views">${VIEWS.map((v) => {
-      const ph = p.views[v];
-      if (ph) {
-        return `<div class="slot full" data-slot="${v}"><img src="${photoUrl(ph)}" alt="${VIEW_NAMES[v]} view: ${esc(ph.name)}"><span class="sl-name">${VIEW_NAMES[v]}</span>
-          <button class="sl-x" type="button" data-unslot="${v}" aria-label="Remove the ${v} photo" title="Remove the ${v} photo">${icon('close', 14)}</button></div>`;
-      }
-      return `<button class="slot empty" type="button" data-slot="${v}" data-pickslot="${v}" title="Add the ${v} photo">${icon('plus', 20)}<span class="sl-name">${VIEW_NAMES[v]}${v === 'front' ? ' · required' : ''}</span><span class="sl-hint help">Drop or choose a photo</span></button>`;
-    }).join('')}</div>`;
-  } else if (photos.length) {
-    stage = `<div class="su-photo" data-drop><img id="suMain" src="${photoUrl(photos[0])}" alt="${esc(photos[0].name)}"></div>
-      ${photos.length > 1 ? `<div class="su-strip">${photos.map((ph) => `<div class="st-item"><img src="${photoUrl(ph)}" alt="${esc(ph.name)}">
-        <button class="sl-x" type="button" data-unphoto="${ph.id}" aria-label="Remove ${esc(ph.name)}">${icon('close', 12)}</button></div>`).join('')}</div>` : ''}`;
+  if (front) {
+    stage = `<div class="su-photo" data-drop><img id="suMain" src="${photoUrl(front)}" alt="${esc(front.name)}"></div>
+      ${n > 1 ? `<div class="su-strip" role="list" aria-label="Your photos">${photos.map((ph) => chipCard(ph, sent.has(ph.id))).join('')}</div>` : ''}`;
   } else {
-    stage = `<button class="su-photo su-empty" type="button" data-act="add" data-drop title="Pick a photo. PNG, JPEG or HEIC, up to 20 MB.">${icon('upload', 30)}<b>Add a photo</b><span class="help">One clear thing · up to 20 MB</span></button>`;
+    stage = `<button class="su-photo su-empty" type="button" data-act="add" data-drop title="Pick photos of one thing. PNG, JPEG or HEIC, up to 20 MB each.">${icon('upload', 30)}<b>Add photos</b><span class="help">One thing, from 1 or more sides · up to 20 MB each</span></button>`;
   }
-  const filled = VIEWS.filter((v) => p.views[v]).length;
-  const info = views ? `<span><b>${filled} of 4 sides</b> · ${VIEWS.filter((v) => p.views[v]).join(', ') || 'front first'}</span>`
-    : photos.length ? `<span><b>${esc(photos[0].file.name)}</b><span id="suDims"></span>${photos.length > 1 ? ` · ${photos.length} photos` : ''}</span>` : '<span></span>';
-  const more = views || !photos.length ? '' : `<button class="link" type="button" data-act="add" title="${model ? 'Pick a different photo' : 'Add more photos, one model each'}">${model ? 'Other photo' : 'Add photos'}</button>`;
-  const toggle = !e.views
-    ? `<span class="muted">${p.mode === 'views' ? `${esc(e.label)} takes one photo, so only the front is sent` : `${esc(e.label)} takes one photo`}</span>`
-    : `<button class="link" type="button" data-act="mode" title="${views ? 'Use one photo' : 'Use up to 4 photos from different sides'}">${views ? 'Use one photo' : 'Use 4 sides'}</button>`;
-  return `<h1 class="sh">${title}</h1><p class="lede help">${lede}</p>${stage}<div class="su-cap">${info}<span class="su-acts">${more}${toggle}</span></div>`;
+  const line = esc(planLine(photos, setup, { separate: separate() }));
+  // Several photos: the line says where they go. One: its name and size.
+  const info = line ? `<span class="su-plan" role="status">${line}</span>`
+    : front ? `<span><b>${esc(front.file.name)}</b><span id="suDims"></span></span>` : '<span></span>';
+  const more = !n ? '' : `<button class="link" type="button" data-act="add" title="${model ? 'Add more photos of this thing' : 'Add more photos of the same thing'}">Add photos</button>`;
+  const sep = n > 1 && !model ? `<label class="sep-tg" title="${SEP_TIP}"><input type="checkbox" role="switch" class="sw" data-sep data-fk="sep"${separate() ? ' checked' : ''}><span>Separate models</span></label>` : '';
+  return `<h1 class="sh">${title}</h1><p class="lede help">${lede}</p>${stage}<div class="su-cap">${info}<span class="su-acts">${more}${sep}</span></div>`;
 }
 
-function addPhotos(files, slot) {
-  const p = pending();
-  if (!slot) return addFiles(files); // fills empty view slots in 4-view mode, or adds photos
-  const photos = takePhotos(files);
-  if (!photos.length) return;
-  p.views[slot] = photos.shift();
-  for (const ph of photos) { const free = VIEWS.find((v) => !p.views[v]); if (free) p.views[free] = ph; }
-  render();
+// A photo in the strip: its angle chip (a menu), remove, and a note on a photo that is kept, not sent.
+function chipCard(ph, isSent) {
+  const angle = ph.angle || 'other';
+  const kept = !isSent && !separate();
+  return `<div class="st-item${kept ? ' kept' : ''}" role="listitem"><img src="${photoUrl(ph)}" alt="${esc(ph.name)}">
+    <button class="sl-x" type="button" data-unphoto="${ph.id}" aria-label="Remove ${esc(ph.name)}" title="Remove this photo">${icon('close', 12)}</button>
+    ${separate() ? '' : `<select class="angle" data-angle="${ph.id}" data-fk="angle:${ph.id}" title="${ANGLE_TIP}" aria-label="Side shown in ${esc(ph.name)}">${ANGLES.map((a) => `<option value="${a}"${a === angle ? ' selected' : ''}>${ANGLE_NAMES[a]}${ph.angle ? '' : '…'}</option>`).join('')}</select>`}
+    ${kept ? '<span class="st-use" title="Kept with the model to compare details. Not sent, no extra cost.">Used for checking detail</span>' : ''}</div>`;
 }
 
-function pick(slot = '') {
-  const input = $('#suPick', root);
-  input.dataset.slot = slot;
-  input.multiple = !slot;
-  input.click();
+function pick() {
+  $('#suPick', root).click();
 }
 
 // ---- right: provider, presets, groups ----
@@ -184,7 +196,7 @@ function panelHtml() {
   const provider = setup.provider;
   const current = matchPreset(setup);
   const presets = PRESETS[provider].map((x) => ({ ...x, credits: estimate(presetConfig(provider, x.id, pending().mode)).credits }));
-  presets.push({ id: 'custom', name: 'Custom', desc: 'Your own mix', credits: current === 'custom' ? estimate(setup).credits : '—' });
+  presets.push({ id: 'custom', name: 'Custom', desc: 'Your own mix', credits: current === 'custom' ? estimate(setup).credits : '' }); // priced once picked
   return `
     <div class="prov" role="radiogroup" aria-label="Provider">${Object.entries(PROVIDERS).map(([id, p]) => radio(id === provider, `data-provider="${id}" data-fk="prov:${id}"`, `<b>${p.name}</b><span>${p.sub}</span>`, '', p.local ? 'Make it free on this computer' : `Make it with ${p.name} (uses credits)`)).join('')}</div>
     <h2 class="k" id="suPresetK">Pick a recipe</h2>
@@ -225,13 +237,10 @@ function rowsOf(g) {
 
 function modeRow(e) {
   if (!e.views) {
-    return row('mode', 'Photos', '<span class="static">One photo</span>', info(e.provider === 'tripo'
-      ? 'Tripo takes one photo. For 2 to 4 sides, use 3D AI Studio.' : `${esc(e.label)} makes the model from one photo.`));
+    return row('mode', 'Photos', '<span class="static">One photo</span>', info(`${esc(e.label)} makes the model from one photo. With more, the clearest one is sent.`));
   }
-  const views = setup.mode === 'views';
-  const tip = e.viewsPlus ? `2 to 4 sides cost ${e.viewsPlus} more credits.` : setup.engine.startsWith('tripo-') ? 'Same price. Order: front, left, back, right.' : 'Same price with 2 to 4 sides.';
-  return row('mode', 'Photos', `<div class="segc" role="radiogroup" aria-labelledby="su-l-mode">${[['single', 'One photo'], ['views', '4 sides']]
-    .map(([m, label]) => radio((m === 'views') === views, `data-mode="${m}" data-fk="mode:${m}"`, label, '', m === 'views' ? 'Up to 4 photos from different sides' : 'One photo')).join('')}</div>`, info(tip));
+  const tip = e.viewsPlus ? `2 to 4 sides cost ${e.viewsPlus} more credits.` : 'Same price with 2 to 4 sides.';
+  return row('mode', 'Photos', '<span class="static">Up to 4 sides</span>', info(`Photos of the same thing from the front, left, back and right make one model. ${tip}`));
 }
 
 function optionRow(spec) {
@@ -284,20 +293,19 @@ function sliderValue(spec, input) {
 // ---- footer: one cost line and Generate ----
 function footHtml() {
   const provider = setup.provider;
-  const p = pending();
-  const each = estimate(setup).credits;
-  const n = jobCount();
+  const { jobs } = plan();
+  const n = jobs.length;
+  const each = estimate(jobs[0]?.setup || setup).credits; // one model's price: all the photos in one job
   const total = each * Math.max(1, n);
   const a = accountOf(provider);
+  const why = n ? '' : 'Add a photo';
   if (PROVIDERS[provider].local) { // free: no key, no balance
-    const why = !n ? (setup.mode === 'views' ? 'Add the front photo' : 'Add a photo') : setup.mode === 'views' && VIEWS.filter((v) => p.views[v]).length < 2 ? 'Add one more side' : '';
     const line = [n > 1 && `${n} models`, why, a && !a.ready && 'needs a one-time download in Settings', 'runs on this computer'].filter(Boolean).join(' · ');
     return `<div class="cost" role="status"><b>Free</b><span>${esc(line)}</span></div><button class="btn pri gen big" type="button" data-act="generate"${why ? ' disabled' : ''} title="${why || 'Make the 3D model on this computer'}">Make 3D model</button>`;
   }
   const noKey = state.settings?.keys?.[provider] === 'none' || a?.hasKey === false;
   const balance = a?.hasKey && a.balance != null ? Number(a.balance) : null;
   const short = balance != null && balance < total;
-  const why = !n ? (setup.mode === 'views' ? 'Add the front photo' : 'Add a photo') : setup.mode === 'views' && VIEWS.filter((v) => p.views[v]).length < 2 ? 'Add one more side' : '';
   const line = [
     n > 1 && `${n} models × ${each}`,
     why,
@@ -321,11 +329,7 @@ async function onClick(e) {
   }
   if (d.group) { openGroup = openGroup === d.group ? null : d.group; return render(); }
   if (d.key && d.value !== undefined) { setup = remake({ options: { ...setup.options, [d.key]: JSON.parse(d.value) } }); return render(); }
-  if (d.mode) return setMode(d.mode);
-  if (d.act === 'mode') return setMode(setup.mode === 'views' ? 'single' : 'views');
   if (d.act === 'add') return pick();
-  if (d.pickslot) return pick(d.pickslot);
-  if (d.unslot) { delete pending().views[d.unslot]; return render(); }
   if (d.unphoto) { pending().photos = pending().photos.filter((p) => p.id !== d.unphoto); return render(); }
   if (d.act === 'key') return openKeyDialog(setup.provider);
   if (d.act === 'generate') return busy(t, generate);
@@ -334,10 +338,12 @@ async function onClick(e) {
 function onChange(e) {
   const t = e.target;
   if (t.id === 'suPick') {
-    if (t.files.length) addPhotos(t.files, t.dataset.slot);
+    if (t.files.length) addFiles(t.files);
     t.value = '';
     return;
   }
+  if (t.dataset.angle) { Object.assign(byId(t.dataset.angle), { angle: t.value, sure: 1, angleSet: true }); return render(); }
+  if (t.dataset.sep !== undefined) { pending().separate = t.checked; return render(); }
   if (t.dataset.setting === 'fillHoles') {
     send('/api/settings', 'POST', { fillHoles: t.checked }).then((s) => { state.settings = s; }, (err) => { toast(err.message); t.checked = !t.checked; });
     return;
@@ -377,34 +383,26 @@ async function switchProvider(provider) {
   try { state.settings = await send('/api/settings', 'POST', { provider }); refresh(); } catch (err) { toast(err.message); } // remembered for next time
 }
 
-function setMode(mode) {
-  const p = pending();
-  if (mode === p.mode) return;
-  if (mode === 'views') { for (const v of VIEWS) if (!p.views[v] && p.photos.length) p.views[v] = p.photos.shift(); } // photos fill the slots in order
-  else if (!p.photos.length && p.views.front) p.photos = [p.views.front];
-  p.mode = mode;
-  setup = remake({});
-  render();
-}
-
 async function generate() {
   const p = pending();
-  const s = setup;
-  const jobs = s.mode === 'views'
-    ? [{ name: p.views.front.name, setup: s, files: Object.fromEntries(VIEWS.filter((v) => p.views[v]).map((v) => [v, p.views[v]])), ...(p.drawing && { drawing: p.drawing }) }]
-    : singlePhotos().map((ph) => ({ name: ph.name, setup: s, files: { front: ph }, ...(p.drawing && { drawing: p.drawing }) }));
+  const extra = p.drawing ? { drawing: p.drawing } : {};
+  const jobs = plan().jobs.map((j) => {
+    const files = Object.fromEntries(Object.entries(j.files).map(([v, id]) => [v, byId(id)]));
+    return { name: files.front.name, setup: j.setup, files, refs: j.refs.map(byId), ...extra };
+  });
   if (!jobs.length) return;
   if (model) {
     jobs.length = 1;
     Object.assign(jobs[0], { name: model.name, modelId: model.id });
   }
+  const s = jobs[0].setup;
   // More than the balance: the provider will likely refuse it, but the balance may be stale, so ask instead of blocking.
-  const total = estimate(s).credits * jobs.length;
+  const total = estimate(s).credits * jobs.length; // every job has the same recipe and photo count rules
   const a = accountOf(s.provider);
   if (a?.balance != null && total > Number(a.balance) && !(await confirmDialog({ title: 'Not enough credits?',
     text: `This costs about ${total} credits. You have ${fmtBalance(a.balance)} with ${PROVIDERS[s.provider].name}. Send it anyway?`, ok: 'Send anyway' }))) return;
   rememberSetup(s).catch((err) => toast(err.message));
-  Object.assign(p, { photos: [], views: {}, modelId: null, setup: null, drawing: null });
+  Object.assign(p, { photos: [], views: {}, modelId: null, setup: null, drawing: null, separate: false });
   jobs.forEach((job, i) => enqueue(job, i === 0));
   go(model ? `#/generate/${model.id}` : '#/generate');
 }
