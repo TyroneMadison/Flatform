@@ -6,7 +6,7 @@ import { $, $$, esc, state, api, send, toast, fileUrl, native, activeWorkspace }
 import { keyOf } from '../lib/shortcuts.js';
 import { icon } from '../lib/icons.js';
 import {
-  SLOTS, SECTIONS, PARTS, MATERIAL_PRESETS, MATERIAL_KEYS, defaultPaint, upsertPiece, resolveColors, colorSources, setColor, recentColor,
+  SLOTS, SECTIONS, PARTS, MATERIAL_PRESETS, MATERIAL_KEYS, defaultPaint, upsertPiece, resolveColors, colorSources, setColor, pickColor, recentColor,
   materialFromPreset, deserializeMaterial, serializeMaterial, DEFAULT_COLORS, textureSet,
 } from '../lib/tenno.js';
 import { safeFileName, savesTo } from '../lib/save-place.js';
@@ -225,6 +225,7 @@ export function renderPaintGroups() {
     </div>`;
 
   const piece = selected ? rec(selected) : null;
+  if (!selected) colorLevel = 'global'; // nothing picked: a colour is for the whole model
   const target = colorLevel === 'global' ? 'global' : colorLevel === 'section' ? piece?.section || null : selected;
   const resolved = resolveColors(paint, piece || {});
   const sources = colorSources(paint, piece || {});
@@ -328,23 +329,42 @@ export function afterRender() {
   const paint = paintOf();
   const piece = selected ? rec(selected) : {};
   const value = colorLevel === 'global' ? { ...DEFAULT_COLORS, ...paint.colors?.global }[colorKey] : resolveColors(paint, piece)[colorKey];
-  picker = new ColorPicker(box, { value, recent: paint.recent || [], onPick: (hex) => applyColor(hex) });
+  picker = new ColorPicker(box, { value, recent: paint.recent || [], onPick: applyColor, onPreview: previewColor });
 }
 
-let colorTimer;
-function applyColor(hex) {
+// The paint with a colour picked in the Color panel: stored at its level, and the pieces it is for wear its slot
+// (tenno.js pickColor), so it really shows. Null when there is nothing to colour.
+function pickedPaint(hex) {
   const piece = selected ? rec(selected) : null;
   const level = colorLevel === 'global' ? 'global' : colorLevel === 'section' ? piece?.section : selected;
-  if (!level) return;
-  let paint = paintOf();
-  if (level !== 'global' && colorLevel === 'piece' && !paint.pieces[selected]) paint = upsertPiece(paint, selected, { name: pieces().find((p) => p.key === selected)?.name });
-  paint = setColor(paint, level, colorKey, hex);
-  clearTimeout(colorTimer);
-  colorTimer = setTimeout(() => { ctx.change({ paint: recentColor(paintOf(), hex) }, { inspector: false, record: false }); /* the recent list is not an edit */ picker?.setRecent(paintOf().recent); }, 600);
-  ctx.change({ paint }, { inspector: false });
-  // Live swatch update without a full redraw.
-  const sw = $(`[data-color-key="${colorKey}"] i`, ctx.root);
-  if (sw) sw.style.background = hex;
+  if (!level) return null;
+  const all = pieces();
+  const targets = level === 'global' ? all.map((p) => p.key) : level === selected ? [selected] : all.filter((p) => rec(p.key).section === level).map((p) => p.key);
+  return pickColor(paintOf(), { level, key: colorKey, hex, targets, names: Object.fromEntries(all.map((p) => [p.key, p.name])) });
+}
+// The slot swatch follows the wheel without a redraw of the panel.
+function liveSwatch(hex) {
+  const b = $(`[data-color-key="${colorKey}"]`, ctx.root);
+  if (!b) return;
+  b.querySelector('i').style.background = hex;
+  const small = b.querySelector('small');
+  if (small) small.textContent = hex;
+}
+// While the wheel is dragged: the model shows the colour, nothing is saved and there is no undo step yet.
+function previewColor(hex) {
+  const paint = pickedPaint(hex);
+  if (!paint) return;
+  ctx.studio()?.previewPaint(paint);
+  ctx.draw();
+  liveSwatch(hex);
+}
+// A colour is chosen (a drag ended, a swatch, the hex or RGB fields): one saved, undoable step.
+function applyColor(hex) {
+  const paint = pickedPaint(hex);
+  if (!paint) return;
+  ctx.change({ paint: recentColor(paint, hex) }, { inspector: false });
+  picker?.setRecent(paintOf().recent);
+  liveSwatch(hex);
 }
 
 const setPath = (obj, path, value) => {
@@ -546,7 +566,7 @@ export async function onPaintChange(t) {
     return true;
   }
   if (t.dataset.pieceSection !== undefined) { updatePiece(t.dataset.pieceSection, { section: t.value || null }); return true; }
-  if (t.dataset.pieceSlot !== undefined) { updatePiece(t.dataset.pieceSlot, { slot: t.value || null }); return true; }
+  if (t.dataset.pieceSlot !== undefined) { updatePiece(t.dataset.pieceSlot, { slot: t.value || null, autoSlot: false }); return true; }
   if (t.dataset.pieceRegion !== undefined) {
     const { overrideRegion } = await import('../lib/infer.js');
     const { presetFor } = await import('../lib/infer.js');

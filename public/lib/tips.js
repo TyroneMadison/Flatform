@@ -30,6 +30,7 @@ export function installTips(doc = document) {
     if (!text || !el.isConnected) return;
     on = el;
     box.textContent = text;
+    box.classList.toggle('one', el.hasAttribute('data-tip-one')); // a tip that must stay on one line
     box.hidden = false;
     const p = placeTip(el.getBoundingClientRect(), box.offsetWidth, box.offsetHeight, doc.documentElement.clientWidth);
     box.style.top = `${p.top}px`;

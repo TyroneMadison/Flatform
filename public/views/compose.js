@@ -11,7 +11,7 @@ import { ideasFor, applyIdea } from '../lib/render-ideas.js';
 import { modelInfo } from '../lib/rig.js';
 import { icon } from '../lib/icons.js';
 import { FRAMES, HALF, STEP, pad3, LOOKS, ENVIRONMENTS } from '../lib/pipeline.js';
-import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf } from '../lib/studio.js';
+import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf, toggleView, FREE_TIP } from '../lib/studio.js';
 import { initMotion, renderMotionGroup, onMotionClick, onMotionInput, onMotionChange, stopMotion } from './compose-motion.js';
 import { initHandPose, renderHandPoseGroup, onHandPoseClick, onHandPoseInput, onHandPoseChange, syncHandPose, stopHandPose, isPosing } from './compose-handpose.js';
 import { initTestRig, renderTestRigGroup, onTestRigClick, stopTestRig } from './compose-testrig.js';
@@ -81,10 +81,14 @@ export async function mount(el, { id }) {
       <div class="hud msg" id="hudMsg" role="status">Loading model…</div>
       <div class="rtag" id="renderTag" aria-live="polite" hidden></div>
       <div class="vtool" role="toolbar" aria-label="View tools">
-        <button class="vt" type="button" data-tool="move" aria-pressed="false" title="Move the car" aria-label="Move the car">${icon('move')}</button>
-        <button class="vt" type="button" data-tool="turn" aria-pressed="true" title="Turn the car" aria-label="Turn the car">${icon('orbit')}</button>
-        <button class="vt" type="button" data-pick-tool="camera" title="Camera settings" aria-label="Camera settings">${icon('camera')}</button>
-        <button class="vt" type="button" data-pick-tool="light" title="Light settings" aria-label="Light settings">${icon('light')}</button>
+        <button class="vt" type="button" data-tool="move" aria-pressed="false" title="Move the car: drag it around the floor" aria-label="Move the car">${icon('move', 20)}</button>
+        <button class="vt" type="button" data-tool="turn" aria-pressed="true" title="Turn the car: drag to spin it" aria-label="Turn the car">${icon('turn', 20)}</button>
+        <span class="vt-sep" aria-hidden="true"></span>
+        <button class="vt" type="button" data-vt="free" aria-pressed="false" title="${FREE_TIP}" data-tip-one aria-label="Free look">${icon('freeLook', 20)}</button>
+        <button class="vt" type="button" data-act="frame" title="Reset view: show the whole model (${keyOf('frame')})" aria-label="Reset view">${icon('frame', 20)}</button>
+        <span class="vt-sep" aria-hidden="true"></span>
+        <button class="vt" type="button" data-pick-tool="camera" aria-pressed="false" title="Camera settings" aria-label="Camera settings">${icon('camera', 20)}</button>
+        <button class="vt" type="button" data-pick-tool="light" aria-pressed="false" title="Light settings" aria-label="Light settings">${icon('light', 20)}</button>
       </div>
     </div>
     <aside class="tcard card" id="toolCard" aria-labelledby="toolTitle">
@@ -229,8 +233,9 @@ function draw() {
 function renderHud() {
   const cam = CAMERAS[scene.camera] || CAMERAS.front34;
   $('#hudScene', root).innerHTML = `${icon('scene', 14)} ${esc(PRESETS[scene.preset].label)}`;
-  $('#hudCam', root).innerHTML = `${icon('camera', 14)} ${scene.view === 'free' ? `Free roam · ${scene.lens} mm · F shows all` : ENVIRONMENTS[scene.preset] ? 'Eye-level camera · real size' : `${cam.label} · ${scene.lens} mm · ${cam.height}`}`;
+  $('#hudCam', root).innerHTML = `${icon('camera', 14)} ${scene.view === 'free' ? `Free look · ${scene.lens} mm · F to reset` : ENVIRONMENTS[scene.preset] ? 'Eye-level camera · real size' : `${cam.label} · ${scene.lens} mm · ${cam.height}`}`;
   $('#cv', root).classList.toggle('orbit', scene.view === 'free');
+  $('[data-vt="free"]', root)?.setAttribute('aria-pressed', String(scene.view === 'free')); // however the view changed
   const look = lookOf(scene.preset);
   $('#hudLook', root).textContent = `${look === 'studio' ? 'Studio' : LOOKS[look].label} look · ${look === 'transparent' ? '1:1' : '4:3'} · 2048 px`;
   $('#vp', root).classList.toggle('clear', scene.preset === 'transparent');
@@ -447,7 +452,7 @@ function renderInspector() {
       <button class="btn sm ghostbtn" type="button" data-act="frame" title="Fit the whole model in view (${keyOf('frame')})">Frame all</button></div>
       ${s.view === 'free' ? `<p class="fine">Drag to look around · scroll to zoom · right-drag or Shift-drag to slide · F shows the whole model.</p>
       ${slider('lens', 'Zoom', 18, 135, 1, s.lens, valueText.lens(s.lens), false, 'Low shows more of the scene, high is close up')}`
-      : ENVIRONMENTS[s.preset] ? '<p class="fine">This place sets the camera: eye level, real size, car on the floor. Use Turn, or Free roam to look around.</p>'
+      : ENVIRONMENTS[s.preset] ? '<p class="fine">This place sets the camera: eye level, real size, car on the floor. Use Turn, or Free look to look around.</p>'
       : `<div class="chips" role="radiogroup" aria-label="Camera preset">${Object.entries(CAMERAS).map(([k, c]) => `<button class="chip" type="button" role="radio" data-camera="${k}" aria-checked="${s.camera === k}" title="Use this camera angle">${c.label}</button>`).join('')}</div>
       ${slider('lens', 'Zoom', 18, 135, 1, s.lens, valueText.lens(s.lens), false, 'Low shows more of the scene, high is close up')}`}
     </div>
@@ -501,6 +506,7 @@ export function onDock(id) {
   $('#toolTitle', root).textContent = tool[2];
   $('#toolTip', root).textContent = TOOL_TIPS[tool[0]];
   $('#toolCard', root).dataset.tool = tool[0];
+  $$('[data-pick-tool]', root).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.pickTool === tool[0])));
   applyTool();
   $('#toolBody', root).scrollTop = 0;
 }
@@ -625,6 +631,7 @@ function bind() {
       await change({ camera: t.dataset.camera, turn: c.turn, lens: c.lens, fit: 'footprint' });
     }
     if (t.dataset.view) await change({ view: t.dataset.view }); // the car preset and the orbit are both kept
+    if (t.dataset.vt === 'free') await change({ view: toggleView(scene.view) });
     if (t.dataset.act === 'frame') frameAll();
     if (t.dataset.mode) { mode = Number(t.dataset.mode); if (mode === 180 && frame >= HALF) setFrame(0); renderTimeline(); }
     if (t.id === 'play') play();

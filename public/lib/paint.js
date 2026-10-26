@@ -10,7 +10,14 @@ import { presetFor, stripHighlights, voteRegions, groupFaces, kmeans, clusterSta
 export const pieceKey = (meshIndex, name, group = null) => `${name || 'mesh'}#${meshIndex}${group == null ? '' : `@${group}`}`;
 
 // Every piece of a model: [{ key, mesh, group, name, faces }]. A mesh with one material is one piece; a mesh with
-// material groups is one piece per group. Call after regroup() so inferred groups show up.
+// material groups is one piece per group. Call after regroup() so inferred groups show up. A glTF mesh with several
+// materials loads as one three.js mesh per material: those are named after their material (partNames), not Cube_1.
+export function partNames(gltf) {
+  gltf.scene.traverse((o) => {
+    const a = o.isMesh && gltf.parser?.associations?.get(o);
+    if (a?.primitives != null && gltf.parser.json.meshes?.[a.meshes]?.primitives?.length > 1 && o.material?.name) o.userData.partName = o.material.name;
+  });
+}
 export function listPieces(model) {
   const out = [];
   let i = 0;
@@ -23,7 +30,7 @@ export function listPieces(model) {
         const name = o.userData.groupNames?.[gi] || mats[g.materialIndex]?.name || `${o.name || 'mesh'} ${gi + 1}`;
         out.push({ key: pieceKey(i, o.name, gi), mesh: o, group: gi, name, faces: (g.count ?? o.geometry.index?.count ?? o.geometry.attributes.position.count) / 3 });
       });
-    } else out.push({ key: pieceKey(i, o.name), mesh: o, group: null, name: o.name || `mesh ${i + 1}`, faces: (o.geometry.index?.count ?? o.geometry.attributes.position.count) / 3 });
+    } else out.push({ key: pieceKey(i, o.name), mesh: o, group: null, name: o.userData.partName || o.name || `mesh ${i + 1}`, faces: (o.geometry.index?.count ?? o.geometry.attributes.position.count) / 3 });
     i++;
   });
   return out;
@@ -112,16 +119,26 @@ function libraryMap(ref, map, mat, srgb) {
   t.center.set(0.5, 0.5);
   t.rotation = (ref.rotation * Math.PI) / 180;
   t.needsUpdate = true;
+  t.userData.library = true; // a per-piece copy: pieceMaterial lets it go when the piece is rebuilt
   return t;
 }
 
+// The colours a piece shows: base (its own colour, else its slot's colour, else null = the imported colour), whether
+// that base is a slot tint (it multiplies the texture; an own colour replaces it) and its glow.
+export function pieceColors(piece, paint, m = deserializeMaterial(piece.material)) {
+  const colors = resolveColors(paint, piece);
+  const tinted = Boolean(piece.slot && piece.slot !== 'energy');
+  const glow = piece.slot === 'emissive' || piece.slot === 'energy';
+  return { base: m.color || (tinted ? colors[piece.slot] : null), tinted, glow, emissive: glow ? colors[piece.slot] : m.emissive };
+}
+const setBase = (mat, base, original) => (base ? mat.color.set(base) : mat.color.copy(original?.color || new THREE.Color('#ffffff')));
+
 export function pieceMaterial(piece, original, paint, cached) {
   const m = deserializeMaterial(piece.material);
-  const colors = resolveColors(paint, piece);
+  const { base, tinted, glow, emissive } = pieceColors(piece, paint, m);
   const mat = cached || withSSS(new THREE.MeshPhysicalMaterial());
-  const tinted = piece.slot && piece.slot !== 'energy';
-  const base = m.color || (tinted ? colors[piece.slot] : null);
-  mat.color.set(base || '#ffffff');
+  for (const k of ['map', 'normalMap', 'roughnessMap']) if (mat[k]?.userData.library) mat[k].dispose();
+  setBase(mat, base, original);
   mat.map = m.textured !== false && (!base || tinted) ? original?.map || null : null; // a tint multiplies the diffuse; a set colour replaces it
   mat.normalMap = original?.normalMap || null;
   mat.roughnessMap = m.textured !== false ? original?.roughnessMap || null : null;
@@ -138,8 +155,7 @@ export function pieceMaterial(piece, original, paint, cached) {
   mat.thickness = m.thickness;
   mat.opacity = m.opacity;
   mat.transparent = m.opacity < 1;
-  const glow = piece.slot === 'emissive' || piece.slot === 'energy';
-  mat.emissive.set(glow ? colors[piece.slot] : m.emissive);
+  mat.emissive.set(emissive);
   mat.emissiveIntensity = glow ? Math.max(m.emissiveIntensity, 2) : m.emissiveIntensity;
   mat.normalScale.set(m.normalScale, m.normalScale);
   if (m.texture) {
@@ -177,6 +193,24 @@ export function similarPieces(pieces, key) {
 
 // A hidden piece's face group (Hide in the inspector card): drawn with nothing. A hidden whole mesh is just not visible.
 const HIDDEN = new THREE.MeshBasicMaterial({ visible: false });
+
+// Live colour while a colour wheel drag runs: only the colours of the pieces that already have their material
+// (cache), no new materials and no shader rebuilds. The drag's end goes through applyPaint as usual.
+// Returns { changed, missing }: missing = painted pieces with no material yet (the caller builds them once).
+export function previewColors(model, paint, cache) {
+  let changed = 0, missing = 0;
+  for (const p of listPieces(model)) {
+    const rec = paint?.pieces?.[p.key], mat = cache.get(p.key);
+    if (!painted(rec) || rec.hidden) continue;
+    if (!mat) { missing++; continue; }
+    const { base, glow, emissive } = pieceColors(rec, paint);
+    setBase(mat, base, [].concat(p.mesh.userData.material)[p.group ?? 0]);
+    mat.emissive.set(emissive);
+    if (glow) mat.emissiveIntensity = Math.max(deserializeMaterial(rec.material).emissiveIntensity, 2);
+    changed++;
+  }
+  return { changed, missing };
+}
 
 // Applies paint.pieces to the model: painted pieces get their physical material, the rest keep what they have.
 export function applyPaint(model, paint, cache) {

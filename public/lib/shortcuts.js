@@ -15,7 +15,7 @@ export const SHORTCUTS = [
   { id: 'undo', keys: 'Ctrl+Z', label: 'Undo', where: ['compose'], click: '#undoBtn', none: 'Nothing to undo' },
   { id: 'redo', keys: 'Ctrl+Shift+Z', also: ['Ctrl+Y'], label: 'Redo', where: ['compose'], click: '#redoBtn', none: 'Nothing to redo' },
   { id: 'reset', keys: 'Ctrl+Shift+N', label: 'Reset scene (asks first, and you can undo it)', where: ['compose'], click: '[data-act="reset-scene"]', none: 'Open a model in Scene first' },
-  { id: 'frame', keys: 'F', label: 'Fit the whole model on screen', where: ['compose'], click: '[data-act="frame"]', none: 'Load a model first' },
+  { id: 'frame', keys: 'F', label: 'Reset view: show the whole model', where: ['compose'], click: '[data-act="frame"]', none: 'Load a model first' },
   { id: 'envNext', keys: ']', label: 'Next lighting place', where: ['compose'], cycle: 1 },
   { id: 'envPrev', keys: '[', label: 'Previous lighting place', where: ['compose'], cycle: -1 },
   { id: 'pose', keys: 'P', label: 'Pose by hand on or off', where: ['compose'], click: '[data-hp="toggle"]', none: 'Pose by hand works on characters that can move' },

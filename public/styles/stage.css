@@ -324,6 +324,7 @@ body[data-screen='history'] .ph { font-size: 28px; }
 .tip { position: fixed; z-index: 1000; max-width: 280px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line-5); background: var(--surface-1h);
   color: var(--text); font: 500 12px/1.35 var(--sans); box-shadow: 0 6px 18px rgba(0, 0, 0, .35); pointer-events: none; animation: tipIn 120ms var(--out, ease-out); }
 .tip[hidden] { display: none; }
+.tip.one { max-width: none; white-space: nowrap; }
 @keyframes tipIn { from { opacity: 0; transform: translateY(2px); } }
 body.rm .tip { animation: none; }
 /* Recipe rows in the narrow v3 panel: the label gets room to read on one or two lines, the control shrinks to fit. */

@@ -29,7 +29,7 @@ import { mergeLook, effectsFor, hdriUrl, lookNeedsRebuild, hdriGround } from './
 import { buildEnvironment } from './env3d.js';
 import { envScale, skyRotation } from './environments.js';
 import { Post, PathTraced, TONE } from './post.js';
-import { applyPaint, regroup, pickPiece, listPieces } from './paint.js';
+import { applyPaint, regroup, pickPiece, listPieces, previewColors, partNames } from './paint.js';
 import { applyMotion } from './rig.js';
 import { mirrorAttributes, depthRange, boneWeights, heat } from './model-tools.js';
 import { samplePath, skyAt, normalizePath } from './camera-path.js';
@@ -81,7 +81,10 @@ export function defaultScene(settings = {}) {
     look: null, paint: null,
   };
 }
-export const VIEWS = { car: 'Car view', free: 'Free roam' };
+export const VIEWS = { car: 'Car view', free: 'Free look' };
+// The Free look button in the viewport toolbar: car view <-> free look, and its one-line tip.
+export const toggleView = (view) => (view === 'free' ? 'car' : 'free');
+export const FREE_TIP = 'Drag to spin · Scroll to zoom · Right-drag to move · F to reset';
 export const lookOf = (preset) => (preset === 'transparent' || preset === 'showroom' ? preset : 'studio');
 // Share of the frame width the car's footprint diagonal spans (the widest it can look at any turn).
 const FILL = { wide: 0.7, square: 0.84 };
@@ -471,6 +474,7 @@ export class Studio {
     draco.dispose();
     if (this.model) { this.pivot.remove(this.model); disposeTree(this.model); }
     this.model = gltf.scene;
+    partNames(gltf);
     this.mirrorKey = "";
     this.model.traverse((o) => {
       if (!o.isMesh) return;
@@ -498,6 +502,15 @@ export class Studio {
     applyPaint(this.model, this.state.paint, this.pieceMats);
     this.ptDirty = true;
   }
+  // Colour wheel drag: new colours on the pieces' existing materials, nothing rebuilt. A piece that has no material
+  // yet (its first colour) gets one, once, at the start of the drag. Returns how many pieces show the colour.
+  previewPaint(paint) {
+    if (!this.model) return 0;
+    this.ptDirty = true;
+    const { changed, missing } = previewColors(this.model, paint, this.pieceMats);
+    if (missing) { this.state = { ...this.state, paint }; this.applyPaint(); }
+    return changed + missing;
+  }
   pieces() { return this.model ? listPieces(this.model) : []; }
   // The piece under a canvas point (CSS px), or null.
   pick(x, y) {
@@ -519,10 +532,13 @@ export class Studio {
     this.model?.traverse((o) => {
       if (!o.isMesh) return;
       const original = o.userData.material;
+      // The pieces' own materials are reused by applyPaint (paint.js cache): disposing them would throw their
+      // shaders away and rebuild them on every colour change. The model's own textures are never disposed here.
+      const own = new Set([].concat(original).flatMap((m) => [m?.map, m?.roughnessMap, m?.metalnessMap, m?.normalMap]));
       for (const m of [].concat(o.material)) {
-        if (!m.userData.made) continue;
-        if (m.map && m.map !== original.map) m.map.dispose();
-        if (m.roughnessMap && m.roughnessMap !== original.roughnessMap) m.roughnessMap.dispose();
+        if (!m.userData.made || [...this.pieceMats.values()].includes(m)) continue;
+        if (m.map && !own.has(m.map)) m.map.dispose();
+        if (m.roughnessMap && !own.has(m.roughnessMap)) m.roughnessMap.dispose();
         m.dispose();
       }
       o.material = original;

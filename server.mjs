@@ -17,6 +17,7 @@ import { PROVIDERS, VIEWS, DEFAULT_PROVIDER, normalize, baseSetup, tripoDirectBo
 import { estimate } from './public/lib/pricing.js';
 import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
 import { resolveColors, deserializeMaterial, blenderMaterial } from './public/lib/tenno.js';
+import { glbPieces, locatePieces } from './glb-pieces.mjs';
 import { cleanExtras } from './public/lib/render-types.js';
 import { inferRegions, checkAnthropicKey } from './inference.mjs';
 import { createQueue } from './batch.mjs';
@@ -1189,8 +1190,12 @@ export async function startServer({
     const fx = cleanExtras({ effect }).effect;
     const effectArg = fx ? ['--effect', JSON.stringify(fx)] : [];
     const materialsFile = path.join(MODELS, m.id, 'blender-materials.json');
-    const materials = paint?.pieces ? Object.fromEntries(Object.entries(paint.pieces).filter(([, p]) => p && (p.material || p.slot || p.colors || p.region || p.hidden))
-      .map(([key, p]) => [key, { ...blenderMaterial(deserializeMaterial(p.material), resolveColors(paint, p)), slot: p.slot, textured: p.material?.textured !== false && !p.material?.color, ...(p.hidden && { hidden: true }) }])) : {};
+    const specs = paint?.pieces ? Object.fromEntries(Object.entries(paint.pieces).filter(([, p]) => p && (p.material || p.slot || p.colors || p.region || p.hidden))
+      .map(([key, p]) => [key, { ...blenderMaterial(deserializeMaterial(p.material), resolveColors(paint, p), p.slot), slot: p.slot, textured: p.material?.textured !== false && !p.material?.color, ...(p.hidden && { hidden: true }) }])) : {};
+    // Each piece's Blender object and material slot (a mesh with Paint and Accents is two pieces in the app, one object in Blender).
+    let where = [];
+    if (Object.keys(specs).length) { try { where = glbPieces(readFileSync(path.join(MODELS, m.id, v.glb))); } catch { /* no file: keys only */ } }
+    const materials = locatePieces(specs, where);
     const extrasArg = extrasOf(m);
     const job = { status: 'running', looks, look: looks[0], frame: 0, frames, error: null };
     jobs.set(m.id, job);

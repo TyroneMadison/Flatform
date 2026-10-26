@@ -154,18 +154,23 @@ export const defaultPaint = () => ({ sections: SECTIONS.map((s) => ({ ...s })), 
 export const piece = (key, name, extra = {}) => ({ key, name, section: null, slot: null, material: null, colors: null, ...extra });
 export const upsertPiece = (paint, key, patch) => ({ ...paint, pieces: { ...paint.pieces, [key]: { ...(paint.pieces[key] || piece(key, key)), ...patch } } });
 // A colour picked in the Color panel, made to show on the model. The colour is stored at its level (setColor), and the
-// pieces it is for wear that colour's slot: before, a piece with no slot was untinted, so a picked colour was saved but
-// never reached the mesh (the model stayed white). level: 'global', a section id or a piece key. targets: the piece
-// keys this pick is for (the piece; every piece in the section; every piece of the model for global). A piece pick
-// always switches the piece to this slot; section and global picks only fill pieces that have no slot yet.
-// names: piece key → name, for pieces that have no record yet.
+// pieces it is for wear that colour's slot: a piece with no slot is untinted, so before this a picked colour was saved
+// but never reached the mesh (the model stayed white). level: 'global', a section id or a piece key. targets: the piece
+// keys this pick is for (the piece; every piece in the section; every piece of the model for global). names: piece
+// key → name, for pieces that have no record yet.
+// A piece pick always puts the piece on this slot (and it is then the person's choice). A section or whole-model pick
+// of a tint colour (Primary … Accents) puts every piece on it that has no slot yet or only one an earlier such pick
+// gave it (autoSlot), so the last colour picked for the whole model is the one it shows; slots set by hand stay.
+// Glow and Energy from a section or the whole model only reach the pieces already on them (no glowing car).
 export function pickColor(paint, { level, key, hex, targets = [], names = {} }) {
   let p = { ...defaultPaint(), ...paint };
   const piecePick = level !== 'global' && targets.length === 1 && targets[0] === level;
   for (const k of targets) {
     const rec = p.pieces?.[k];
-    if (rec?.hidden || (!piecePick && rec?.slot)) continue;
-    if (rec?.slot !== key) p = upsertPiece(p, k, { ...(!rec && { name: names[k] || k }), slot: key });
+    if (rec?.hidden) continue;
+    const fresh = !rec && { name: names[k] || k };
+    if (piecePick) { if (rec?.slot !== key || rec?.autoSlot) p = upsertPiece(p, k, { ...fresh, slot: key, autoSlot: false }); }
+    else if (TINT_SLOTS.includes(key) && (!rec?.slot || rec.autoSlot) && rec?.slot !== key) p = upsertPiece(p, k, { ...fresh, slot: key, autoSlot: true });
   }
   return setColor(p, level, key, hex);
 }

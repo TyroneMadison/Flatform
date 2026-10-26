@@ -463,6 +463,9 @@ def principled_from(spec, source=None):
     inputs["Subsurface Scale"].default_value = 1.0
     if spec["transmission_weight"] > 0:
         mat.blend_method = "BLEND"
+    src_bsdf = next((n for n in source.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None) if source and source.use_nodes else None
+    if spec.get("keep_color") and src_bsdf is not None:  # no colour picked: the imported colour, as in the app
+        inputs["Base Color"].default_value = tuple(src_bsdf.inputs["Base Color"].default_value)
     if spec.get("textured") and source and source.use_nodes:
         src = next((n for n in source.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
         if src is not None and src.inputs["Base Color"].links:
@@ -483,9 +486,38 @@ def principled_from(spec, source=None):
     return mat
 
 
+def base_name(name):
+    return name.rsplit(".", 1)[0] if name[-4:-3] == "." and name[-3:].isdigit() else name
+
+
+def piece_slots(meshes, piece):
+    """The Blender object and slot indexes of a piece the server located in the GLB (glb-pieces.mjs: node, prim,
+    prims, source_material), or None. A node with one primitive is the whole object; with several, the slot of that
+    primitive's material (by name, else by position)."""
+    if not piece.get("node"):
+        return None
+    obj = next((o for o in meshes if base_name(o.name) == piece["node"]), None)
+    if obj is None:
+        return None
+    if piece.get("prims", 1) <= 1:
+        return obj, list(range(len(obj.material_slots)))
+    names = [base_name(s.material.name) if s.material else None for s in obj.material_slots]
+    if piece.get("source_material") in names:
+        return obj, [names.index(piece["source_material"])]
+    return obj, [piece["prim"]] if piece["prim"] < len(names) else []
+
+
 def apply_materials(meshes, spec):
     """Painted pieces: a Principled material per piece key, face groups split by label (infer.js groupFaces)."""
-    materials = spec.get("materials", {})
+    materials = dict(spec.get("materials", {}))
+    for key, piece in list(materials.items()):
+        found = piece_slots(meshes, piece)
+        if found is None:
+            continue
+        obj, slots = found
+        for i in slots:
+            obj.material_slots[i].material = principled_from({**piece, "name": key}, obj.material_slots[i].material)
+        del materials[key]  # placed by node and slot, not by the key below
     groups = spec.get("groups", {})
     for obj in meshes:
         key = mesh_key(meshes, obj)
@@ -1045,6 +1077,15 @@ BLUEPRINT = "#1e3a8a"  # render-effects.js uses the same blue
 CLAY = "#d8d2c8"
 
 
+def transparent_material():
+    clear = bpy.data.materials.new("hidden")
+    clear.use_nodes = True
+    nt = clear.node_tree
+    nt.nodes.clear()
+    nt.links.new(nt.nodes.new("ShaderNodeBsdfTransparent").outputs[0], nt.nodes.new("ShaderNodeOutputMaterial").inputs["Surface"])
+    return clear
+
+
 def apply_hidden(meshes, spec):
     """Pieces hidden in Look (paint.js): a whole mesh leaves the render, a face group gets a see-through material."""
     clear = None
@@ -1052,17 +1093,25 @@ def apply_hidden(meshes, spec):
     for key, piece in spec.get("materials", {}).items():
         if not piece.get("hidden"):
             continue
+        found = piece_slots(meshes, piece)
+        if found is not None:
+            obj, slots = found
+            if piece.get("prims", 1) <= 1:
+                obj.hide_render = True
+            else:
+                if clear is None:
+                    clear = transparent_material()
+                for i in slots:
+                    obj.material_slots[i].material = clear
+            hidden += 1
+            continue
         for obj in meshes:
             base = mesh_key(meshes, obj)
             if key == base:
                 obj.hide_render = True
             elif key.startswith(base + "@") and int(key.rsplit("@", 1)[1]) < len(obj.material_slots):
                 if clear is None:
-                    clear = bpy.data.materials.new("hidden")
-                    clear.use_nodes = True
-                    nt = clear.node_tree
-                    nt.nodes.clear()
-                    nt.links.new(nt.nodes.new("ShaderNodeBsdfTransparent").outputs[0], nt.nodes.new("ShaderNodeOutputMaterial").inputs["Surface"])
+                    clear = transparent_material()
                 obj.material_slots[int(key.rsplit("@", 1)[1])].material = clear
             else:
                 continue
