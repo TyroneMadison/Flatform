@@ -1187,6 +1187,7 @@ export async function startServer({
     const materials = paint?.pieces ? Object.fromEntries(Object.entries(paint.pieces).filter(([, p]) => p.material || p.slot || p.colors || p.region)
       .map(([key, p]) => [key, { ...blenderMaterial(deserializeMaterial(p.material), resolveColors(paint, p)), slot: p.slot, textured: p.material?.textured !== false && !p.material?.color }])) : {};
     const poseArg = poseOf(m);
+    const extrasArg = extrasOf(m);
     const job = { status: 'running', looks, look: looks[0], frame: 0, frames, error: null };
     jobs.set(m.id, job);
     (async () => {
@@ -1201,7 +1202,7 @@ export async function startServer({
           '--look', look, '--frames', String(frames), '--step', String(STEP), '--res', `${width}x${height}`,
           ...(existsSync(sceneFile) ? ['--scene', sceneFile] : []),
           '--rig', JSON.stringify({ lighting: settings.lighting, glass: settings.glass }),
-          ...lookArg, '--materials', materialsFile, ...poseArg, '--kind', m.kind === 'humanoid' ? 'humanoid' : 'car',
+          ...lookArg, '--materials', materialsFile, ...poseArg, ...extrasArg, '--kind', m.kind === 'humanoid' ? 'humanoid' : 'car',
           ...envArg(look),
           ...(still !== undefined ? ['--still', String(still), '--still-out', path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still))] : []),
         ]);
@@ -1212,6 +1213,21 @@ export async function startServer({
       job.error = e.message;
     });
     return jobView(job);
+  }
+
+  // Shelf items (scene.extras, public/lib/shelf.js) as files on this computer: a bundled prop (/env/…) or another
+  // Library model (/files/<id>/<file>). Anything else is dropped, so a scene can never point Blender elsewhere.
+  function extrasOf(m) {
+    const list = (Array.isArray(m.scene?.extras) ? m.scene.extras : []).flatMap((x) => {
+      const src = decodeURIComponent(String(x?.src || ''));
+      const prop = src.match(/^\/env\/([\w.-]+\.glb)$/);
+      const lib = src.match(/^\/files\/([\w-]+)\/([\w.-]+\.glb)$/);
+      const file = prop ? path.join(envDir, prop[1]) : lib && library.some((x) => x.id === lib[1]) ? path.join(MODELS, lib[1], lib[2]) : null;
+      const at = Array.isArray(x.at) ? x.at.map(Number) : [];
+      if (!file || !existsSync(file) || at.length !== 2 || !at.every(Number.isFinite)) return [];
+      return [{ path: file, group: ['characters', 'cars', 'props'].includes(x.group) ? x.group : 'props', at, turn: Number(x.turn) || 0 }];
+    });
+    return list.length ? ['--extras', JSON.stringify(list)] : [];
   }
 
   // A humanoid's pose for Blender: Euler degrees per standard bone (motion.js), the same numbers rig.js applies in the

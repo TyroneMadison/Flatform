@@ -22,6 +22,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { HorizontalBlurShader } from 'three/addons/shaders/HorizontalBlurShader.js';
 import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 import { normalizeDecals, decalMaterialParams, decalUrl } from './decals.js';
 import { mergeLook, effectsFor, hdriUrl, lookNeedsRebuild, hdriGround } from './look.js';
@@ -427,7 +428,8 @@ export class Studio {
     this.camera = new THREE.PerspectiveCamera(30, 4 / 3, 0.1, 400);
     this.pivot = new THREE.Group(); // turns for the turntable
     this.stage = new THREE.Group(); // the preset's props
-    this.scene.add(this.pivot, this.stage);
+    this.extras = new THREE.Group(); // things dropped in from the shelf (shelf.js), in real-world metres like the place
+    this.scene.add(this.pivot, this.stage, this.extras);
     this.shadow = new ContactShadow();
     this.scene.add(this.shadow.group);
     this.lights = { key: new THREE.DirectionalLight(0xfff3e2), fill: new THREE.DirectionalLight(0xdfe8ff), rim: new THREE.DirectionalLight(0xffffff) };
@@ -545,6 +547,49 @@ export class Studio {
     if (JSON.stringify(prev.paint) !== JSON.stringify(this.state.paint)) this.applyPaint();
     this.applyDecals();
     await this.applyLook();
+    await this.applyExtras();
+  }
+
+  // Shelf items (scene.extras): each file loads once, then is cloned. A person is sized to 1.8 m tall, a car to
+  // CAR_LENGTH long, a prop keeps its own size; all stand on the floor at their spot.
+  async applyExtras() {
+    const list = this.state.extras || [];
+    const key = JSON.stringify(list);
+    if (key === this.extrasKey) return;
+    this.extrasKey = key;
+    this.extraFiles ||= new Map();
+    const objs = await Promise.all(list.map(async (x) => {
+      if (!this.extraFiles.has(x.src)) {
+        const draco = new DRACOLoader().setDecoderPath('/vendor/three/examples/jsm/libs/draco/gltf/');
+        this.extraFiles.set(x.src, new GLTFLoader().setDRACOLoader(draco).setMeshoptDecoder(MeshoptDecoder).loadAsync(x.src).then((g) => g.scene).finally(() => draco.dispose()));
+      }
+      const file = await this.extraFiles.get(x.src).catch(() => null);
+      const o = file && cloneSkinned(file); // a rigged person needs its skeleton cloned too
+      if (!o) return null;
+      const size = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());
+      if (x.group === 'characters' && size.y > 0) o.scale.setScalar(1.8 / size.y);
+      if (x.group === 'cars') o.scale.setScalar(CAR_LENGTH / Math.max(size.x, size.z, 1e-6));
+      const box = new THREE.Box3().setFromObject(o);
+      const holder = new THREE.Group();
+      o.position.set(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2);
+      holder.add(o);
+      holder.position.set(x.at[0], 0, x.at[1]);
+      holder.rotation.y = THREE.MathUtils.degToRad(x.turn || 0);
+      holder.traverse((m) => { if (m.isMesh) { m.castShadow = m.receiveShadow = true; m.layers.enable(1); } });
+      return holder;
+    }));
+    if (key !== this.extrasKey) return; // a newer list won while these loaded
+    this.extras.clear(); // the clones share the cached files' geometry, so nothing is disposed here
+    for (const o of objs) if (o) this.extras.add(o);
+    this.ptDirty = true;
+  }
+  // The floor point (real-world metres, [x, z]) under a canvas point (CSS px), for dropping shelf items.
+  floorPoint(x, y) {
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2((x / this.width) * 2 - 1, -(y / this.height) * 2 + 1), this.camera);
+    const p = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3());
+    const k = this.extras.scale.x || 1;
+    return p ? [p.x / k, p.z / k] : null;
   }
 
   // Decals (decals.js): projected onto every mesh they touch, so they wrap over curves. They live in a group beside
@@ -819,6 +864,7 @@ export class Studio {
     }
     // The place round the model at the model's real size: a car is 4.6 m long, a person 1.8 m tall.
     this.stage.scale.setScalar(ENVIRONMENTS[s.preset] ? envScale(size, this.kind || (this.carLike ? 'car' : 'humanoid')) : 1);
+    this.extras.scale.copy(this.stage.scale); // shelf items are in the same real-world metres as the place
     this.applyMirror();
   }
 
@@ -1372,6 +1418,7 @@ export class Studio {
     for (const m of this.pieceMats.values()) m.dispose();
     this.clearStage();
     if (this.model) disposeTree(this.model);
+    for (const p of this.extraFiles?.values() || []) p.then(disposeTree, () => {});
     for (const t of Object.values(this.envs)) t.dispose();
     this.shadow.dispose();
     this.pmrem.dispose();

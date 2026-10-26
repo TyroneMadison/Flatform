@@ -2,12 +2,16 @@
 // release. The keys Flatform owns (preview, overlay) can be changed in Settings > Shortcuts and are kept on this
 // computer (localStorage), so nothing here touches the shared settings file.
 export const ACTIONS = { preview: { label: 'Client preview (clean full screen)', key: 'Ctrl+Shift+P' }, finish: { label: 'Check before export', key: 'Ctrl+Shift+H' } };
+// Single keys (no Ctrl), ignored while typing. A works in Compose; V and S on any screen with a model. Taken
+// elsewhere, so never used here: F (frame all), T (preview turntable), 1 to 9 (camera spots), ? (this list).
+export const SINGLE_KEYS = { shelf: 'A', history: 'V', share: 'S' };
+export const TAKEN_KEYS = ['F', 'T', '1', '2', '3', '4', '5', '6', '7', '8', '9', '?'];
 const FIXED = {
-  all: [['Hold ?', 'Show this list'], ['Ctrl+1 to Ctrl+9', 'Switch workspace']],
+  all: [['Hold ?', 'Show this list'], [SINGLE_KEYS.history, 'Version history'], [SINGLE_KEYS.share, 'Share'], ['Ctrl+1 to Ctrl+9', 'Switch workspace']],
   drop: [['Ctrl+V', 'Paste a photo'], ['Enter', 'Choose photos']],
   setup: [['Ctrl+V', 'Paste a photo']],
   generate: [['Ctrl+V', 'Add a photo to the queue']],
-  compose: [['Drag', 'Spin the model'], ['Scroll', 'Zoom'], ['Right drag', 'Move the view'], ['Ctrl+Z', 'Undo'], ['Ctrl+Shift+Z', 'Redo']],
+  compose: [[SINGLE_KEYS.shelf, 'Add things (people, cars and props)'], ['F', 'Fit the whole model in view'], ['Drag', 'Spin the model'], ['Scroll', 'Zoom'], ['Right drag', 'Move the view'], ['Ctrl+Z', 'Undo'], ['Ctrl+Shift+Z', 'Redo']],
   render: [['Arrow keys', 'Move the before and after line']],
   finish: [['Arrow keys', 'Move the before and after line'], ['Shift+Arrow', 'Move it further']],
   spin: [['Drag a frame', 'Reorder'], ['Shift+click', 'Pick many frames'], ['Delete', 'Remove picked frames']],
@@ -60,6 +64,8 @@ export function installHotkeys(ctx, doc = document) {
     clearTimeout(ctrlTimer); ctrlTimer = null; if (e.key !== '?' && e.key !== 'Shift' && el.classList.contains('on') && e.key !== 'Control') hide();
     const keys = loadKeys().keys;
     for (const [action, combo] of Object.entries(keys)) if (matches(e, combo)) { e.preventDefault(); ctx.run(action); return; }
+    const single = !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat && e.key?.length === 1 && e.key.toUpperCase();
+    for (const action of ['history', 'share']) if (single === SINGLE_KEYS[action]) { e.preventDefault(); ctx.run(action); return; }
   };
   const up = (e) => { if (e.key === '?' || e.key === '/' || e.key === 'Shift' || e.key === 'Control') hide(); };
   doc.addEventListener('keydown', down); doc.addEventListener('keyup', up); globalThis.addEventListener?.('blur', hide);

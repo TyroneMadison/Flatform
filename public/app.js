@@ -590,7 +590,7 @@ window.addEventListener('keydown', (e) => {
       if (state.presenting) return;
       const m = (route.id && findModel(route.id)) || focusModel();
       if (!m) return toast('Pick a model first.');
-      go(`#/${action === 'preview' ? 'preview' : 'finish'}/${m.id}`);
+      go(`#/${{ preview: 'preview', share: 'share' }[action] || 'finish'}/${m.id}`);
     },
   });
   await navigate();

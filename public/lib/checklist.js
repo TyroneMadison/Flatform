@@ -25,6 +25,13 @@ export const CHECKLIST = [
     { id: 'room-thumbs', text: 'Scene list: every place, Soft studio and Showroom included, has a picture of the place as its thumbnail.' },
     { id: 'room-blender', text: 'Render a room scene with Blender: the frames show that room (mock Blender uses its thumbnail; the real Blender renders it).', open: 'room-night-city-rain' },
   ] },
+  { group: 'Add things shelf', items: [
+    { id: 'shelf-open', text: 'Compose on the sample car: press A (or click Add things). The left panel lists your people and cars from the Library and the props (benches, lamps, bins, trees). Press A again for Places.', open: 'car' },
+    { id: 'shelf-search', text: 'Type "lamp" in Search: only the street lamp is left. Clear it and pick People: only the humanoids.', open: 'car' },
+    { id: 'shelf-drag', text: 'Drag the street lamp onto the floor in the 3D view: the view gets a dashed outline while you drag, and the lamp stands where you let go.', open: 'car' },
+    { id: 'shelf-click', text: 'Click a person on the shelf: they stand next to the car at a person height (1.8 m). In your scene lists both; Take out removes one, Ctrl+Z brings it back.', open: 'car' },
+    { id: 'shelf-render', text: 'Render the car with Blender: the lamp and the person are in the frames too (mock Blender shows the room thumbnail; the real Blender renders them).', open: 'car' },
+  ] },
   { group: 'Test app', items: [
     { id: 'app-separate', text: 'The title bar says Flatform Test, and the data folder below is "Flatform Test", not your Flatform library.' },
     { id: 'app-mock', text: 'Generate from a sample photo: it finishes in seconds and the Tripo balance stays 9999 (mock, no credits spent).' },

@@ -88,6 +88,7 @@ def parse_args():
     p.add_argument("--materials")
     # A humanoid pose: Euler degrees per standard bone (motion.js poseBones) and motion.js RETARGET for other names.
     p.add_argument("--pose")
+    p.add_argument("--extras")  # shelf items (studio.js applyExtras): [{ path, group, at: [x, z], turn }]
     p.add_argument("--kind", choices=["car", "humanoid"], default="car")  # the model's kind: a humanoid is never auto-turned
     return p.parse_args(argv)
 
@@ -543,6 +544,35 @@ SKY_STRENGTH = 0.15  # Blender's physical Sky Texture is far brighter than the a
 TO_BLENDER = Matrix(((1, 0, 0), (0, 0, -1), (0, 1, 0)))  # Flatform's Y-up (x, y, z) is Blender's (x, -z, y)
 
 
+def build_extras(extras):
+    """Shelf items, as studio.js applyExtras: a person 1.8 m tall, a car CAR_LENGTH long, a prop at its own size,
+    centred on its floor spot (app metres [x, z]) and standing on the floor."""
+    for i, x in enumerate(extras):
+        if not os.path.exists(x.get("path") or ""):
+            continue
+        before = set(bpy.data.objects)
+        bpy.ops.import_scene.gltf(filepath=x["path"])
+        imported = set(bpy.data.objects) - before
+        root = bpy.data.objects.new(f"extra {i}", None)
+        bpy.context.scene.collection.objects.link(root)
+        for o in imported:
+            if o.parent is None:
+                o.parent = root
+        bpy.context.view_layer.update()
+        pts = [o.matrix_world @ Vector(c) for o in imported if o.type == "MESH" and o.visible_get() for c in o.bound_box]
+        if not pts:
+            continue
+        lo = Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts)))
+        hi = Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts)))
+        size = hi - lo
+        k = 1.8 / max(size.z, 1e-6) if x.get("group") == "characters" else CAR_LENGTH / max(size.x, size.y, 1e-6) if x.get("group") == "cars" else 1.0
+        for o in root.children:
+            o.location -= Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z))
+        root.scale = (k, k, k)
+        root.location = bl([x["at"][0], 0, x["at"][1]])
+        root.rotation_euler.z = math.radians(x.get("turn", 0))
+
+
 def bl(v):
     return (v[0], -v[2], v[1])
 
@@ -986,6 +1016,7 @@ def main():
     lighting = {**LIGHTING, **rig.get("lighting", {})}
     glass = {**GLASS, **rig.get("glass", {})}
     env = json.loads(args.environment) if args.environment and args.look != "transparent" else None
+    extras = json.loads(args.extras) if args.extras else []
     # The model first: the place is built round it and scaled to it.
     pivot, meshes, size, sphere = import_car(args.glb, s)
     if args.pose:  # after normalising, like studio.js applyModel, so the model is placed exactly as in the app
@@ -997,9 +1028,11 @@ def main():
             bpy.context.view_layer.update()
     if args.look == "transparent":
         build_transparent()
+        build_extras(extras)
     elif env:
         before = set(bpy.data.objects)
         build_environment(env)
+        build_extras(extras)  # in the place's real-world metres, so scaled with it
         k = env_scale(size, args.kind)
         for o in set(bpy.data.objects) - before:
             if o.parent is None and o.name not in ("key", "fill", "rim"):
@@ -1008,6 +1041,7 @@ def main():
         lighting = env_lighting(lighting, env["light"]["sun"])
     else:
         build_ring_studio(float(s["reflection"]))
+        build_extras(extras)
     apply_rig(lighting)
     apply_glass(meshes, glass)
     if args.materials and os.path.exists(args.materials):

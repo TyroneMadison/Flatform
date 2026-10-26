@@ -5,12 +5,14 @@ import { createHistory, isUndo, isRedo } from '../lib/history.js';
 import { dimensions, gridSpec, REFERENCES } from '../lib/grid.js';
 import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy, setupFor, engineLabel, activeWorkspace } from '../app.js';
 import { icon } from '../lib/icons.js';
+import { SINGLE_KEYS } from '../lib/hotkeys.js';
 import { FRAMES, HALF, STEP, pad3, LOOKS, ENVIRONMENTS } from '../lib/pipeline.js';
 import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf } from '../lib/studio.js';
 import { initMotion, renderMotionGroup, onMotionClick, onMotionInput, onMotionChange, stopMotion } from './compose-motion.js';
 import { initTools, renderToolsGroup, onToolsClick, onToolsChange, onCanvasClick, onToolsKey } from './compose-tools.js';
 import { initPath, renderPathGroup, onPathClick, onPathChange } from './compose-path.js';
 import { initLighting, renderLightingGroup, onLightingClick } from './compose-lighting.js';
+import { initShelf, renderShelf, onShelfClick, onShelfInput, onShelfDragStart, onShelfDrop, isShelfDrag } from './compose-shelf.js';
 import { initPaint, renderPaintGroups, afterRender, onPaintClick, onPaintInput, onPaintChange, selectPiece, onPaintDragStart, onTextureDrop, onDecalCanvasClick } from './compose-paint.js';
 
 let root;
@@ -27,6 +29,7 @@ let playing = null;
 let observer;
 let saveTimer;
 let raf;
+let aside = 'places'; // the left panel: 'places' (the scene list) or 'shelf' (Add things)
 
 const fixed = (n, d = 2) => Number(n).toFixed(d);
 const level = (v) => (v <= 0.02 ? 'Off' : v < 0.35 ? 'Soft' : v < 0.7 ? 'Medium' : 'Strong');
@@ -48,6 +51,7 @@ export async function mount(el, { id }) {
   initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector, reload: async (next, { glb = true } = {}) => { m = upsert(next); if (studio) studio.kind = m.kind; renderModel(); if (glb) await loadModel(); refresh(); } });
   initTools({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initPath({ scene: () => scene, studio: () => studio, change, draw, renderInspector });
+  initShelf({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, redraw: () => renderAside(true) });
   initLighting({ scene: () => scene, studio: () => studio, change, renderInspector, modelUrl: () => (m?.glb ? fileUrl(m, m.glb) : null) });
   el.innerHTML = `
   <div class="comp-top">${stepper('compose', m)}
@@ -58,8 +62,12 @@ export async function mount(el, { id }) {
   </div>
   <section class="compose">
     <aside class="scenes glass" aria-label="Scene">
-      <h2 class="label">Scene</h2>
+      <div class="chips seg sm aside-tabs" role="tablist" aria-label="Left panel">
+        <button class="chip" type="button" role="tab" data-aside="places" aria-selected="true">Places</button>
+        <button class="chip" type="button" role="tab" data-aside="shelf" aria-selected="false" title="Shortcut: A">Add things <kbd>A</kbd></button>
+      </div>
       <div class="scnlist" id="scenes"></div>
+      <div class="shelf" id="shelf" hidden></div>
       <input type="file" id="backdropFile" accept=".hdr,.exr,.jpg,.jpeg,.png" hidden>
     </aside>
     <div class="vp-col">
@@ -319,6 +327,24 @@ function renderScenes() {
   }).join('');
   const box = $('#scenes', root);
   if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
+  renderAside();
+}
+
+// Places or Add things (the shelf) in the left panel. The shelf redraws only when its content changed, so a
+// scene edit never steals the search box's focus.
+function renderAside(force = false) {
+  $('#scenes', root).hidden = aside !== 'places';
+  $('#shelf', root).hidden = aside !== 'shelf';
+  $$('[data-aside]', root).forEach((b) => b.setAttribute('aria-selected', String(b.dataset.aside === aside)));
+  if (aside !== 'shelf') return;
+  const box = $('#shelf', root);
+  const html = renderShelf();
+  if (force || box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
+}
+function toggleShelf(to = aside === 'shelf' ? 'places' : 'shelf') {
+  aside = to;
+  renderAside(true);
+  if (aside === 'shelf') $('#shelfQ', root)?.focus();
 }
 
 function slider(key, label, min, max, step, value, text, disabled = false) {
@@ -427,6 +453,8 @@ function bind() {
   el.addEventListener('click', async (e) => {
     const t = e.target.closest('button');
     if (!t) return;
+    if (t.dataset.aside) return toggleShelf(t.dataset.aside);
+    if (onShelfClick(e)) return;
     if (await onToolsClick(t)) return;
     if (await onPathClick(t)) return;
     if (await onLightingClick(t)) return;
@@ -476,6 +504,7 @@ function bind() {
     if (t.id === 'play') play();
   });
   el.addEventListener('input', (e) => {
+    if (onShelfInput(e)) return;
     if (onMotionInput(e.target)) return;
     if (onPaintInput(e.target)) return;
     const k = e.target.dataset.key;
@@ -550,7 +579,9 @@ function bind() {
   // F frames the whole model, anywhere on the screen but in a text field.
   el.addEventListener('keydown', (e) => {
     if (onToolsKey(e)) return;
-    if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest('input, textarea, select')) { e.preventDefault(); frameAll(); }
+    if (e.ctrlKey || e.metaKey || e.altKey || e.target.closest('input, textarea, select')) return;
+    if (e.key.toLowerCase() === 'f') { e.preventDefault(); frameAll(); }
+    if (e.key.toLowerCase() === SINGLE_KEYS.shelf.toLowerCase()) { e.preventDefault(); toggleShelf(); }
   });
 
   // Viewport: drag to turn the car through the turntable frames, or to move it with the move tool.
@@ -571,9 +602,10 @@ function bind() {
   });
   cv.addEventListener('pointerup', () => { drag = null; });
   // Drag a texture tile from the Material group onto a piece.
-  el.addEventListener('dragstart', (e) => { onPaintDragStart(e); });
-  cv.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('application/x-flatform-texture')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+  el.addEventListener('dragstart', (e) => { if (!onShelfDragStart(e)) onPaintDragStart(e); });
+  cv.addEventListener('dragover', (e) => { if (isShelfDrag(e) || e.dataTransfer.types.includes('application/x-flatform-texture')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
   cv.addEventListener('drop', (e) => {
+    if (isShelfDrag(e)) { e.preventDefault(); e.stopPropagation(); $('#vp', el).classList.remove('dropping'); onShelfDrop(e, cv); return; }
     const id = e.dataTransfer.getData('application/x-flatform-texture');
     if (!id || !studio?.model) return;
     e.preventDefault();
