@@ -1,0 +1,37 @@
+{
+  "id": "noble-idle",
+  "name": "Noble idle",
+  "kind": "humanoid",
+  "icon": "🕴",
+  "description": "Upright, chest out, hands low.",
+  "bones": {
+    "upperArm.L": {
+      "rotation": [
+        10,
+        0,
+        -75
+      ]
+    },
+    "upperArm.R": {
+      "rotation": [
+        10,
+        0,
+        75
+      ]
+    },
+    "chest": {
+      "rotation": [
+        -6,
+        0,
+        0
+      ]
+    },
+    "head": {
+      "rotation": [
+        -4,
+        0,
+        0
+      ]
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "id": "wheels-right",
+  "name": "Wheels turned right",
+  "kind": "car",
+  "icon": "↱",
+  "description": "Front wheels steered right.",
+  "requires": [
+    "wheel.FL",
+    "wheel.FR"
+  ],
+  "wheels": {
+    "steer": -28
+  }
+}

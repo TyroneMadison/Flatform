@@ -1,0 +1,58 @@
+{
+  "id": "combat-rifle",
+  "name": "Combat-ready (rifle)",
+  "kind": "humanoid",
+  "icon": "🔫",
+  "description": "Rifle held across the chest.",
+  "bones": {
+    "upperArm.L": {
+      "rotation": [
+        -60,
+        30,
+        -20
+      ]
+    },
+    "lowerArm.L": {
+      "rotation": [
+        -70,
+        0,
+        0
+      ]
+    },
+    "upperArm.R": {
+      "rotation": [
+        -50,
+        -20,
+        30
+      ]
+    },
+    "lowerArm.R": {
+      "rotation": [
+        -90,
+        0,
+        0
+      ]
+    },
+    "spine": {
+      "rotation": [
+        0,
+        -15,
+        0
+      ]
+    },
+    "upperLeg.L": {
+      "rotation": [
+        -15,
+        0,
+        0
+      ]
+    },
+    "upperLeg.R": {
+      "rotation": [
+        10,
+        0,
+        0
+      ]
+    }
+  }
+}

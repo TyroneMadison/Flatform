@@ -1,0 +1,44 @@
+{
+  "id": "bow",
+  "name": "Bow",
+  "kind": "humanoid",
+  "icon": "🙇",
+  "description": "Bent forward at the waist.",
+  "bones": {
+    "spine": {
+      "rotation": [
+        45,
+        0,
+        0
+      ]
+    },
+    "chest": {
+      "rotation": [
+        20,
+        0,
+        0
+      ]
+    },
+    "head": {
+      "rotation": [
+        10,
+        0,
+        0
+      ]
+    },
+    "upperArm.L": {
+      "rotation": [
+        0,
+        0,
+        -65
+      ]
+    },
+    "upperArm.R": {
+      "rotation": [
+        0,
+        0,
+        65
+      ]
+    }
+  }
+}

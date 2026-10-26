@@ -1,0 +1,63 @@
+{
+  "id": "bullet-jump",
+  "name": "Bullet jump",
+  "kind": "humanoid",
+  "icon": "🚀",
+  "description": "Mid-air leap, arms back.",
+  "camera": {
+    "turn": 35,
+    "elevation": 5,
+    "lens": 35
+  },
+  "bones": {
+    "spine": {
+      "rotation": [
+        -20,
+        0,
+        0
+      ]
+    },
+    "upperLeg.L": {
+      "rotation": [
+        -60,
+        0,
+        0
+      ]
+    },
+    "lowerLeg.L": {
+      "rotation": [
+        60,
+        0,
+        0
+      ]
+    },
+    "upperLeg.R": {
+      "rotation": [
+        20,
+        0,
+        0
+      ]
+    },
+    "lowerLeg.R": {
+      "rotation": [
+        30,
+        0,
+        0
+      ]
+    },
+    "upperArm.L": {
+      "rotation": [
+        60,
+        0,
+        -30
+      ]
+    },
+    "upperArm.R": {
+      "rotation": [
+        60,
+        0,
+        30
+      ]
+    }
+  }
+}

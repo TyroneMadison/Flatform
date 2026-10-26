@@ -29,6 +29,7 @@ import { createUpdater, parseVersion, updateOptions } from './updates.mjs';
 import { SERVICES, CONVERT_CREDITS, entry, append, parse, summary, defaultThresholds } from './ledger.mjs';
 import { check as checkTennogen, fixPlan, CONTENT_TYPES, EXPORT_MODES } from './public/lib/tennogen.js';
 import { pngSize, resizePng } from './png.mjs';
+import { loadPoses } from './public/lib/poses.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -1235,6 +1236,16 @@ export async function startServer({
       return send(res, 200, { found: Boolean(found), path: found, configured: settings.blenderPath });
     }
     // TennoGen: check a texture folder, or check and fix it (renames, resizes).
+    if (area === 'poses' && !id && method === 'GET') {
+      const files = [];
+      for (const dir of [path.join(ROOT, 'public', 'poses'), path.join(dataDir, 'poses')]) {
+        if (!existsSync(dir)) continue;
+        for (const f of readdirSync(dir).filter((n) => n.endsWith('.json')).sort()) {
+          try { files.push({ file: f, data: JSON.parse(readFileSync(path.join(dir, f), 'utf8')) }); } catch { files.push({ file: f, data: null }); }
+        }
+      }
+      return send(res, 200, loadPoses(files));
+    }
     if (area === 'tennogen' && id === 'check' && !sub && method === 'POST') {
       const b = await readJson(req);
       return send(res, 200, await tennogenReport(b.dir, b.type));

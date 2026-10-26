@@ -1,0 +1,19 @@
+{
+  "id": "hood-up",
+  "name": "Hood up",
+  "kind": "car",
+  "icon": "🔧",
+  "description": "Hood raised.",
+  "parts": {
+    "hood": {
+      "rotation": [
+        -50,
+        0,
+        0
+      ]
+    }
+  },
+  "requires": [
+    "hood"
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "id": "hero-landing",
+  "name": "Hero landing",
+  "kind": "humanoid",
+  "icon": "🦸",
+  "description": "One knee down, fist to the ground.",
+  "camera": {
+    "turn": 25,
+    "elevation": 6,
+    "lens": 35
+  },
+  "bones": {
+    "upperLeg.L": {
+      "rotation": [
+        -90,
+        0,
+        0
+      ]
+    },
+    "lowerLeg.L": {
+      "rotation": [
+        100,
+        0,
+        0
+      ]
+    },
+    "upperLeg.R": {
+      "rotation": [
+        10,
+        0,
+        0
+      ]
+    },
+    "lowerLeg.R": {
+      "rotation": [
+        100,
+        0,
+        0
+      ]
+    },
+    "spine": {
+      "rotation": [
+        25,
+        0,
+        0
+      ]
+    },
+    "upperArm.R": {
+      "rotation": [
+        60,
+        0,
+        20
+      ]
+    },
+    "lowerArm.R": {
+      "rotation": [
+        -10,
+        0,
+        0
+      ]
+    },
+    "upperArm.L": {
+      "rotation": [
+        -30,
+        0,
+        -40
+      ]
+    }
+  }
+}

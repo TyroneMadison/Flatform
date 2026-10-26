@@ -1,0 +1,19 @@
+{
+  "id": "drift",
+  "name": "Drift angle",
+  "kind": "car",
+  "icon": "🌀",
+  "description": "Body roll with counter-steer.",
+  "body": {
+    "roll": 4,
+    "yaw": 18
+  },
+  "wheels": {
+    "steer": -30
+  },
+  "camera": {
+    "turn": 55,
+    "elevation": 8,
+    "lens": 35
+  }
+}

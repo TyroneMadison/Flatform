@@ -1,0 +1,15 @@
+{
+  "id": "launch",
+  "name": "Launch (nose up)",
+  "kind": "car",
+  "icon": "🏁",
+  "description": "Weight on the rear wheels.",
+  "body": {
+    "pitch": -3.5
+  },
+  "camera": {
+    "turn": 25,
+    "elevation": 4,
+    "lens": 35
+  }
+}

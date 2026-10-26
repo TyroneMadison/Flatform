@@ -1,0 +1,51 @@
+{
+  "id": "kneel",
+  "name": "Kneel",
+  "kind": "humanoid",
+  "icon": "🧎",
+  "description": "Both knees down.",
+  "bones": {
+    "upperLeg.L": {
+      "rotation": [
+        -10,
+        0,
+        0
+      ]
+    },
+    "lowerLeg.L": {
+      "rotation": [
+        110,
+        0,
+        0
+      ]
+    },
+    "upperLeg.R": {
+      "rotation": [
+        -10,
+        0,
+        0
+      ]
+    },
+    "lowerLeg.R": {
+      "rotation": [
+        110,
+        0,
+        0
+      ]
+    },
+    "upperArm.L": {
+      "rotation": [
+        5,
+        0,
+        -70
+      ]
+    },
+    "upperArm.R": {
+      "rotation": [
+        5,
+        0,
+        70
+      ]
+    }
+  }
+}

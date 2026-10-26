@@ -1,0 +1,13 @@
+{
+  "id": "rolling",
+  "name": "Rolling",
+  "kind": "car",
+  "icon": "🎞",
+  "description": "Wheels spinning as it rolls.",
+  "requires": [
+    "wheel.FL"
+  ],
+  "wheels": {
+    "spin": true
+  }
+}

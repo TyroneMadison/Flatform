@@ -4,6 +4,20 @@ import { $, esc } from '../app.js';
 import { MODEL_TYPES, STANCES, STANCE_DEFAULT, STANCE_LIMITS, applyStance, availableStances, POSES, BONES, clipsFor, TAGS, deserializePose } from '../lib/motion.js';
 import { tagsFor, modelInfo } from '../lib/rig.js';
 import { listPieces } from '../lib/paint.js';
+import { posesFor, detectParts, mixamoBones, carStance } from '../lib/poses.js';
+
+let PRESETS = null; // from /api/poses (public/poses/*.json plus <library>/poses/*.json)
+async function loadPresets() {
+  if (PRESETS) return;
+  try { const r = await fetch('/api/poses'); PRESETS = r.ok ? (await r.json()).poses : []; } catch { PRESETS = []; }
+  ctx?.renderInspector?.();
+}
+function presetChips(kind, model, current) {
+  if (!PRESETS) { loadPresets(); return '<p class="fine">Loading poses...</p>'; }
+  const found = kind === 'car' && model ? detectParts(listPieces(model).map((p) => ({ name: p.name }))) : {};
+  const list = posesFor(PRESETS, kind, found);
+  return `<h4 class="fine">Pick a pose</h4><div class="chips big" role="group" aria-label="Pose presets">${list.map((p) => `<button class="chip" type="button" data-mo-preset="${esc(p.id)}" aria-pressed="${current === p.id}" title="${esc(p.description || '')}">${esc(p.icon || '')} ${esc(p.name)}</button>`).join('')}</div>`;
+}
 
 let ctx; // same ctx as compose-paint
 let playing = false, raf = 0, t0 = 0, clipT = 0, boneSel = 'Spine';
@@ -46,26 +60,34 @@ export function renderMotionGroup() {
     const s = { ...STANCE_DEFAULT, ...mo.stance };
     const tags = tagsFor(studio.model, mo.tags);
     const whole = listPieces(studio.model).filter((p) => p.group == null);
-    body = `<div class="chips" role="group" aria-label="Stance">${availableStances(mo.tags && Object.keys(mo.tags).length ? mo.tags : Object.fromEntries(Object.entries(tags).map(([k, v]) => [k, { tag: v.tag }]))).map((st) => `<button class="chip" type="button" data-mo-stance="${st.id}">${esc(st.label)}</button>`).join('')}</div>
+    body = `${presetChips('car', studio.model, mo.presetId)}<details><summary>Fine tune</summary><div class="chips" role="group" aria-label="Stance">${availableStances(mo.tags && Object.keys(mo.tags).length ? mo.tags : Object.fromEntries(Object.entries(tags).map(([k, v]) => [k, { tag: v.tag }]))).map((st) => `<button class="chip" type="button" data-mo-stance="${st.id}">${esc(st.label)}</button>`).join('')}</div>
       ${num('mo-ride', 'Ride height m', ...STANCE_LIMITS.rideHeight, 0.01, s.rideHeight, 'stance.rideHeight')}
       ${num('mo-steer', 'Steer angle', ...STANCE_LIMITS.steer, 1, s.steer, 'stance.steer')}
       ${num('mo-fd', 'Front drop m', ...STANCE_LIMITS.frontDrop, 0.01, s.frontDrop, 'stance.frontDrop')}
       ${num('mo-rd', 'Rear drop m', ...STANCE_LIMITS.rearDrop, 0.01, s.rearDrop, 'stance.rearDrop')}
       ${['doors', 'hood', 'trunk'].filter((k) => Object.values(tags).some((v) => v.tag === (k === 'doors' ? 'door' : k))).map((k) => num(`mo-${k}`, `${k[0].toUpperCase() + k.slice(1)} open`, 0, 80, 1, s[k], `stance.${k}`)).join('')}
-      <details><summary>Part tags (${Object.keys(tags).length})</summary>${whole.slice(0, 200).map((p) => `<label class="row-sel"><span>${esc(p.name)}</span><select class="inp" data-mo-tag="${esc(p.key)}"><option value="">None</option>${Object.entries(TAGS).map(([k, l]) => `<option value="${k}" ${tags[p.key]?.tag === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`).join('') || '<p class="fine">No separate meshes to tag.</p>'}</details>`;
+      <details><summary>Part tags (${Object.keys(tags).length})</summary>${whole.slice(0, 200).map((p) => `<label class="row-sel"><span>${esc(p.name)}</span><select class="inp" data-mo-tag="${esc(p.key)}"><option value="">None</option>${Object.entries(TAGS).map(([k, l]) => `<option value="${k}" ${tags[p.key]?.tag === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`).join('') || '<p class="fine">No separate meshes to tag.</p>'}</details></details>`;
   } else {
     const pose = deserializePose(mo.pose || { preset: 'tpose' });
     const v = pose.bones[boneSel] || [0, 0, 0];
-    body = `<div class="chips" role="group" aria-label="Pose">${Object.entries(POSES).map(([k, p]) => `<button class="chip" type="button" data-mo-pose="${k}" aria-pressed="${pose.preset === k}">${esc(p.label)}</button>`).join('')}</div>
+    body = `${presetChips('humanoid', studio.model, mo.presetId)}<details><summary>Fine tune</summary><div class="chips" role="group" aria-label="Pose">${Object.entries(POSES).map(([k, p]) => `<button class="chip" type="button" data-mo-pose="${k}" aria-pressed="${pose.preset === k}">${esc(p.label)}</button>`).join('')}</div>
       <label class="row-sel"><span>Bone</span><select class="inp" data-mo-bone>${BONES.map((b) => `<option ${b === boneSel ? 'selected' : ''}>${b}</option>`).join('')}</select></label>
       ${['X', 'Y', 'Z'].map((a, i) => num(`mo-b${a}`, `Rotate ${a}`, -180, 180, 1, v[i], `bone.${i}`)).join('')}
-      ${studio.model && !hasSkeleton(studio.model) ? '<p class="fine">This model has no skeleton yet, so poses show after rigging. Auto-rig needs chin, wrists, elbows, knees and groin markers.</p>' : ''}`;
+      ${studio.model && !hasSkeleton(studio.model) ? '<p class="fine">This model has no skeleton yet, so poses show after rigging. Auto-rig needs chin, wrists, elbows, knees and groin markers.</p>' : ''}</details>`;
   }
   return `<div class="grp" id="grp-motion"><h3>Pose and motion</h3>${typeSel}${body}<h4 class="fine">Animation preview</h4>${preview}</div>`;
 }
 const hasSkeleton = (m) => { let b = false; m.traverse((o) => { if (o.isBone) b = true; }); return b; };
 
 export async function onMotionClick(t) {
+  if (t.dataset.moPreset) {
+    const p = (PRESETS || []).find((x) => x.id === t.dataset.moPreset);
+    if (!p) return true;
+    stop();
+    if (p.kind === 'car') await setMotion({ presetId: p.id, stance: { ...STANCE_DEFAULT, ...carStance(p) } });
+    else await setMotion({ presetId: p.id, pose: { preset: 'tpose', bones: mixamoBones(p) } });
+    return true;
+  }
   if (t.dataset.moStance) { stop(); await setMotion({ stance: applyStance(motionOf().stance, t.dataset.moStance) }); return true; }
   if (t.dataset.moPose) { const p = deserializePose(motionOf().pose || {}); await setMotion({ pose: { preset: t.dataset.moPose, bones: t.dataset.moPose === p.preset ? p.bones : {} } }); return true; }
   if (t.dataset.moAct === 'play') {
