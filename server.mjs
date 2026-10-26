@@ -16,6 +16,9 @@ import { estimate } from './public/lib/pricing.js';
 import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
 import { resolveColors, deserializeMaterial, blenderMaterial } from './public/lib/tenno.js';
 import { inferRegions, checkAnthropicKey } from './inference.mjs';
+import { createQueue } from './batch.mjs';
+import { findFfmpeg, encodeVideo } from './video.mjs';
+import { RESOLUTIONS, FORMATS as VIDEO_FORMATS, QUALITIES as VIDEO_QUALITIES, extensionFor } from './public/lib/turntable.js';
 import { threeDAIStudio, createLimiter, THREE_D_AI_BASE, HIGH } from './providers.mjs';
 import { createKeyStore } from './keys.mjs';
 import { createUpdater, parseVersion, updateOptions } from './updates.mjs';
@@ -151,7 +154,7 @@ export async function startServer({
 
   const defaults = {
     region: 'global', model, texture: true, pbr: true, provider: 'tripo', setups: {},
-    renderer: 'three', blenderPath: '', outputRoot: '', defaultScene: 'showroom', alsoTransparent: true, backdrops: {},
+    renderer: 'three', blenderPath: '', ffmpegPath: '', outputRoot: '', defaultScene: 'showroom', alsoTransparent: true, backdrops: {},
     lighting: DEFAULT_LIGHTING, glass: DEFAULT_GLASS,
     studioPresets: {}, // the user's saved scene looks (look.js), by name; the shipped ones live in the page
     updates: { autoCheck: true, skippedVersion: null },
@@ -759,7 +762,10 @@ export async function startServer({
           try { next.setups[p] = normalize({ ...setup, provider: p }); } catch { throw new HttpError(400, 'Unknown provider or engine'); }
         }
       } else if (['texture', 'pbr', 'alsoTransparent'].includes(k)) bool(k);
-      else if (k === 'renderer') {
+      else if (k === 'ffmpegPath') {
+        if (typeof body.ffmpegPath !== 'string' || body.ffmpegPath.length > 1024 || (body.ffmpegPath && (!path.isAbsolute(body.ffmpegPath) || !existsSync(body.ffmpegPath)))) throw new HttpError(400, 'ffmpeg was not found at that path');
+        next.ffmpegPath = body.ffmpegPath;
+      } else if (k === 'renderer') {
         if (!['three', 'blender'].includes(body.renderer)) throw new HttpError(400, 'Renderer must be three or blender');
         next.renderer = body.renderer;
       } else if (k === 'defaultScene') {
@@ -1001,6 +1007,31 @@ export async function startServer({
 
   const findModel = (id) => library.find((x) => x.id === id) || (() => { throw new HttpError(404, 'Model not found'); })();
 
+  // Batch export of colour variants (batch.mjs): the queue survives a crash; the page runs the jobs.
+  const batch = createQueue({ file: path.join(dataDir, 'batch.json') });
+  await batch.load();
+  // Local video export (video.mjs): a PNG sequence from the render folder to an MP4/WebM in a folder the user picks.
+  async function exportVideo(body) {
+    const m = findModel(body.modelId);
+    const dir = m.renders?.outDir;
+    if (!dir) throw new HttpError(409, 'Render the frames first');
+    if (typeof body.frames !== 'string' || !/^[\w.-]+(\/[\w.-]+)*$/.test(body.frames)) throw new HttpError(400, 'Bad frames folder');
+    const framesDir = path.resolve(dir, body.frames);
+    if (!framesDir.startsWith(dir + path.sep) || !existsSync(framesDir)) throw new HttpError(400, 'Frames folder not found');
+    if (!Object.hasOwn(VIDEO_FORMATS, body.format) || body.format === 'png') throw new HttpError(400, 'Pick MP4 or WebM');
+    if (!Object.hasOwn(VIDEO_QUALITIES, body.quality || 'good')) throw new HttpError(400, 'Unknown quality');
+    if (body.resolution && !Object.hasOwn(RESOLUTIONS, body.resolution)) throw new HttpError(400, 'Unknown resolution');
+    const outDir = typeof body.outDir === 'string' && body.outDir ? body.outDir : null;
+    if (!outDir || !path.isAbsolute(outDir) || !existsSync(outDir)) throw new HttpError(400, 'Pick an output folder');
+    const pattern = typeof body.pattern === 'string' && /^[\w.%-]+\.png$/.test(body.pattern) ? body.pattern : '%04d.png';
+    const base = String(body.name || m.slug || 'render').replace(/[^\w.-]+/g, '-').slice(0, 80) || 'render';
+    const [width, height] = body.resolution ? RESOLUTIONS[body.resolution] : [];
+    const fps = Math.min(120, Math.max(1, Number(body.fps) || 30));
+    const seconds = Number(body.seconds) > 0 ? Math.min(3600, Number(body.seconds)) : undefined;
+    const r = await encodeVideo({ ffmpeg: findFfmpeg({ configured: settings.ffmpegPath }), framesDir, pattern, outDir, fileName: base + extensionFor(body.format), fps, format: body.format, quality: body.quality || 'good', width, height, seconds });
+    return { output: r.output };
+  }
+
   async function route(req, res) {
     // Only answer requests addressed to this server, so a web page can't reach it through DNS rebinding.
     const { port: actual } = server.address();
@@ -1062,6 +1093,24 @@ export async function startServer({
       if (!id && method === 'GET') return send(res, 200, updater.view());
       if (id === 'check' && method === 'POST') return send(res, 200, await updater.check());
       if (id === 'skip' && method === 'POST') return send(res, 200, await skipVersion((await readJson(req)).version));
+    }
+    if (area === 'batch') {
+      if (!id && method === 'GET') return send(res, 200, batch.view());
+      if (!id && method === 'POST') { try { return send(res, 201, await batch.start(await readJson(req, 256 * 1024))); } catch (e) { throw new HttpError(e.status || 400, e.message); } }
+      if (!id && method === 'DELETE') { try { return send(res, 200, await batch.clear()); } catch (e) { throw new HttpError(e.status || 400, e.message); } }
+      if (id === 'retry' && method === 'POST') return send(res, 200, await batch.retryFailed());
+      if (id === 'cancel' && method === 'POST') return send(res, 200, await batch.cancelAll());
+      if (id === 'jobs' && sub && method === 'PATCH') {
+        const b = await readJson(req);
+        try { return send(res, 200, await batch.set(sub, b.status, b.error)); } catch (e) { throw new HttpError(e.status || 400, e.message); }
+      }
+    }
+    if (area === 'ffmpeg' && !id && method === 'GET') {
+      const found = findFfmpeg({ configured: settings.ffmpegPath });
+      return send(res, 200, { found: Boolean(found), path: found, configured: settings.ffmpegPath });
+    }
+    if (area === 'video' && !id && method === 'POST') {
+      try { return send(res, 200, await exportVideo(await readJson(req))); } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(e.status || 500, e.message); }
     }
     if (area === 'blender' && !id && method === 'GET') {
       const found = findBlender();

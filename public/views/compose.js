@@ -5,6 +5,7 @@ import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upser
 import { icon } from '../lib/icons.js';
 import { FRAMES, HALF, STEP, pad3, LOOKS, PLATES } from '../lib/pipeline.js';
 import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf } from '../lib/studio.js';
+import { initMotion, renderMotionGroup, onMotionClick, onMotionInput, onMotionChange, stopMotion } from './compose-motion.js';
 import { initPaint, renderPaintGroups, afterRender, onPaintClick, onPaintInput, onPaintChange, selectPiece } from './compose-paint.js';
 
 let root;
@@ -36,6 +37,7 @@ export async function mount(el, { id }) {
   }
   scene = { ...defaultScene(state.settings), ...m.scene };
   initPaint({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
+  initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   el.innerHTML = `
   <div class="comp-top">${stepper('compose', m)}
     <div class="ctop-act">
@@ -139,6 +141,7 @@ function onOrbit(orbit, settled) {
 }
 
 export function unmount() {
+  stopMotion();
   stop();
   observer?.disconnect();
   cancelAnimationFrame(raf);
@@ -321,7 +324,7 @@ function renderInspector() {
     <div class="grp" id="grp-ground"><h3>Ground</h3>
       ${slider('reflection', 'Reflection', 0, 1, 0.01, s.reflection, hasFloor() ? level(s.reflection) : 'n/a', !hasFloor())}
       ${slider('shadow', 'Shadow', 0, 1, 0.01, s.shadow, softness(s.shadow))}
-    </div>${renderPaintGroups()}`;
+    </div>${renderMotionGroup()}${renderPaintGroups()}`;
   afterRender();
 }
 
@@ -378,6 +381,7 @@ function bind() {
   el.addEventListener('click', async (e) => {
     const t = e.target.closest('button');
     if (!t) return;
+    if (await onMotionClick(t)) return;
     if (await onPaintClick(t)) return;
     if (t.dataset.render) { state.renderIntent = t.dataset.render; location.hash = `#/render/${m.id}`; }
     if (t.dataset.version) {
@@ -423,6 +427,7 @@ function bind() {
     if (t.id === 'play') play();
   });
   el.addEventListener('input', (e) => {
+    if (onMotionInput(e.target)) return;
     if (onPaintInput(e.target)) return;
     const k = e.target.dataset.key;
     if (!k || e.target.type !== 'range') return;
@@ -432,6 +437,7 @@ function bind() {
     change({ [k]: v }, { inspector: false });
   });
   el.addEventListener('change', async (e) => {
+    if (await onMotionChange(e.target)) return;
     if (await onPaintChange(e.target)) return;
     const k = e.target.dataset.key;
     if (k && e.target.type === 'checkbox') change({ [k]: e.target.checked, ...(k === 'sameSize' && e.target.checked && { scale: 1 }), ...(k === 'center' && { snap: e.target.checked }) });

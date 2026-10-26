@@ -24,6 +24,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeLook, effectsFor, hdriUrl } from './look.js';
 import { Post, PathTraced, TONE } from './post.js';
 import { applyPaint, regroup, pickPiece, listPieces } from './paint.js';
+import { applyMotion } from './rig.js';
 import { STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, PLATES, plateUrl, plateThumb, plateCamera, CAR_LENGTH, hfovOf, isCarShape, modelScale, fitDistance, frameOrbit } from './pipeline.js';
 
 RectAreaLightUniformsLib.init();
@@ -668,7 +669,11 @@ export class Studio {
     this.applyYaw();
     this.carHeight = size.y;
     this.carSize = size.clone();
+    if (s.motion) applyMotion(this, s.motion, this.clipTime ?? null); // motion.js: stance, pose, clip frame
   }
+
+  // Animation preview: show the clip at time t (seconds), or null for the still pose.
+  setClipTime(t) { this.clipTime = t; this.applyModel(); this.ptDirty = true; }
 
   applyLights() {
     const s = this.state;

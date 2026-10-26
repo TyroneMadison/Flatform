@@ -2,6 +2,7 @@
 // In-app renderer: the same Three.js studio, offscreen at full size, turning only the car 5° per frame.
 // Blender renderer (optional): render/blender_turntable.py writes the frames; sprites are made here either way.
 // A render belongs to the car it started on and keeps going if you leave this screen.
+import { mountExport } from './render-export.js';
 import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, native, announce, providerOf, FORMATS } from '../app.js';
 import { icon } from '../lib/icons.js';
 import * as P from '../lib/pipeline.js';
@@ -67,6 +68,7 @@ export function mount(el, { id }) {
   renderRight();
   renderBar();
   resetPreview();
+  mountExport(el, m);
 }
 
 export function update() {
