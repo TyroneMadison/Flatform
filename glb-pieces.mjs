@@ -1,7 +1,7 @@
 // Where each app piece lives in Blender. three.js (paint.js listPieces) makes one mesh per glTF primitive, so a mesh
 // with two materials (Paint and Accents) is two pieces, numbered in scene order; Blender's glTF importer makes one
 // object per node with one material slot per primitive. This reads the GLB's JSON and lists the pieces in three.js
-// order: [{ node, prim, prims, material }], so piece key '<name>#<i>' is entry i and Blender can find node + slot.
+// order: [{ node, prim, prims, material, mesh }], so piece key '<name>#<i>' is entry i and Blender can find node + slot.
 // ponytail: two nodes with the same name both match the first Blender object of that name; unique names are the norm.
 export function glbPieces(buf) {
   const b = Buffer.from(buf);
@@ -14,7 +14,7 @@ export function glbPieces(buf) {
     if (!n || seen.has(i)) return;
     seen.add(i);
     const prims = json.meshes?.[n.mesh]?.primitives || [];
-    prims.forEach((p, j) => out.push({ node: n.name ?? null, prim: j, prims: prims.length, material: json.materials?.[p.material]?.name ?? null }));
+    prims.forEach((p, j) => out.push({ node: n.name ?? null, prim: j, prims: prims.length, material: json.materials?.[p.material]?.name ?? null, mesh: n.mesh }));
     for (const c of n.children || []) walk(c, seen);
   };
   for (const i of json.scenes?.[json.scene ?? 0]?.nodes || []) walk(i);

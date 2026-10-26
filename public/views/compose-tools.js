@@ -3,6 +3,7 @@
 import { $, esc, toast, activeWorkspace, state } from '../app.js';
 import { alignPatch, AXES, distance, midpoint, proportionsCheck, addBookmark, setHero, removeBookmark, lerpCamera, weightFlags } from '../lib/model-tools.js';
 import { formatLength, dimensions } from '../lib/grid.js';
+import { trimButton } from './compose-trim.js';
 
 let ctx; // { root, scene, studio, change, draw, renderInspector }
 let measuring = false, pts = [], boneSel = null;
@@ -24,6 +25,9 @@ export function renderToolsGroup() {
   return `<div class="grp" id="grp-tools"><h3>Tools</h3>
     <h4 class="fine">Line up</h4>
     <div class="mg-row"><button class="btn" type="button" data-tool="ground" title="Drop the model so it stands on the floor">Put on floor</button><button class="btn" type="button" data-tool="center" title="Move the model to the middle of the scene">Center it</button></div>
+    <h4 class="fine">Remove a piece</h4>
+    ${trimButton()}
+    <p class="fine keep">For stray bits floating off the model. Each removal is saved as a new version.</p>
     <h4 class="fine">Mirror one half</h4>
     <div class="chips seg" role="radiogroup" aria-label="Mirror">${[['', 'Off'], ...AXES.map((a) => [a, MIRROR_WORDS[a] || a])].map(([k, l]) => `<button class="chip" type="button" role="radio" data-mirror="${k}" aria-checked="${(mi.axis || '') === k}" title="${k ? `Copy one half onto the other, ${l.toLowerCase()}` : 'No mirror'}">${l}</button>`).join('')}</div>
     ${mi.axis ? `<button class="btn" type="button" data-tool="mirror-side" title="Copy the other half instead">Use the other half</button>` : ''}

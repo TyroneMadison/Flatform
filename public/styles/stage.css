@@ -389,3 +389,10 @@ body.rm .tip { animation: none; }
 .lg-next { width: 7px; height: 7px; background: var(--jp); }
 @keyframes jpRing { 0% { transform: scale(.55); opacity: 1; } 100% { transform: scale(1.25); opacity: .15; } }
 @keyframes jpPulse { 50% { opacity: .45; } }
+
+/* Remove a loose piece (compose-trim.js): the small card over the 3D view. */
+.trimcard { position: absolute; z-index: 7; left: 50%; top: 16px; transform: translateX(-50%); display: grid; gap: 8px; max-width: min(420px, calc(100% - 32px)); padding: 12px 14px; border: 1px solid var(--line-3); border-radius: 12px; background: var(--panel, rgba(12, 10, 9, .92)); box-shadow: 0 10px 30px rgba(0, 0, 0, .45); }
+.trimcard .tc-title { margin: 0; font: 600 15px var(--sans); }
+.trimcard .tc-warn { margin: 0; font-size: 12.5px; color: #f2b56b; }
+.trimcard .tc-row { display: flex; gap: 8px; }
+.trimcard .btn { min-height: 44px; }

@@ -19,6 +19,7 @@ import { estimate } from './public/lib/pricing.js';
 import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
 import { resolveColors, deserializeMaterial, blenderMaterial } from './public/lib/tenno.js';
 import { glbPieces, locatePieces } from './glb-pieces.mjs';
+import { trimGlb } from './glb-trim.mjs';
 import { cleanExtras } from './public/lib/render-types.js';
 import { inferRegions, checkAnthropicKey } from './inference.mjs';
 import { createQueue } from './batch.mjs';
@@ -1295,6 +1296,27 @@ export async function startServer({
     return rigView(job);
   }
 
+  // ---- Remove part (glb-trim.mjs): one loose piece out of the model on screen, saved as a new version (trimmed-vN.glb)
+  // made from the active one. The model does not switch here: the page switches to it as one undo step, so Ctrl+Z
+  // goes back to the version before. Nothing is deleted; the older version stays under Versions.
+  async function removePiece(m, { piece, vertex, expect }) {
+    const v = active(m);
+    if (v.status !== 'ready' || !v.glb) throw new HttpError(409, 'The model is not ready yet');
+    if (rigging(m.id)) throw new HttpError(409, 'Wait for the joints to finish, then remove the piece.');
+    if (![piece, vertex, expect].every((x) => Number.isInteger(x) && x >= 0)) throw new HttpError(400, 'Pick a piece on the model first');
+    let r;
+    try { r = trimGlb(await readFile(path.join(MODELS, m.id, v.glb)), { piece, vertex, expect }); } catch (e) { throw new HttpError(409, e.message); }
+    const n = Math.max(...m.versions.map((x) => x.n)) + 1;
+    const out = `trimmed-v${n}.glb`;
+    await writeFile(path.join(MODELS, m.id, out), r.glb);
+    const nv = { n, created_at: new Date().toISOString(), provider: 'trim', status: 'ready', progress: 100, glb: out, thumb: v.thumb, source: v.source,
+      exports: {}, credits: 0, generation: null, from: v.n, removed: r.removed, ...(v.rigged && { rigged: true, rig: v.rig }),
+      note: `Removed a piece (${r.removed.toLocaleString('en-US')} triangles) from version ${v.n}` };
+    m.versions.push(nv);
+    await save();
+    return { model: m, version: n, removed: r.removed };
+  }
+
   // ---- Spin sets for Dud Rents (spin.mjs): photo imports, Generate Spin Set, Send to Dud Rents ----
 
   const spin = createSpinService({ modelsDir: MODELS, settings, version: VERSION, blenderScript, findBlender, runBlender, basePath });
@@ -1706,6 +1728,7 @@ export async function startServer({
         return send(res, 200, { model: m, settings: s });
       }
       if (sub === 'rig' && method === 'POST') return send(res, 202, startRig(m, { markers: (await readJson(req, 16384)).markers ?? null }));
+      if (sub === 'remove-piece' && method === 'POST') return send(res, 201, await removePiece(m, await readJson(req)));
       if (sub === 'rig' && method === 'GET') return send(res, 200, rigView(rigJobs.get(id)) ?? null);
       if (sub === 'versions' && method === 'POST') return send(res, 201, await addVersion(req, m));
       if (sub === 'enhance' && method === 'POST') return send(res, 202, await startEnhance(m, (await readJson(req)).kind));

@@ -17,6 +17,7 @@ import { unriggedVersion } from '../lib/autorig.js';
 import { initHandPose, renderHandPoseGroup, onHandPoseClick, onHandPoseInput, onHandPoseChange, syncHandPose, stopHandPose, isPosing } from './compose-handpose.js';
 import { initTestRig, renderTestRigGroup, onTestRigClick, onTestRigChange, stopTestRig } from './compose-testrig.js';
 import { initTools, renderToolsGroup, onToolsClick, onToolsChange, onCanvasClick, onToolsKey } from './compose-tools.js';
+import { initTrim, onTrimClick, onTrimCanvasClick, stopTrim } from './compose-trim.js';
 import { initPath, renderPathGroup, onPathClick, onPathChange } from './compose-path.js';
 import { initLighting, renderLightingGroup, onLightingClick } from './compose-lighting.js';
 import { mountRender, updateRender, resetRenderOptions, pickRender } from './compose-render.js';
@@ -67,6 +68,7 @@ export async function mount(el, { id }) {
   initHandPose({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initTestRig({ model: () => m, scene: () => scene, studio: () => studio, change, draw });
   initTools({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
+  initTrim({ root: el, model: () => m, scene: () => scene, studio: () => studio, swapVersion, draw });
   initPath({ scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initShelf({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, redraw: () => renderAside(true) });
   initLighting({ scene: () => scene, studio: () => studio, change, renderInspector, modelUrl: () => (m?.glb ? fileUrl(m, m.glb) : null) });
@@ -192,6 +194,7 @@ export function unmount() {
   inspOpen = false;
   $$('#toasts .toast.undo').forEach((t) => t.remove()); // their Undo belongs to this scene
   stopSession();
+  stopTrim();
   hist.clear();
   listeners?.abort();
   gridOn = false;
@@ -603,6 +606,7 @@ function bind() {
     if (t.dataset.aside) return toggleShelf(t.dataset.aside);
     if (t.dataset.act === 'undo') return stepHistory(false); // Pose by hand's own Undo button: the same history as Ctrl+Z
     if (onShelfClick(e)) return;
+    if (await onTrimClick(t)) return;
     if (await onToolsClick(t)) return;
     if (await onPathClick(t)) return;
     if (await onLightingClick(t)) return;
@@ -744,6 +748,7 @@ function bind() {
   cv.addEventListener('click', (e) => {
     if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4 || !studio?.model) return;
     const r = cv.getBoundingClientRect();
+    if (onTrimCanvasClick(e.clientX - r.left, e.clientY - r.top)) return; // Remove a loose piece
     if (onMotionCanvasClick(e.clientX - r.left, e.clientY - r.top)) return; // placing the joints for Add joints
     if (onDecalCanvasClick(e.clientX - r.left, e.clientY - r.top)) return;
     if (onCanvasClick(e.clientX - r.left, e.clientY - r.top)) return;

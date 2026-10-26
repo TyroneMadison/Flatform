@@ -9,6 +9,7 @@ import { posesFor, detectParts, carStance } from '../lib/poses.js';
 import { fromPreset } from '../lib/handpose.js';
 import { SPOTS, SPOT_NAMES, BONE_LINES, spotHelp, newPlacement, placedCount, currentSpot, canRig, rigLabel, place, setMirror, pick, undoLast, startOver, guessSpot, insideDistance, middleOf } from '../lib/joint-place.js';
 import { rigChanged } from './compose-render.js';
+import { trimButton } from './compose-trim.js';
 
 let PRESETS = null; // from /api/poses (public/poses/*.json plus <library>/poses/*.json)
 async function loadPresets() {
@@ -102,7 +103,8 @@ function rigPanel() {
   return `<div class="warnbox" role="alert"><b>No joints yet</b><p>This model has no joints, so poses and movements can't move it. Add joints first.</p></div>${err}
     ${noBlender ? '<p class="fine keep" id="noBlender"><b>Blender is not on this computer.</b> Adding joints needs Blender 4 or later (free from blender.org). Install it, or show where it is in Settings, then come back.</p>' : ''}
     <button class="btn pri" type="button" data-mo-act="rig" title="Add joints to this model for free, using Blender. If it can't find them, you click 10 spots instead." ${busy || noBlender ? 'disabled' : ''}>${busy ? `Rigging… ${esc(rigging.step || '')}` : 'Add joints'}</button>
-    <p class="fine">Adds joints so the model can pose, and saves it as a new version. Renders of this model wait until it is done. Works best standing up, arms out or down.</p>`;
+    <p class="fine">Adds joints so the model can pose, and saves it as a new version. Renders of this model wait until it is done. Works best standing up, arms out or down.</p>
+    <h4 class="fine">Stray bits?</h4>${trimButton()}<p class="fine keep">Take loose pieces off first, so they don't get joints.</p>`;
 }
 
 // The mini body map: the 10 spots on a little figure seen from the front (the model's left on your right).

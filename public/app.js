@@ -133,6 +133,7 @@ export function statusText(m) {
 export const statusClass = (m) => ({ ready: 'ready', spin: 'ready', failed: 'fail' })[m.status] || 'gen';
 // "Tripo v3.1" or "3D AI Studio · Hitem3D 3.0", for a version (or the model's active one).
 export function engineLabel(v) {
+  if (v.provider === 'trim') return v.note || 'A piece removed';
   if (providerOf(v) === 'local') return 'Local (free) · TRELLIS';
   if (providerOf(v) === 'tripo') return `Tripo ${String(v.options?.model || state.settings?.model || 'v3.1').split('-')[0]}`;
   return `3D AI Studio · ${ENGINES[v.engine]?.label || ''}`;

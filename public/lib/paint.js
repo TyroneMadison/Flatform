@@ -261,6 +261,7 @@ export function regroup(model, paint) {
     const faceIdx = Uint8Array.from(atob(g.labels), (c) => c.charCodeAt(0));
     const labels = Array.from(faceIdx, (v) => (v === 255 ? null : g.names[v]));
     const source = o.userData.sourceIndex || (o.userData.sourceIndex = o.geometry.index.array.slice());
+    if (faceIdx.length !== source.length / 3) return; // a piece was removed since: the old face groups no longer fit
     const { index, groups } = groupFaces(source, labels);
     o.geometry.setIndex(new THREE.BufferAttribute(index, 1));
     o.geometry.clearGroups();
