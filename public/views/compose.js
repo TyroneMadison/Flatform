@@ -420,10 +420,10 @@ function renderScenes() {
     const photo = file && /\.(jpe?g|png)$/i.test(file) ? `<img class="thumb" src="/backdrops/${encodeURIComponent(file)}" alt="">` : '';
     const note = (key === 'miami' || key === 'custom') && file ? `${file.endsWith('.hdr') || file.endsWith('.exr') ? '360 photo' : 'Background'} added · click again to replace` : p.note;
     const needs = (key === 'miami' || key === 'custom') && !file;
-    const thumb = p.env && !art[key] ? `<div class="stage"><img class="thumb" src="${p.thumb}" alt="" onerror="this.remove()"></div>` : '';
-    return `<button class="scn${key === 'white-cyc-studio' ? ' pinned' : ''}" type="button" data-preset="${key}" aria-pressed="${scene.preset === key}" title="Use ${esc(p.label)} as the background">
+    const thumb = p.env && !art[key] ? `<div class="stage"><img class="thumb" src="${p.thumb}" alt="" loading="lazy" onerror="this.remove()"></div>` : '';
+    return `<button class="scn${key === 'white-cyc-studio' ? ' pinned' : ''}" type="button" data-preset="${key}" aria-pressed="${scene.preset === key}" title="${esc(p.label)}: ${esc(note)}. Click to put your model here.">
       <div class="scn-th">${thumb || (photo ? `<div class="stage">${photo}</div>` : art[key])}${needs ? `<div class="up">${icon('upload', 18)}</div>` : ''}${key === 'white-cyc-studio' ? '<span class="pin">Default</span>' : ''}</div>
-      <div class="scn-t"><b>${p.label}</b><span>${esc(note)}</span></div></button>`;
+      <div class="scn-t"><b>${esc(p.label)}</b></div></button>`;
   }).join('');
   const box = $('#sceneList', root);
   if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }

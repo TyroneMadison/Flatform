@@ -4,6 +4,9 @@ Newest first. Numbering: [VERSIONING.md](VERSIONING.md).
 
 ## Unreleased
 
+- **A picture of every room.** The World picker shows each place as a picture card with its name under it,
+  rendered from the real 3D room at its own camera (320 x 200 WebP in `public/img/rooms/`). Hover a card to read
+  what the place is like. Night City's picture uses its softer glow, so the model is not washed out.
 - **Auto-rig that holds together.** Add joints now finds the arms, legs, head and joints from the model's own shape
   (which way it faces, slices through the body, paths along each limb), so armoured Tripo models no longer tear or
   smear when posed. Separate armour pieces move whole with the limb they sit on; bigger pieces bend only with their

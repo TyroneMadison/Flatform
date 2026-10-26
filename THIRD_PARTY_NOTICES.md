@@ -51,7 +51,7 @@ city, `goegap_road`, `kloofendal_48d_partly_cloudy_puresky`, `garage`, `white_st
 is Flatform's own. The models are from [Poly Haven](https://polyhaven.com), released under
 [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (public domain, no attribution required; credited with
 thanks): their 1k glTF, packed into one `.glb` each with the textures reduced to 512 px. Downloaded 2026-10-26. The
-scene picker thumbnails (`public/img/environments/`) are Flatform's own renders of these places
+scene picker thumbnails (`public/img/rooms/`) are Flatform's own renders of these places
 (`test-app/make-env-thumbs.mjs`).
 
 | File | Place | Source |

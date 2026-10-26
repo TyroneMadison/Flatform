@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const THUMBS = path.join(HERE, '..', 'public', 'img', 'environments');
+const THUMBS = path.join(HERE, '..', 'public', 'img', 'rooms');
 const args = process.argv.slice(process.argv.indexOf('--') + 1);
 const opt = (name) => (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : undefined);
 const out = opt('out');
@@ -34,7 +34,7 @@ if (opt('dump') || /\.glb$/i.test(out || '')) {
 }
 
 const place = opt('environment') ? JSON.parse(opt('environment')).slug : opt('look') === 'transparent' ? null : 'showroom';
-const frame = place ? readFileSync(path.join(THUMBS, `${place}.jpg`)) : readFileSync(path.join(HERE, 'seed', 'photos', 'car.png'));
+const frame = place ? readFileSync(path.join(THUMBS, `${place}.webp`)) : readFileSync(path.join(HERE, 'seed', 'photos', 'car.png'));
 const frames = Number(opt('frames') || 0);
 mkdirSync(out, { recursive: true });
 writeFileSync(path.join(out, 'mock-blender-args.json'), JSON.stringify(args, null, 2)); // what the real Blender would get

@@ -117,7 +117,7 @@ test('environment camera: the car stands on the floor at eye level', () => {
     near(project(cam, [0, cam.position[1], -1e7]), plate.cam.horizon, 1e-3); // eye level lands on the horizon
     assert.ok(cam.position[1] > 0.3 && cam.position[1] < 3, `${slug}: camera height ${cam.position[1]}`);
   }
-  assert.equal(P.envThumb('showroom'), '/img/environments/showroom.jpg');
+  assert.equal(P.envThumb('showroom'), '/img/rooms/showroom.webp');
 });
 
 test('the Drop step tells 3D models from photos', async () => {

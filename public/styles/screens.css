@@ -118,10 +118,11 @@
 .undo-pair .btn.icon { width: 44px; height: 44px; }
 .compose { display: grid; grid-template-columns: 250px minmax(0, 1fr) 300px; gap: 14px; flex: 1; min-height: 0; }
 .scenes { padding: 14px; display: flex; flex-direction: column; min-height: 0; overflow: auto; }
-.scnlist { display: flex; flex-direction: column; gap: 9px; }
+/* World picker: image cards (a picture of each place, public/img/rooms) with the name under each. */
+.scnlist { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .scn { position: relative; border-radius: 6px; overflow: hidden; display: flex; flex-direction: column; border: 1px solid var(--line-2); background: none; padding: 0; text-align: left; cursor: pointer; }
 .scn[aria-pressed='true'] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 24px rgba(255, 122, 102, .25); }
-.scn-th { height: 62px; position: relative; flex: none; }
+.scn-th { aspect-ratio: 16 / 10; position: relative; flex: none; }
 .scn-th .stage > img.thumb { object-fit: cover; }
 .scn.pinned { border-color: #6b5432; }
 .pin { position: absolute; top: 6px; left: 6px; padding: 2px 7px; border-radius: 10px; font: 600 9.5px var(--display); letter-spacing: .14em; text-transform: uppercase; color: #1b1206; background: #f2b56b; }
@@ -129,8 +130,7 @@
 .model-grp .btn { width: 100%; }
 .mg-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .model-grp .sub { margin: 0 0 4px; }
-.scn-t { padding: 7px 10px; display: flex; flex-direction: column; gap: 1px; font-size: 12px; }
-.scn-t span { font-size: 10.5px; opacity: .6; }
+.scn-t { padding: 6px 8px; font-size: 11.5px; line-height: 1.25; }
 .scn[aria-pressed='true'] .scn-t b { color: var(--accent-hi); }
 .scn-upload { margin-top: 6px; }
 .vp-col { display: flex; flex-direction: column; gap: 14px; min-height: 0; min-width: 0; }
