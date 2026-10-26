@@ -10,6 +10,7 @@ import { SHORTCUTS, worksOn, keyOf } from './lib/shortcuts.js';
 import { blenderLight, accountLight } from './lib/render-status.js';
 import { installPalette } from './lib/palette.js';
 import { timeAgo } from './lib/session.js';
+import { displayVersion } from './lib/version.js';
 
 export const $ = (s, root = document) => root.querySelector(s);
 export const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -363,10 +364,10 @@ function showUpdate() {
   const bar = $('#update');
   const show = Boolean(u?.newer && !u.skipped && u.checkedAt !== laterAt);
   if (show) {
-    $('#updateTitle').textContent = `Flatform ${u.latest} is ready`;
+    $('#updateTitle').textContent = `Flatform ${displayVersion(u.latest)} is ready`;
     $('#updateNote').textContent = u.notes;
     $('#updateDownload').href = u.downloadUrl; // checked by the server: only github.com/TyroneMadison/Flatform/ links
-    if (bar.hidden) announce(`Flatform ${u.latest} is ready to download`);
+    if (bar.hidden) announce(`Flatform ${displayVersion(u.latest)} is ready to download`);
   } else if (bar.contains(document.activeElement)) $('#view').focus();
   bar.hidden = !show;
 }
@@ -457,7 +458,7 @@ function renderFrame() {
     el.title = l.tip;
     el.innerHTML = `<span class="dot ${l.ok ? 'ok' : l.ok == null ? 'wait' : ''}"></span>${esc(l.text)}`;
   }
-  $('#appVersion').textContent = state.settings ? `v${state.settings.version}` : '';
+  $('#appVersion').textContent = state.settings ? `Version ${displayVersion(state.settings.version)}` : '';
   $('#railAccount .dot').className = `dot ${!a ? 'wait' : a.hasKey && !a.error ? 'ok' : ''}`;
   $('#railAccount .acctname').textContent = provider === 'tripo' ? 'Tripo' : '3D AI';
   $('#railAccount').title = text;

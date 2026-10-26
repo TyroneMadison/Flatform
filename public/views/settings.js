@@ -4,6 +4,7 @@ import { PRESETS as THEMES, normalizeTheme, resolveTheme, applyTheme, contrast, 
 import { $, esc, state, api, send, toast, refresh, native, fmt, fmtBalance, saveKey, confirmDialog, arrowRadios, refreshUpdate, refreshSpend, topUp } from '../app.js';
 import { PROVIDERS } from '../lib/engines.js';
 import { icon } from '../lib/icons.js';
+import { displayVersion } from '../lib/version.js';
 import { PRESETS } from '../lib/studio.js';
 import { EXTRA, EXTRA_HTML, wireExtra } from './settings-extra.js';
 
@@ -275,7 +276,7 @@ function updateStatus() {
   const u = state.update;
   if (checking) return 'Checking…';
   const at = u?.checkedAt ? ` · last checked ${new Date(u.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
-  if (u?.newer) return `<b>Flatform ${esc(u.latest)} is ready</b><a class="btn sm pri" href="${esc(u.downloadUrl)}" target="_blank" rel="noopener">${icon('download')}<span>Download</span></a>`;
+  if (u?.newer) return `<b>Flatform ${esc(displayVersion(u.latest))} is ready</b><a class="btn sm pri" href="${esc(u.downloadUrl)}" target="_blank" rel="noopener">${icon('download')}<span>Download</span></a>`;
   if (u?.failed) return `Couldn't check right now${at}`;
   return u?.checkedAt ? `✓ You're up to date${at}` : 'Not checked yet';
 }
@@ -314,7 +315,7 @@ function historyHtml() {
 function aboutHtml() {
   const s = state.settings;
   return `<div class="card glass"><h2 class="label">Updates</h2>
-    <div class="field"><span class="flabel">Version</span><div class="inp">Flatform ${esc(s.version)}</div>
+    <div class="field"><span class="flabel">Version</span><div class="inp">Flatform ${esc(displayVersion(s.version))}</div>
       <a class="btn ghostbtn" href="${RELEASES}" target="_blank" rel="noopener">${icon('external')}<span>Releases</span></a></div>
     <div class="field"><span class="flabel">Latest</span><span class="ures" role="status">${updateStatus()}</span>
       <button class="btn ghostbtn" type="button" data-act="check-update">${icon('retry')}<span>Check for updates</span></button></div>

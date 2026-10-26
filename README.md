@@ -125,7 +125,7 @@ npm run dist     # build the installer for this OS into dist/
 
 `npm run web` runs it as a local website instead. Put `TRIPO_API_KEY` and/or `THREE_D_AI_STUDIO_KEY` in `.env` (see `.env.example`), then open http://localhost:5173. In this mode folder pickers become text fields, and keys pasted in Settings last until the server stops.
 
-Releases: push a tag like `v0.4.0`. GitHub Actions builds Windows and Mac and attaches them to a draft release.
+Releases: push a tag like `v1.1.0` (numbering: [VERSIONING.md](VERSIONING.md), notes: [CHANGELOG.md](CHANGELOG.md)). GitHub Actions builds Windows and Mac and attaches them to a draft release.
 
 </details>
 
