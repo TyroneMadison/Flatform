@@ -31,6 +31,7 @@ import { createShares } from './share.mjs';
 import { planOvernight, morningSummary, awakeGuard, MAX_TRIES } from './overnight.mjs';
 import { runPlugin, pluginStore } from './plugins.mjs';
 import { DEFAULTS as BACKUP_DEFAULTS, checkBackup, runBackup } from './backup.mjs';
+import { createPreviewLock } from './preview.mjs';
 import { disk, clearCache, renderTimes, enhanceSpend } from './usage.mjs';
 import { SERVICES, CONVERT_CREDITS, entry, append, parse, summary, defaultThresholds } from './ledger.mjs';
 import { createSpinService } from './spin.mjs';
@@ -159,6 +160,7 @@ export async function startServer({
   const MODELS = path.join(dataDir, 'models');
   const BACKDROPS = path.join(dataDir, 'backdrops');
   const LIB = path.join(dataDir, 'library.json');
+  const previewLock = createPreviewLock({ file: path.join(dataDir, 'preview.json') });
   const shares = createShares({ file: path.join(dataDir, 'shares.json'), baseUrl: () => settings?.share?.baseUrl || null });
   const SETTINGS = path.join(dataDir, 'settings.json');
   await mkdir(MODELS, { recursive: true });
@@ -1239,6 +1241,12 @@ export async function startServer({
       } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(400, e.message); }
     }
     // GitHub backup: off unless Tyrone turns it on. Backup branch only, never main, never force.
+    // Client preview: the optional PIN that ends it (hashed in preview.json).
+    if (area === 'preview') {
+      if (!id && method === 'GET') return send(res, 200, await previewLock.view());
+      if (!id && method === 'PUT') { const b = await readJson(req); try { return send(res, 200, await previewLock.setPin(b.pin ?? null, b.current)); } catch (e) { throw new HttpError(400, e.message); } }
+      if (id === 'unlock' && method === 'POST') { const r = await previewLock.unlock((await readJson(req)).pin); return send(res, r.ok ? 200 : 403, r.ok ? r : { error: r.error }); }
+    }
     if (area === 'backup') {
       if (!id && method === 'GET') return send(res, 200, backup);
       if (!id && method === 'PUT') {

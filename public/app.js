@@ -5,6 +5,7 @@ import { applyTheme } from './lib/theme.js';
 import { PROVIDERS, ENGINES, VIEWS, normalize, presetConfig, matchPreset, PRESETS } from './lib/engines.js';
 import { estimate } from './lib/pricing.js';
 import { isModelFile, importModel } from './lib/importer.js';
+import { installHotkeys } from './lib/hotkeys.js';
 
 export const $ = (s, root = document) => root.querySelector(s);
 export const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -438,7 +439,7 @@ function renderFrame() {
 }
 
 // ---- routing ----
-const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings', 'spin'];
+const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings', 'spin', 'preview', 'finish'];
 export let route = { name: 'drop', id: null };
 let current = null;
 let navToken = 0;
@@ -448,6 +449,7 @@ async function navigate() {
   const [, name = 'drop', id = null] = location.hash.match(/^#\/(\w+)(?:\/([\w-]+))?/) || [];
   if (name === 'review') return go(id ? `#/compose/${id}` : '#/library'); // Review was folded into Compose in v0.5
   if (!SCREENS.includes(name)) return go('#/drop');
+  if (state.presenting && name !== 'preview') return history.replaceState(null, '', `#/preview/${route.id}`); // client preview stays put until it is ended
   const token = ++navToken;
   const mod = await import(`./views/${name}.js`);
   if (token !== navToken) return;
@@ -510,7 +512,7 @@ $('#filePicker').addEventListener('change', (e) => { addFiles(e.target.files, { 
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
 window.addEventListener('paste', (e) => {
-  if (!['drop', 'setup', 'generate'].includes(route.name) || e.target.closest?.('input, textarea')) return;
+  if (state.presenting || !['drop', 'setup', 'generate'].includes(route.name) || e.target.closest?.('input, textarea')) return;
   const files = [...(e.clipboardData?.files || [])];
   if (files.length) { e.preventDefault(); addFiles(files, { quick: route.name === 'generate' }); }
 });
@@ -557,7 +559,7 @@ document.addEventListener('click', async (e) => {
   if (!e.target.closest('#wsPill') && $('#wsMenu')) $('#wsMenu').hidden = true;
 });
 window.addEventListener('keydown', (e) => {
-  if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || !/^[1-9]$/.test(e.key) || !state.workspaces) return;
+  if (state.presenting || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || !/^[1-9]$/.test(e.key) || !state.workspaces) return;
   const w = state.workspaces.list[Number(e.key) - 1];
   if (w) { e.preventDefault(); switchWorkspace(w.id); }
 });
@@ -571,6 +573,15 @@ window.addEventListener('keydown', (e) => {
   state.blender = blender;
   applyTheme(settings?.theme);
   await loadWorkspaces();
+  installHotkeys({
+    screen: () => route.name,
+    run: (action) => {
+      if (state.presenting) return;
+      const m = (route.id && findModel(route.id)) || focusModel();
+      if (!m) return toast('Pick a model first.');
+      go(`#/${action === 'preview' ? 'preview' : 'finish'}/${m.id}`);
+    },
+  });
   await navigate();
   refreshAccount();
   setInterval(() => refreshAccount(), 60000);

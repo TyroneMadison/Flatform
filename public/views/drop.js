@@ -1,19 +1,20 @@
 // Drop: the big drop zone, tips with the next setup and the real balance, and recent models.
 // Photos go on to the setup screen, where the provider and quality are chosen before anything is paid for.
 // 3D models (GLB, GLTF, FBX, OBJ, USDZ) skip Generate and open in Compose (app.js addFiles).
-import { $, esc, state, stepper, addFiles, openPicker, pasteFromClipboard, creditsText, savedSetup, setupLabel, costOf, thumbOf, statusText, statusClass } from '../app.js';
+import { $, esc, state, stepper, addFiles, openPicker, pasteFromClipboard, creditsText, savedSetup, setupLabel, activeWorkspace, costOf, thumbOf, statusText, statusClass } from '../app.js';
 import { icon } from '../lib/icons.js';
 
 let root;
 
 export function mount(el) {
   root = el;
+  const car = activeWorkspace()?.kind === 'car';
   el.innerHTML = `${stepper('drop')}
   <section class="dropwrap">
-    <div class="dropzone glass" id="dropzone">
+    <div class="dropzone glass${car ? ' carhome' : ''}" id="dropzone">
       <div class="dz-hit" role="button" tabindex="0" aria-label="Choose photos, or drop them here" aria-describedby="dzLead"></div>
       <div class="dz-orb" aria-hidden="true"><div class="dz-ring"></div><div class="dz-ring r2"></div><div class="ghost" id="ghost"></div></div>
-      <h1>Drop a photo. Get a 3D car.</h1>
+      ${car ? '<h1>Drag pictures here</h1><p class="dz-or">or</p><button class="btn pri huge" type="button" data-act="add">' + icon('plus') + '<span>Add new picture</span></button>' : '<h1>Drop a photo. Get a 3D car.</h1>'}
       <p class="lead" id="dzLead">Drop photos here or choose them. Next you pick the provider and quality, then each car becomes a 3D model you can place in any scene. Already have a 3D model? Drop it too.</p>
       <div class="dz-actions">
         <button class="btn pri" type="button" data-act="pick">${icon('upload')}<span>Choose photos or a model</span></button>
@@ -43,6 +44,7 @@ export function mount(el) {
   const hit = $('.dz-hit', el);
   hit.addEventListener('click', () => openPicker());
   hit.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPicker(); } });
+  el.querySelector('[data-act=add]')?.addEventListener('click', () => openPicker());
   el.querySelector('[data-act=pick]').addEventListener('click', () => openPicker());
   el.querySelector('[data-act=paste]').addEventListener('click', pasteFromClipboard);
   update();
