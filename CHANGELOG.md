@@ -4,6 +4,10 @@ Newest first. Numbering: [VERSIONING.md](VERSIONING.md).
 
 ## Unreleased
 
+- **Same rooms in every workspace.** Car and Warframe pick from one room list (environments.js `ROOMS`), with the same
+  pictures; the old flat car scenes (ring studio, plain white room, Miami, your backdrop) are gone, and a scene saved
+  in one opens in its closest room (`roomFor`), in the app and in Blender. Every room is checked for a real 4.6 m car:
+  on the floor, turning clear of everything, room for its roof and through the garage door.
 - **A picture of every room.** The World picker shows each place as a picture card with its name under it,
   rendered from the real 3D room at its own camera (320 x 200 WebP in `public/img/rooms/`). Hover a card to read
   what the place is like. Night City's picture uses its softer glow, so the model is not washed out.

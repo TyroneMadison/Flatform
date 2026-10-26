@@ -1,11 +1,11 @@
 // The Look panel of the Test Rig and the Look row of the Pose panel, as pure data and rules (no DOM, no three.js).
 // Every setting lives in the Compose scene itself (scene.preset and scene.look), so what you pick while playing is
 // what the scene shows, saves and renders, and each pick is one undo step (lookChange returns that one change).
-import { ENVIRONMENTS } from './environments.js';
+import { ENVIRONMENTS, ROOMS } from './environments.js';
 import { mergeLook, lightsFromPreset } from './look.js';
 
 /** The places to play in: every 3D world (White studio first, the default). */
-export const RIG_ENVS = Object.fromEntries(Object.entries(ENVIRONMENTS).map(([k, e]) => [k, e.label]));
+export const RIG_ENVS = Object.fromEntries(ROOMS.map((r) => [r.slug, r.label])); // the shared room list
 export const DEFAULT_ENV = 'white-cyc-studio';
 
 // A light preset sets the light rig (look.js LIGHT_PRESETS) plus the time of day, brightness, rim colour, haze and

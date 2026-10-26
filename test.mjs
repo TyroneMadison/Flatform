@@ -376,9 +376,9 @@ test('settings persist and the region is validated', async () => {
   assert.equal((await app.json('/api/settings', 'POST', { blenderPath: path.join(data, 'blender.exe') })).status, 400);
 
   outRoot = await tempDir();
-  const saved = await app.json('/api/settings', 'POST', { region: 'china', pbr: false, defaultScene: 'cyclorama', outputRoot: outRoot });
+  const saved = await app.json('/api/settings', 'POST', { region: 'china', pbr: false, defaultScene: 'soft-studio', outputRoot: outRoot });
   assert.equal(saved.status, 200);
-  assert.deepEqual([saved.body.region, saved.body.pbr, saved.body.defaultScene, saved.body.outputRoot], ['china', false, 'cyclorama', path.resolve(outRoot)]);
+  assert.deepEqual([saved.body.region, saved.body.pbr, saved.body.defaultScene, saved.body.outputRoot], ['china', false, 'soft-studio', path.resolve(outRoot)]);
   assert.equal(JSON.parse(await readFile(path.join(data, 'settings.json'), 'utf8')).region, 'china');
   assert.equal(JSON.stringify(JSON.parse(await readFile(path.join(data, 'settings.json'), 'utf8'))).includes(KEY), false);
 
@@ -386,7 +386,7 @@ test('settings persist and the region is validated', async () => {
   await app.stop();
   app = await startApp(data, { TRIPO_API_KEY: KEY });
   const after = (await app.j('/api/settings')).body;
-  assert.deepEqual([after.region, after.pbr, after.defaultScene, after.outputRoot], ['china', false, 'cyclorama', path.resolve(outRoot)]);
+  assert.deepEqual([after.region, after.pbr, after.defaultScene, after.outputRoot], ['china', false, 'soft-studio', path.resolve(outRoot)]);
   assert.equal((await app.j('/api/models')).body.length, 3);
   assert.equal((await app.json('/api/settings', 'POST', { region: 'global', pbr: true })).body.region, 'global');
 });
@@ -401,7 +401,7 @@ test('the Render step light rig and glass are saved in settings and validated', 
   const saved = (await app.json('/api/settings', 'POST', { lighting: { azimuth: 60 }, glass: { opacity: 0.5 } })).body;
   assert.deepEqual([saved.lighting.azimuth, saved.lighting.key, saved.glass.opacity, saved.glass.on], [60, 1, 0.5, true]);
   assert.equal(JSON.parse(await readFile(path.join(data, 'settings.json'), 'utf8')).lighting.azimuth, 60);
-  await app.json('/api/settings', 'POST', { defaultScene: 'ring' });
+  assert.equal((await app.json('/api/settings', 'POST', { defaultScene: 'ring' })).status, 400); // the old flat scenes are gone
 });
 
 test('Blender is found on PATH, in a portable folder in the home folder, and in Program Files', async () => {
@@ -494,8 +494,8 @@ test('old v0.2 library migrates and the model still opens', async () => {
   const saved = JSON.parse(await readFile(path.join(oldData, 'library.json'), 'utf8'));
   assert.equal(saved[1].versions.length, 1);
   assert.equal(saved[1].glb, 'model.glb'); // v0.2 can still read it
-  assert.deepEqual(m.scene, { preset: 'ring', turn: 30 });
-  assert.deepEqual(JSON.parse(await readFile(path.join(oldData, 'models', old.id, 'scene.json'), 'utf8')), { preset: 'ring', turn: 30 });
+  assert.deepEqual(m.scene, { preset: 'showroom', turn: 30 }); // the gold ring studio opens in the Showroom room
+  assert.deepEqual(JSON.parse(await readFile(path.join(oldData, 'models', old.id, 'scene.json'), 'utf8')), { preset: 'showroom', turn: 30 });
   assert.equal((await oldApp.j('/api/settings')).body.defaultScene, 'white-cyc-studio'); // gold -> ring -> showroom (v0.5) -> White Cyc Studio (v0.6 default)
 
   // The in-flight one is polled; Tripo no longer has its task, so it fails (and can be retried) instead of spinning forever.

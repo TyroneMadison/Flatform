@@ -41,8 +41,8 @@ test('every room in the World picker has its own picture: a 320 x 200 WebP in pu
 
 test('the World picker shows each room as an image card with its name under it and a tooltip', () => {
   const js = readFileSync(new URL('../public/views/compose.js', import.meta.url), 'utf8');
-  assert.match(js, /<div class="scn-th">\$\{thumb[\s\S]*?<div class="scn-t"><b>\$\{esc\(p\.label\)\}<\/b><\/div><\/button>/);
-  assert.match(js, /data-preset="\$\{key\}"[^>]*title="\$\{esc\(p\.label\)\}: \$\{esc\(note\)\}/);
+  assert.match(js, /<div class="scn-th"><div class="stage"><img class="thumb" src="\$\{r\.thumb\}"[\s\S]*?<div class="scn-t"><b>\$\{esc\(r\.label\)\}<\/b><\/div><\/button>/);
+  assert.match(js, /data-preset="\$\{r\.slug\}"[^>]*title="\$\{esc\(r\.label\)\}: \$\{esc\(r\.note\)\}/);
   const css = readFileSync(new URL('../public/styles/screens.css', import.meta.url), 'utf8');
   assert.match(css, /\.scn-th \{ aspect-ratio: 16 \/ 10;/);
 });

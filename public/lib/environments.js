@@ -252,8 +252,19 @@ export const ENVIRONMENTS = {
   },
 };
 
-// Real-world size of what the places are built round: a car's length, a person's height (m).
-const REAL = { car: 4.6, humanoid: 1.8 };
+// The one room list every workspace offers (Car and Warframe alike): the World picker, the Test Rig and Settings.
+// Thumbnails are 320 x 200 WebP renders of the room itself (test-app/make-env-thumbs.mjs).
+export const envThumb = (slug) => `/img/rooms/${slug}.webp`;
+export const ROOMS = Object.entries(ENVIRONMENTS).map(([slug, e]) => ({ slug, label: e.label, note: e.note, thumb: envThumb(slug) }));
+// Scenes saved before every workspace shared these rooms: the old flat car scenes open in the closest room.
+const LEGACY = { gold: 'showroom', ring: 'showroom', cyclorama: 'white-cyc-studio', miami: 'night-city-rain', custom: 'white-cyc-studio' };
+export const roomFor = (preset) => (Object.hasOwn(ENVIRONMENTS, preset) ? preset : Object.hasOwn(LEGACY, preset) ? LEGACY[preset] : 'white-cyc-studio');
+
+// Real-world size of what the places are built round (m): a car (length, width, height) and a person's height.
+// Every room is built for this car at scale 1: it sits on y = 0, turns without touching anything, and fits
+// through any door (test/rooms-car.test.mjs).
+export const CAR = { length: 4.6, width: 1.9, height: 1.5 };
+const REAL = { car: CAR.length, humanoid: 1.8 };
 /** How much to scale the place so the model stands in it at its real size. size: the normalised model {x, y, z}, Y up. */
 export function envScale(size, kind = 'car') {
   if (!size) return 1;

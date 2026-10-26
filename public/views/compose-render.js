@@ -471,7 +471,7 @@ function sceneFor(model, look) {
   const s = { ...defaultScene(state.settings), ...model.scene };
   if (look === 'transparent') return { ...s, preset: 'transparent' };
   if (look === 'showroom') return { ...s, preset: 'showroom', backdrop: null };
-  if (s.preset === 'transparent') return { ...s, preset: state.settings?.defaultScene && state.settings.defaultScene !== 'transparent' ? state.settings.defaultScene : 'white-cyc-studio', backdrop: null };
+  if (s.preset === 'transparent') return { ...s, preset: P.roomFor(state.settings?.defaultScene), backdrop: null };
   return s;
 }
 // Draws frames into the web sprite sheets as they arrive (lib/sheets.js), in Flatform's own web/ layout.

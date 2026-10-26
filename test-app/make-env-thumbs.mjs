@@ -1,7 +1,9 @@
 // Renders every environment's World-picker thumbnail with the sample car at the place's default camera, in the app's
 // own renderer (studio.js), so it needs no Blender. Also the quickest look at every place after an edit to
 // environments.js. A place a built-in template uses (Night City) gets that template's look, bloom included.
-//   npx electron test-app/make-env-thumbs.mjs [slug ...] [--before-after <dir>]
+//   npx electron test-app/make-env-thumbs.mjs [slug ...] [--before-after <dir>] [--shots <dir>]
+// --shots writes the car in each room (or the slugs given) at 960 x 720, car-<slug>.png, plus the Compose screen with
+// its World picker (world-picker.png), into <dir>, and leaves the thumbnails alone.
 // Writes public/img/rooms/<slug>.webp (320 x 200). --before-after also writes Night City at 640 x 480 with the old
 // bloom and signs (night-city-before.png) and as it is now (night-city-after.png) into <dir>.
 import { app, BrowserWindow } from 'electron';
@@ -18,6 +20,7 @@ import { envThumb, ROOM_THUMB_SIZE } from '../public/lib/pipeline.js';
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const argv = process.argv.slice(2);
 const shots = argv.includes('--before-after') ? argv[argv.indexOf('--before-after') + 1] : null;
+const big = argv.includes('--shots') ? argv[argv.indexOf('--shots') + 1] : null;
 const only = argv.filter((a) => ENVIRONMENTS[a]);
 const lookOf = (slug) => BUILTIN_TEMPLATES.find((t) => t.kind === 'car' && t.scene.preset === slug)?.scene.look || null;
 
@@ -35,13 +38,13 @@ app.whenReady().then(async () => {
     // One shot of a place: the 4:3 car-view frame, centre-cropped to w x h. `old` puts back Night City's bloom and
     // signs from before a50406e (minus the glow cap in post.js, which stays).
     const shot = (slug, look, { w, h, type, old = false }) => win.webContents.executeJavaScript(`(async () => {
-      document.body.innerHTML = '<canvas width="640" height="480"></canvas>';
+      document.body.innerHTML = '<canvas width="${Math.max(640, w)}" height="${Math.max(480, h)}"></canvas>';
       const { Studio, defaultScene } = await import('/lib/studio.js');
       const { ENVIRONMENTS } = await import('/lib/environments.js');
       const m = ENVIRONMENTS['night-city-rain'].mats, emit = { pink: 2, cyan: 2, lamp: 2.5 };
       for (const k in emit) m[k].emit = ${old} ? { pink: 4, cyan: 4, lamp: 5 }[k] : emit[k];
       const s = new Studio(document.querySelector('canvas'), { preserveDrawingBuffer: true });
-      s.resize(640, 480, 1);
+      s.resize(${Math.max(640, w)}, ${Math.max(480, h)}, 1);
       await s.setState({ ...defaultScene({}), preset: ${JSON.stringify(slug)}, look: ${JSON.stringify(look)} });
       await s.load('/files/${car.id}/${encodeURIComponent(car.glb)}');
       await s.setState({});
@@ -55,6 +58,19 @@ app.whenReady().then(async () => {
       return out.toDataURL(${JSON.stringify(type)}, 0.86);
     })()`).then((url) => Buffer.from(url.split(',')[1], 'base64'));
 
+    if (big) {
+      await mkdir(big, { recursive: true });
+      for (const slug of only.length ? only : Object.keys(ENVIRONMENTS)) {
+        await writeFile(path.join(big, `car-${slug}.png`), await shot(slug, lookOf(slug), { w: 960, h: 720, type: 'image/png' }));
+        console.log('shot', slug);
+      }
+      const ui = new BrowserWindow({ show: false, width: 1400, height: 900, webPreferences: { offscreen: true } });
+      await ui.loadURL(`${base}/#/compose/${car.id}`);
+      await new Promise((ok) => setTimeout(ok, 8000));
+      await writeFile(path.join(big, 'world-picker.png'), (await ui.webContents.capturePage()).toPNG());
+      console.log('shot world picker');
+      return;
+    }
     await mkdir(path.join(ROOT, 'public', 'img', 'rooms'), { recursive: true });
     for (const slug of only.length ? only : Object.keys(ENVIRONMENTS)) {
       await writeFile(path.join(ROOT, 'public', envThumb(slug)), await shot(slug, lookOf(slug), { ...ROOM_THUMB_SIZE, type: 'image/webp' }));

@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
-import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, ENVIRONMENTS, envCamera } from './public/lib/pipeline.js';
+import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, ENVIRONMENTS, envCamera, roomFor } from './public/lib/pipeline.js';
 import { blenderEnvironment } from './public/lib/environments.js';
 import { findBlender as findBlenderOn, blenderVersion, blenderPose } from './blender.mjs';
 import { runAutoRig } from './autorig.mjs';
@@ -84,7 +84,7 @@ const BACKDROP_TYPES = ['.jpg', '.jpeg', '.png', '.hdr', '.exr'];
 const FAILED = ['failed', 'cancelled', 'banned'];
 // Global keys work on .ai; .com (the host the docs show) is the China region and rejects global keys.
 const REGIONS = { global: 'https://openapi.tripo3d.ai/v3', china: 'https://openapi.tripo3d.com/v3' };
-const SCENES = [...Object.keys(ENVIRONMENTS), 'ring', 'transparent', 'cyclorama', 'miami', 'custom']; // 'ring' was called 'gold' before v0.4
+const SCENES = Object.keys(ENVIRONMENTS); // the one room list every workspace shares (environments.js ROOMS)
 // Version fields mirrored at the top level of each library entry, so v0.2 readers and the UI see the active version.
 const VERSION_FIELDS = ['task_id', 'status', 'progress', 'tripo_status', 'glb', 'thumb', 'credits', 'error', 'exports', 'source',
   'provider', 'engine', 'mode', 'views', 'upstream_status', 'note', 'generation', 'file', 'fileName'];
@@ -203,11 +203,12 @@ export async function startServer({
   if (!settings.outputRoot && defaultOutputRoot) {
     try { await mkdir(defaultOutputRoot, { recursive: true }); settings.outputRoot = path.resolve(defaultOutputRoot); settings.outputRootIsDefault = true; } catch { /* drive missing: the app asks for a folder */ }
   }
-  if (settings.defaultScene === 'gold') settings.defaultScene = 'ring';
-  // v0.5: Showroom became the default scene. 'ring' was the old built-in default, so it moves over once.
-  if (!settings.scenesV5) Object.assign(settings, { scenesV5: true, ...(settings.defaultScene === 'ring' && { defaultScene: 'showroom' }) });
+  // v0.5: Showroom became the default scene. 'ring' (once 'gold') was the old built-in default, so it moves over once.
+  if (!settings.scenesV5) Object.assign(settings, { scenesV5: true, ...(['ring', 'gold'].includes(settings.defaultScene) && { defaultScene: 'showroom' }) });
   // v0.6: White Cyc Studio became the default scene; Showroom was the default before, so it moves over once.
   if (!settings.scenesV6) Object.assign(settings, { scenesV6: true, ...(settings.defaultScene === 'showroom' && { defaultScene: 'white-cyc-studio' }) });
+  // 1.1.2: every workspace shares the same 3D rooms; an old flat scene (cyclorama, Miami, your backdrop) starts in its closest room.
+  settings.defaultScene = roomFor(settings.defaultScene);
   const apiBase = () => fixedApiBase || REGIONS[settings.region] || REGIONS.global;
 
   // ponytail: whole library in one JSON file rewritten on each change; move to SQLite past a few thousand models
@@ -236,8 +237,9 @@ export async function startServer({
       migrated = true;
     }
     for (const v of m.versions) if (!v.provider) { v.provider = 'tripo'; migrated = true; }
-    if (m.scene?.preset === 'gold') {
-      m.scene.preset = 'ring';
+    // Old flat scenes (gold or ring studio, cyclorama, Miami, your backdrop) open in their closest 3D room.
+    if (m.scene?.preset && m.scene.preset !== 'transparent' && m.scene.preset !== roomFor(m.scene.preset)) {
+      m.scene.preset = roomFor(m.scene.preset);
       if (existsSync(path.join(MODELS, m.id))) await writeAtomic(path.join(MODELS, m.id, 'scene.json'), m.scene);
       migrated = true;
     }
@@ -1173,7 +1175,7 @@ export async function startServer({
     const builtinHdri = (name) => (Object.hasOwn(HDRIS, name) ? path.join(hdriDir, `${name}.hdr`) : null);
     const envArg = (look) => {
       const picked = look === 'showroom' ? 'showroom' : look === 'transparent' ? null : m.scene?.preset || settings.defaultScene;
-      const preset = picked === 'cyclorama' ? 'white-cyc-studio' : picked; // Compose's default white cyc, built as the 3D one
+      const preset = picked && roomFor(picked); // the same room Compose shows (an old flat scene: its closest room)
       if (!ENVIRONMENTS[preset]) return [];
       const glb = (file) => path.join(envDir, path.basename(file));
       return ['--environment', JSON.stringify(blenderEnvironment(preset, envCamera(ENVIRONMENTS[preset].cam, 4 / 3), { hdri: builtinHdri, glb }))];

@@ -27,18 +27,17 @@ import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 import { normalizeDecals, decalMaterialParams, decalUrl } from './decals.js';
 import { mergeLook, effectsFor, hdriUrl, lookNeedsRebuild, hdriGround } from './look.js';
 import { buildEnvironment, buildRain } from './env3d.js';
-import { envScale, skyRotation } from './environments.js';
+import { envScale, skyRotation, ROOMS, roomFor } from './environments.js';
 import { Post, PathTraced, TONE } from './post.js';
 import { applyPaint, regroup, pickPiece, listPieces, previewColors, partNames } from './paint.js';
 import { applyMotion } from './rig.js';
 import { mirrorAttributes, depthRange, boneWeights, heat } from './model-tools.js';
 import { samplePath, skyAt, normalizePath } from './camera-path.js';
-import { STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, ENVIRONMENTS, envThumb, envCamera, letterbox, CAR_LENGTH, hfovOf, isCarShape, modelScale, fitDistance, frameOrbit } from './pipeline.js';
+import { STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, ENVIRONMENTS, envCamera, letterbox, CAR_LENGTH, hfovOf, isCarShape, modelScale, fitDistance, frameOrbit } from './pipeline.js';
 
 RectAreaLightUniformsLib.init();
 
 export { CAR_LENGTH };
-export const RING = '#ff7a66'; // the accent colour of the app
 export const GOLD = '#f2b56b'; // the showroom's floor ring
 export const CAMERAS = {
   front34: { label: 'Front ¾', turn: 30, elevation: 13, lens: 50, height: 'eye height' },
@@ -46,29 +45,19 @@ export const CAMERAS = {
   rear34: { label: 'Rear ¾', turn: 150, elevation: 13, lens: 50, height: 'eye height' },
   low: { label: 'Low hero', turn: 30, elevation: 2.5, lens: 35, height: 'low' },
 };
-// 'ring' was called 'gold' before v0.4; the server renames it in saved scenes and settings.
-// White Cyc Studio comes first: it is the default scene. Environments (environments.js) are real 3D places in
-// metres; the rest are built here.
+// Every workspace offers the same rooms (environments.js ROOMS; White studio first, the default). 'transparent' is
+// not a room: it is the see-through render look (no background), never in the picker. Older flat scenes (ring,
+// cyclorama, your Miami or custom backdrop) open in the closest room (roomFor).
 export const PRESETS = {
-  ...Object.fromEntries(Object.entries(ENVIRONMENTS).map(([key, p]) => [key, { label: p.label, note: p.note, env: true, thumb: envThumb(key) }])),
-  cyclorama: { label: 'Plain white room', note: 'Plain white, soft top light' },
-  ring: { label: 'Escalade ring studio', note: 'Reflective floor · coral ring · side light bars' },
-  transparent: { label: 'Transparent', note: 'RGBA PNG with soft contact shadow' },
-  miami: { label: 'Miami street at night', note: 'Add your Miami HDRI' },
-  custom: { label: 'Your backdrop or HDRI', note: 'Upload a JPG, PNG, EXR or HDR' },
+  ...Object.fromEntries(ROOMS.map((r) => [r.slug, { label: r.label, note: r.note, env: true, thumb: r.thumb }])),
+  transparent: { label: 'See-through', note: 'No background, just the model and a soft shadow' },
 };
-// Light intensities each preset uses when "Match lighting to scene" is on.
-const MATCHED = {
-  ring: { key: 1.3, fill: 0.3, rim: 1.4 },
-  showroom: { key: 1.1, fill: 0.35, rim: 1.3 },
-  transparent: { key: 1.6, fill: 0.6, rim: 0.9 },
-  cyclorama: { key: 1.1, fill: 0.6, rim: 0.4 },
-  backdrop: { key: 0.5, fill: 0.15, rim: 0.4 },
-};
+// Light intensities the see-through look uses when "Match lighting to scene" is on (rooms bring their own).
+const MATCHED = { transparent: { key: 1.6, fill: 0.6, rim: 0.9 } };
 
 export function defaultScene(settings = {}) {
   return {
-    preset: settings.defaultScene && settings.defaultScene !== 'transparent' ? settings.defaultScene : 'white-cyc-studio',
+    preset: roomFor(settings.defaultScene),
     modeled: false, // v0.5 Showroom option (modeled room instead of the photo); since v3 the room is always modeled
     backdrop: null, x: 0, y: 0, snap: true, turn: 30, scale: 1, sameSize: true,
     camera: 'front34', lens: 50, matchLighting: true, key: 1.3, fill: 0.3, rim: 1.4,
@@ -178,7 +167,6 @@ function glassMaterial(glass) {
   });
 }
 export const aspectOf = (preset) => (preset === 'transparent' ? 1 : 4 / 3);
-const needsBackdrop = (preset) => preset === 'miami' || preset === 'custom';
 const envOf = (s) => ENVIRONMENTS[s.preset] || null;
 // Where the key light points from: azimuth 0 = from the camera, negative = camera left; elevation above the floor.
 const sunDir = (azimuth, elevation) => {
@@ -263,42 +251,6 @@ const GlossShader = {
       #include <colorspace_fragment>
     }`,
 };
-
-// Soft additive glow around a ring (radius in local XY) or along a bar (local x).
-function glowMaterial(kind, color, width, strength, radius = 0) {
-  return new THREE.ShaderMaterial({
-    uniforms: { color: { value: new THREE.Color(color) }, width: { value: width }, strength: { value: strength }, radius: { value: radius } },
-    vertexShader: 'varying vec2 vPos; void main() { vPos = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-    fragmentShader: `uniform vec3 color; uniform float width; uniform float strength; uniform float radius; varying vec2 vPos;
-      void main() {
-        float d = ${{ ring: '(length(vPos) - radius) / width', bar: 'vPos.x / width', panel: 'vPos.y / width' }[kind]};
-        float edge = ${kind === 'panel' ? '1.0 - smoothstep(2.5, 6.0, abs(vPos.x))' : '1.0'};
-        gl_FragColor = vec4(color * strength * exp(-d * d) * edge, 1.0);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-      }`,
-    blending: THREE.AdditiveBlending, transparent: true, depthWrite: false,
-  });
-}
-const emissive = (color, intensity) => new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(intensity) });
-
-// The lighting the car paint reflects in the ring studio: dark room, overhead softbox, two light bars, the ring.
-function ringEnvironment() {
-  const env = new THREE.Scene();
-  const room = new THREE.Mesh(new THREE.BoxGeometry(26, 14, 26), new THREE.MeshBasicMaterial({ color: 0x030303, side: THREE.BackSide }));
-  room.position.y = 6;
-  env.add(room);
-  const add = (geo, mat, x, y, z, rx = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.x = rx; env.add(m); };
-  add(new THREE.PlaneGeometry(9, 4), emissive('#ffffff', 5), 0, 8, -1, Math.PI / 2);
-  add(new THREE.BoxGeometry(0.5, 7, 0.5), emissive('#ffffff', 9), -7, 3.6, -3);
-  add(new THREE.BoxGeometry(0.5, 7, 0.5), emissive('#ffffff', 9), 7, 3.6, -3);
-  add(new THREE.PlaneGeometry(6, 2.5), emissive('#fff6ea', 0.9), 0, 2.2, 11);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(3.3, 0.08, 8, 96), emissive(RING, 2));
-  ring.rotation.x = Math.PI / 2;
-  ring.position.y = 0.05;
-  env.add(ring);
-  return env;
-}
 
 // Contact shadow: renders the car from below into a small target, blurs it and lays it on the floor
 // (after the three.js "shadow contact" example). Updated every frame because the car turns.
@@ -463,7 +415,7 @@ export class Studio {
   }
 
   env(name) {
-    this.envs[name] ||= this.pmrem.fromScene({ ring: ringEnvironment }[name]?.() || new RoomEnvironment(), 0.04).texture;
+    this.envs[name] ||= this.pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     return this.envs[name];
   }
 
@@ -1008,7 +960,7 @@ export class Studio {
     const rig = this.rig.lighting;
     // An environment's light is matched to the place; the rig then moves and tints it from there.
     const place = envOf(s)?.light || null;
-    const k = !s.matchLighting ? s : place || MATCHED[needsBackdrop(s.preset) ? 'backdrop' : s.preset] || MATCHED.showroom;
+    const k = !s.matchLighting ? s : place || MATCHED.transparent;
     const sun = place?.sun || { azimuth: DEFAULT_LIGHTING.azimuth, elevation: DEFAULT_LIGHTING.elevation, kelvin: DEFAULT_LIGHTING.kelvin };
     this.lights.key.intensity = k.key * rig.key;
     this.lights.fill.intensity = k.fill * rig.fill;
@@ -1020,8 +972,8 @@ export class Studio {
     const el = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(sun.elevation + rig.elevation - DEFAULT_LIGHTING.elevation, 3, 88));
     this.lights.key.position.set(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)).multiplyScalar(12);
     this.lights.fill.position.set(-Math.sin(az) * 9, 3, Math.cos(az) * 9); // low, on the other side of the camera
-    if (this.floor) this.floor.material.uniforms.strength.value = place ? place.reflection * s.reflection / 0.7 : s.reflection * (s.preset === 'showroom' ? 0.55 : 0.75);
-    this.shadow.plane.material.opacity = place ? place.shadow : this.state.preset === 'ring' ? 0.85 : 0.7;
+    if (this.floor) this.floor.material.uniforms.strength.value = place ? place.reflection * s.reflection / 0.7 : s.reflection * 0.75;
+    this.shadow.plane.material.opacity = place ? place.shadow : 0.7;
     if (this.catcher) this.catcher.material.opacity = (place?.shadow ?? 0.7) * 0.45;
   }
 
@@ -1197,54 +1149,8 @@ export class Studio {
     this.clearStage();
     const p = this.state.preset;
     if (ENVIRONMENTS[p]) await this.buildEnv(p, build);
-    else if (p === 'ring') this.buildRing();
-    else if (p === 'cyclorama') this.buildCyclorama();
-    else if (needsBackdrop(p)) await this.buildBackdrop(build);
     else this.scene.environment = this.env('room'); // transparent
     this.applyLights();
-  }
-
-  // a) Escalade ring studio. Built the same way every time.
-  buildRing() {
-    const add = (o) => { this.stage.add(o); return o; };
-    this.scene.background = new THREE.Color(0x050505);
-    this.scene.environment = this.env('ring');
-    const w = Math.round(this.width * this.renderer.getPixelRatio());
-    const h = Math.round(this.height * this.renderer.getPixelRatio());
-    this.floor = add(new Reflector(new THREE.PlaneGeometry(80, 80), { color: 0x060606, textureWidth: w, textureHeight: h, clipBias: 0.003, shader: FloorShader }));
-    this.floor.rotation.x = -Math.PI / 2;
-    this.floor.material.uniforms.texel.value.set(1 / w, 1 / h);
-    const wall = add(new THREE.Mesh(new THREE.PlaneGeometry(60, 24), new THREE.MeshStandardMaterial({ color: 0x0d0c0b, roughness: 0.92 })));
-    wall.position.set(0, 12, -8);
-    const ring = add(new THREE.Mesh(new THREE.TorusGeometry(3.3, 0.024, 12, 320), emissive(RING, 2.6)));
-    ring.rotation.x = Math.PI / 2;
-    ring.position.y = 0.012;
-    const halo = add(new THREE.Mesh(new THREE.RingGeometry(2.7, 3.9, 320, 1), glowMaterial('ring', RING, 0.16, 0.9, 3.3)));
-    halo.rotation.x = -Math.PI / 2;
-    halo.position.y = 0.008;
-    for (const x of [-4.6, 4.6]) { // just inside the frame of the fitted camera
-      const bar = add(new THREE.Mesh(new THREE.BoxGeometry(0.12, 3.5, 0.12), emissive('#ffffff', 4)));
-      bar.position.set(x, 1.75, -3.8);
-      const glow = add(new THREE.Mesh(new THREE.PlaneGeometry(1.6, 3.9), glowMaterial('bar', '#ffffff', 0.22, 0.55)));
-      glow.position.set(x, 1.75, -3.85);
-      const light = add(new THREE.RectAreaLight(0xffffff, 6, 0.3, 3.5));
-      light.position.set(x, 1.75, -3.6);
-      light.lookAt(0, 1, 0);
-    }
-    // The soft glow of the overhead softbox along the top of the back wall. The floor mustn't mirror it:
-    // seen from below it smears into a white patch in front of the car.
-    const softbox = add(new THREE.Mesh(new THREE.PlaneGeometry(12, 3), glowMaterial('panel', '#ffffff', 0.45, 0.55)));
-    softbox.position.set(0, 5.6, -7.9);
-    const mirror = this.floor.onBeforeRender;
-    this.floor.onBeforeRender = (...args) => {
-      softbox.visible = false;
-      mirror.apply(this.floor, args);
-      softbox.visible = true;
-    };
-    // The overhead panel itself is only seen in the car paint (environment); here it lights the car.
-    const overhead = add(new THREE.RectAreaLight(0xffffff, 3.5, 7, 3));
-    overhead.position.set(0, 6.3, -0.6);
-    overhead.lookAt(0, 0, -0.6);
   }
 
   // b) Environments (environments.js): the place is geometry around the car in metres, so it turns with the
@@ -1332,74 +1238,7 @@ export class Studio {
     }
   }
 
-  // c) White cyclorama: floor curving up into the back wall, soft top light.
-  buildCyclorama() {
-    const add = (o) => { this.stage.add(o); return o; };
-    this.scene.background = new THREE.Color(0xeceef1);
-    this.scene.environment = this.env('room');
-    const r = 4;
-    const profile = []; // (z, y): flat floor, a quarter-circle cove, then the wall
-    for (let i = 0; i <= 8; i++) profile.push([30 - i * (30 / 8), 0]);
-    for (let i = 1; i <= 16; i++) { const a = (i / 16) * (Math.PI / 2); profile.push([-r * Math.sin(a), r - r * Math.cos(a)]); }
-    for (let i = 1; i <= 6; i++) profile.push([-r, r + i * 3]);
-    const geo = new THREE.PlaneGeometry(60, 1, 1, profile.length - 1);
-    const pos = geo.attributes.position;
-    for (let i = 0; i < pos.count; i++) {
-      const [z, y] = profile[Math.floor(i / 2)];
-      pos.setXYZ(i, i % 2 ? 30 : -30, y, z);
-    }
-    geo.computeVertexNormals();
-    const cyc = add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xf4f5f7, roughness: 0.92, side: THREE.DoubleSide })));
-    cyc.receiveShadow = true;
-    cyc.position.z = -3.5;
-    const top = add(new THREE.RectAreaLight(0xffffff, 4, 8, 4));
-    top.position.set(0, 7, 0);
-    top.lookAt(0, 0, 0);
-    add(new THREE.HemisphereLight(0xffffff, 0xd8dadd, 0.7));
-  }
-
-  // d/e) Your HDRI (environment + ground-projected background) or your backdrop image.
-  async buildBackdrop(build) {
-    const file = this.state.backdrop;
-    if (!file) {
-      this.scene.background = new THREE.Color(0x0b0a09);
-      this.scene.environment = this.env('room');
-      this.message = this.state.preset === 'miami' ? 'Add your Miami HDRI' : 'Upload a backdrop image or HDRI';
-      return;
-    }
-    const url = `/backdrops/${encodeURIComponent(file)}`;
-    const ext = file.slice(file.lastIndexOf('.')).toLowerCase();
-    let tex;
-    try {
-      tex = ext === '.hdr' ? await new HDRLoader().loadAsync(url) : ext === '.exr' ? await new EXRLoader().loadAsync(url) : await new THREE.TextureLoader().loadAsync(url);
-    } catch {
-      if (build !== this.builds) return;
-      this.scene.environment = this.env('room');
-      this.message = 'Could not load that backdrop';
-      return;
-    }
-    if (build !== this.builds) { tex.dispose(); return; } // another preset was picked while this one loaded
-    this.backdropTexture = tex;
-    const image = tex.image;
-    const equirect = ext === '.hdr' || ext === '.exr' || Math.abs(image.width / image.height - 2) < 0.05;
-    if (equirect) {
-      tex.mapping = THREE.EquirectangularReflectionMapping;
-      if (ext !== '.hdr' && ext !== '.exr') tex.colorSpace = THREE.SRGBColorSpace;
-      this.backdropEnv = this.pmrem.fromEquirectangular(tex);
-      this.scene.environment = this.backdropEnv.texture;
-      const sky = new GroundedSkybox(tex, 3, 90);
-      sky.position.y = 3 - 0.01;
-      this.stage.add(sky);
-    } else {
-      // A flat photo: fills the frame behind the car like a backdrop print.
-      tex.colorSpace = THREE.SRGBColorSpace;
-      this.scene.background = tex;
-      this.scene.environment = this.env('room');
-      this.coverBackground();
-    }
-  }
-
-  // Fits your own flat background photo (custom backdrop, look background image) to the frame like a print
+  // Fits your own flat background photo (the look's background image) to the frame like a print
   // (cover), lined up with the frame inside the canvas. Built-in environments are 3D and never use this.
   coverBackground() {
     const tex = this.scene.background;

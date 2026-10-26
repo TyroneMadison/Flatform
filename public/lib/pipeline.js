@@ -80,9 +80,8 @@ export function cleanGlass(next, base = DEFAULT_GLASS) {
 
 // 3D environments (environments.js): real places in metres. Each has an eye-level car-view camera (envCamera)
 // calibrated so the car stands on the floor where its thumbnail shows it; light = the matched key/fill/rim.
-export { ENVIRONMENTS } from './environments.js';
-// World-picker thumbnails only, never a background (test-app/make-env-thumbs.mjs renders them, 320 x 200 webp).
-export const envThumb = (slug) => `/img/rooms/${slug}.webp`;
+// World-picker thumbnails (envThumb) are only ever thumbnails, never a background.
+export { ENVIRONMENTS, ROOMS, envThumb, roomFor } from './environments.js';
 export const ROOM_THUMB_SIZE = { w: 320, h: 200 };
 
 // The car-view camera of an environment, for a frame of the given aspect. Calibration in fractions of the frame

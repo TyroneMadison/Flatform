@@ -10,7 +10,7 @@ import { SCENE_GROUPS, shows, dockFor, TOOL_TIPS, changeName } from '../lib/stag
 import { ideasFor, applyIdea } from '../lib/render-ideas.js';
 import { modelInfo } from '../lib/rig.js';
 import { icon } from '../lib/icons.js';
-import { FRAMES, HALF, STEP, pad3, LOOKS, ENVIRONMENTS } from '../lib/pipeline.js';
+import { FRAMES, HALF, STEP, pad3, LOOKS, ENVIRONMENTS, ROOMS, roomFor } from '../lib/pipeline.js';
 import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf, toggleView, FREE_TIP } from '../lib/studio.js';
 import { initMotion, renderMotionGroup, onMotionClick, onMotionInput, onMotionChange, stopMotion, onMotionCanvasClick } from './compose-motion.js';
 import { unriggedVersion } from '../lib/autorig.js';
@@ -44,7 +44,7 @@ let aside = 'places'; // the left panel: 'places' (the scene list) or 'shelf' (A
 
 const fixed = (n, d = 2) => Number(n).toFixed(d);
 const level = (v) => (v <= 0.02 ? 'Off' : v < 0.35 ? 'Soft' : v < 0.7 ? 'Medium' : 'Strong');
-const hasFloor = () => scene.preset === 'ring' || scene.preset === 'showroom'; // the presets with a reflective floor
+const hasFloor = () => (ENVIRONMENTS[scene.preset]?.light.reflection ?? 0) > 0; // the rooms with a shiny floor
 const softness = (v) => (v < 0.3 ? 'Hard' : v < 0.7 ? 'Soft' : 'Very soft');
 const carLike = () => studio?.carLike ?? true; // a tall model (humanoid) is never size-locked
 const sizeLocked = () => scene.sameSize && carLike();
@@ -60,6 +60,7 @@ export async function mount(el, { id }) {
     return;
   }
   scene = { ...baseScene(), ...m.scene };
+  if (scene.preset !== 'transparent') scene.preset = roomFor(scene.preset); // an old flat scene opens in its closest room
   initSession({ root: el, model: () => m, scene: () => scene, frame: () => frame });
   initPaint({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector, swapVersion, reload: async (next, { glb = true } = {}) => { m = upsert(next); if (studio) studio.kind = m.kind; renderModel(); if (glb) await loadModel(); refresh(); } });
@@ -101,7 +102,6 @@ export async function mount(el, { id }) {
             <button class="chip" type="button" role="tab" data-aside="shelf" aria-selected="false" title="Drag people, cars and props into the scene (${keyOf('shelf')})">Add things <kbd>${keyOf('shelf')}</kbd></button>
           </div>
           <div class="scnlist" id="sceneList"></div><div class="shelf" id="shelf" hidden></div></section>
-        <input type="file" id="backdropFile" accept=".hdr,.exr,.jpg,.jpeg,.png" hidden>
         <div class="grp" id="startover"><h3>Start over</h3>
           <div class="mg-row trio">
             <button class="btn" type="button" data-act="reset-scene" title="Put the world, lights, colours, materials, camera, pose and render options back to how a new scene starts, and the model back to how it was before joints were added. Your library, saved renders and versions are not touched, and you can undo it. (${keyOf('reset')})">Reset scene</button>
@@ -240,7 +240,7 @@ function renderHud() {
   const look = lookOf(scene.preset);
   $('#hudLook', root).textContent = `${look === 'studio' ? 'Studio' : LOOKS[look].label} look · ${look === 'transparent' ? '1:1' : '4:3'} · 2048 px`;
   $('#vp', root).classList.toggle('clear', scene.preset === 'transparent');
-  $('#vp', root).classList.toggle('light', scene.preset === 'transparent' || scene.preset === 'cyclorama');
+  $('#vp', root).classList.toggle('light', scene.preset === 'transparent');
   if (studio && !$('#hudMsg', root).textContent.startsWith('Loading')) {
     $('#hudMsg', root).hidden = !studio.message;
     $('#hudMsg', root).textContent = studio.message || '';
@@ -406,25 +406,11 @@ function renderTimeline() {
   $('#readout', root).textContent = `Frame ${pad3(frame)} · ${frame * STEP}°`;
 }
 
+// The World picker: the one shared room list (environments.js ROOMS), the same in every workspace.
 function renderScenes() {
-  const art = {
-    ring: '<div class="stage s-ring"><div class="sg-wall"></div><div class="sg-panel"></div><div class="sg-bar l"></div><div class="sg-bar r"></div><div class="sg-floor"></div><div class="sg-ring"></div></div>',
-    transparent: '<div class="stage s-clear"><div class="checker"></div><div class="sc-shadow"></div></div>',
-    cyclorama: '<div class="stage s-cyc"><div class="sc-shadow"></div></div>',
-    miami: '<div class="stage s-miami"><div class="sm-sky"></div><div class="sm-city"></div><div class="sm-road"></div><div class="sm-neon"></div></div>',
-    custom: '<div class="stage s-hdri"></div>',
-  };
-  const files = state.settings?.backdrops || {};
-  const html = Object.entries(PRESETS).map(([key, p]) => {
-    const file = files[key];
-    const photo = file && /\.(jpe?g|png)$/i.test(file) ? `<img class="thumb" src="/backdrops/${encodeURIComponent(file)}" alt="">` : '';
-    const note = (key === 'miami' || key === 'custom') && file ? `${file.endsWith('.hdr') || file.endsWith('.exr') ? '360 photo' : 'Background'} added · click again to replace` : p.note;
-    const needs = (key === 'miami' || key === 'custom') && !file;
-    const thumb = p.env && !art[key] ? `<div class="stage"><img class="thumb" src="${p.thumb}" alt="" loading="lazy" onerror="this.remove()"></div>` : '';
-    return `<button class="scn${key === 'white-cyc-studio' ? ' pinned' : ''}" type="button" data-preset="${key}" aria-pressed="${scene.preset === key}" title="${esc(p.label)}: ${esc(note)}. Click to put your model here.">
-      <div class="scn-th">${thumb || (photo ? `<div class="stage">${photo}</div>` : art[key])}${needs ? `<div class="up">${icon('upload', 18)}</div>` : ''}${key === 'white-cyc-studio' ? '<span class="pin">Default</span>' : ''}</div>
-      <div class="scn-t"><b>${esc(p.label)}</b></div></button>`;
-  }).join('');
+  const html = ROOMS.map((r) => `<button class="scn${r.slug === 'white-cyc-studio' ? ' pinned' : ''}" type="button" data-preset="${r.slug}" aria-pressed="${scene.preset === r.slug}" title="${esc(r.label)}: ${esc(r.note)}. Click to put your model here.">
+      <div class="scn-th"><div class="stage"><img class="thumb" src="${r.thumb}" alt="" loading="lazy" onerror="this.remove()"></div>${r.slug === 'white-cyc-studio' ? '<span class="pin">Default</span>' : ''}</div>
+      <div class="scn-t"><b>${esc(r.label)}</b></div></button>`).join('');
   const box = $('#sceneList', root);
   if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
   renderAside();
@@ -638,14 +624,7 @@ function bind() {
     if (t.dataset.act === 'better') $('#betterPhoto', el).click();
     if (t.dataset.preset) {
       const key = t.dataset.preset;
-      const file = state.settings?.backdrops?.[key];
-      if ((key === 'miami' || key === 'custom') && (!file || scene.preset === key)) {
-        const input = $('#backdropFile', el);
-        input.dataset.slot = key;
-        input.click();
-        if (!file) return;
-      }
-      if (scene.preset !== key) await change({ preset: key, backdrop: file || null });
+      if (scene.preset !== key) await change({ preset: key, backdrop: null });
     }
     if (t.dataset.tool) {
       tool = t.dataset.tool;
@@ -688,22 +667,6 @@ function bind() {
       e.target.value = '';
       setupFor(m, files).catch((err) => toast(err.message));
     }
-  });
-  $('#backdropFile', el).addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    const slot = e.target.dataset.slot;
-    e.target.value = '';
-    if (!file) return;
-    $('#hudMsg', el).hidden = false;
-    $('#hudMsg', el).textContent = `Uploading ${file.name}…`;
-    try {
-      state.settings.backdrops = await api(`/api/backdrops?slot=${slot}&name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
-      $('#hudMsg', el).textContent = 'Loading background…';
-      await change({ preset: slot, backdrop: state.settings.backdrops[slot] });
-      refresh();
-    } catch (err) { toast(err.message); }
-    $('#hudMsg', el).hidden = !studio?.message;
-    $('#hudMsg', el).textContent = studio?.message || '';
   });
 
   // Timeline: click or drag across the ticks, arrow keys step one frame.
