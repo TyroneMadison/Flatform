@@ -4,8 +4,9 @@ import { icon } from './lib/icons.js';
 import { applyTheme } from './lib/theme.js';
 import { applyHelpText } from './lib/help-text.js';
 import { installTips } from './lib/tips.js';
-import { PROVIDERS, ENGINES, VIEWS, normalize, presetConfig, matchPreset, PRESETS } from './lib/engines.js';
+import { PROVIDERS, ENGINES, normalize, presetConfig, matchPreset, PRESETS } from './lib/engines.js';
 import { estimate } from './lib/pricing.js';
+import { guessPhotos, planJobs } from './lib/photo-set.js';
 import { isModelFile, importModel } from './lib/importer.js';
 import { installHotkeys, loadKeys } from './lib/hotkeys.js';
 import { SHORTCUTS, worksOn, keyOf } from './lib/shortcuts.js';
@@ -184,8 +185,8 @@ export function takePhotos(files) {
   }
   return photos;
 }
-// New photos go to the setup screen, where you choose the provider and press Generate. In 4-view mode they fill the
-// empty view slots in order. quick: straight into the queue with the last setup used (Generate screen, "drop more").
+// New photos go to the setup screen, where you choose the provider and press Generate. Several photos are one thing
+// from different sides: one model. quick: straight into the queue with the last setup used (Generate screen, "drop more").
 export function addFiles(files, { quick = false } = {}) {
   const list = [...files];
   const models = list.filter(isModelFile);
@@ -199,8 +200,13 @@ export function addFiles(files, { quick = false } = {}) {
     return;
   }
   if (quick) {
-    const setup = normalize({ ...savedSetup(), mode: 'single' });
-    for (const p of photos) enqueue({ name: p.name, setup, files: { front: p } });
+    const byId = new Map(photos.map((p) => [p.id, p]));
+    guessPhotos(photos).then(() => {
+      for (const j of planJobs(photos, normalize({ ...savedSetup(), mode: 'single' })).jobs) {
+        const files = Object.fromEntries(Object.entries(j.files).map(([v, id]) => [v, byId.get(id)]));
+        enqueue({ name: files.front.name, setup: j.setup, files, refs: j.refs.map((id) => byId.get(id)) });
+      }
+    });
     return;
   }
   placePhotos(photos);
@@ -208,11 +214,7 @@ export function addFiles(files, { quick = false } = {}) {
 function placePhotos(photos) {
   const pending = state.pending;
   if (pending.modelId && route.name !== 'setup') Object.assign(pending, { photos: [], views: {}, modelId: null }); // a new model
-  for (const p of photos) {
-    const slot = pending.mode === 'views' && VIEWS.find((v) => !pending.views[v]);
-    if (slot) pending.views[slot] = p;
-    else pending.photos.push(p);
-  }
+  pending.photos.push(...photos);
   if (route.name === 'setup') refresh();
   else go('#/setup');
 }
@@ -233,21 +235,21 @@ async function importModels(files) {
 // Regenerate a model: the setup screen with its current photos (fetched back from the library) or new ones.
 export async function setupFor(m, files) {
   const v = m.versions.find((x) => x.n === m.activeVersion) || m;
-  const pending = { photos: [], views: {}, modelId: m.id, mode: v.mode === 'views' && !files ? 'views' : 'single', setup: v.engine ? v : null };
+  const pending = { photos: [], views: {}, modelId: m.id, mode: 'single', setup: v.engine ? v : null };
   if (files) pending.photos = takePhotos(files);
   else {
-    for (const [view, file] of Object.entries(v.views || { front: v.source })) {
+    const kept = (v.refs || []).map((file) => [null, file]);
+    for (const [view, file] of [...Object.entries(v.views || { front: v.source }), ...kept]) {
       const blob = await (await fetch(fileUrl(m, file))).blob();
-      const photo = { id: crypto.randomUUID(), file: new File([blob], file, { type: blob.type }), type: blob.type, name: m.name };
-      if (pending.mode === 'views') pending.views[view] = photo;
-      else pending.photos.push(photo);
+      pending.photos.push({ id: crypto.randomUUID(), file: new File([blob], file, { type: blob.type }), type: blob.type, name: m.name,
+        ...(view && { angle: view, sure: 1, angleSet: true }) }); // the sides it was made from keep their angle
     }
   }
-  if (!pending.photos.length && !pending.views.front) return;
+  if (!pending.photos.length) return;
   state.pending = pending;
   go(`#/setup/${m.id}`);
 }
-// job: { name, setup, files: { front, left, back, right } of photos, modelId? }. open: show it once it's sent.
+// job: { name, setup, files: { front, left, back, right } of photos, refs?: photos kept for checking detail, modelId? }. open: show it once it's sent.
 export function enqueue(job, open = false) {
   state.queue.push({ qid: crypto.randomUUID(), status: 'waiting', open, ...job });
   refresh();
@@ -268,6 +270,7 @@ async function pump() {
         form.append('setup', JSON.stringify(item.setup));
         form.append('workspace', state.workspace);
         for (const [view, p] of Object.entries(item.files)) form.append(view, new File([p.file], p.file.name || `${view}.jpg`, { type: p.type }));
+        for (const [i, p] of (item.refs || []).entries()) form.append(`ref${i}`, new File([p.file], p.file.name || `ref${i}.jpg`, { type: p.type })); // kept for checking detail
         let m = upsert(await api(item.modelId ? `/api/models/${item.modelId}/versions` : '/api/models', { method: 'POST', body: form }));
         // From the drawing kit: the legend colors and the color map stay with the model for Part colors.
         if (item.drawing && !item.modelId) m = upsert(await send(`/api/models/${m.id}`, 'PATCH', { scene: { ...m.scene, drawing: item.drawing } }).catch(() => m));

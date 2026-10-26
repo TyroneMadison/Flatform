@@ -49,6 +49,10 @@ const fake = http.createServer(async (req, res) => {
     if (failNext) { failing.add(task); failNext = false; }
     return ok({ task_id: task });
   }
+  if (req.url === '/v3/generation/multiview-to-model') { // several sides of one thing: one job
+    generationBodies.push({ multiview: true, ...JSON.parse(body) });
+    return ok({ task_id: `task_gen${++generations}` });
+  }
   if (req.url === '/v3/models/convert') {
     const { input, format } = JSON.parse(body);
     seen.push(`convert ${input} ${format}`);
@@ -645,9 +649,15 @@ test('setup screen: a Tripo preset goes out as multipart with its options', asyn
   assert.deepEqual(generationBodies.at(-1), { input: `file_${uploads.length}`, model: 'v3.1-20260211', texture: true, pbr: true, texture_quality: 'detailed' });
   const v = created.body.versions[0];
   assert.deepEqual([created.body.name, v.provider, v.engine, v.mode, v.estimate, v.source], ['Setup Car', 'tripo', 'tripo-direct', 'single', 40, 'source.png']);
-  // Tripo direct takes one photo, so extra views are not kept.
-  const four = await post({ setup: setup({ provider: 'tripo', engine: 'tripo-direct', mode: 'views' }), front: png('f'), left: png('l') });
-  assert.deepEqual([four.status, four.body.versions[0].mode, four.body.versions[0].views], [201, 'single', undefined]);
+  // Several sides go to Tripo as ONE multiview job, front first; kept photos are saved with the model, not sent.
+  const four = await post({ setup: setup({ provider: 'tripo', engine: 'tripo-direct', mode: 'views' }), front: png('f'), left: png('l'), back: png('b'), ref0: png('extra') });
+  assert.equal(four.status, 201, four.body.error);
+  const fv = four.body.versions[0];
+  assert.deepEqual([fv.mode, fv.views, fv.refs, fv.estimate], ['views', { front: 'source.png', left: 'source-left.png', back: 'source-back.png' }, ['source-ref1.png'], 30]); // default options: a painted model, the same price as one photo
+  const mv = generationBodies.at(-1);
+  assert.equal(mv.multiview, true);
+  assert.deepEqual(mv.inputs.map((x) => Object.keys(x)[0]), ['front', 'left', 'back']);
+  assert.equal(mv.input, undefined);
 
   // Refused before anything is sent: a 3D AI Studio setup without its key, unknown engines, other image types.
   const before = generationBodies.length;

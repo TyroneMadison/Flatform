@@ -15,6 +15,7 @@ import { blenderEnvironment } from './public/lib/environments.js';
 import { findBlender as findBlenderOn, blenderVersion, blenderPose } from './blender.mjs';
 import { runAutoRig } from './autorig.mjs';
 import { PROVIDERS, VIEWS, DEFAULT_PROVIDER, normalize, baseSetup, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
+import { MAX_REFS } from './public/lib/photo-set.js';
 import { estimate } from './public/lib/pricing.js';
 import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
 import { paintSpec } from './glb-pieces.mjs';
@@ -81,7 +82,7 @@ const FORMATS = ['GLTF', 'FBX', 'USDZ', 'OBJ', 'STL', '3MF'];
 const IMAGE_TYPES = { 'image/png': '.png', 'image/jpeg': '.jpg' };
 const HEIC_TYPES = ['image/heic', 'image/heif'];
 const MAX_IMAGE = 20 * 1024 * 1024; // Tripo's and 3D AI Studio's limit for images
-const MAX_FORM = VIEWS.length * MAX_IMAGE + 1024 * 1024; // four views and the setup
+const MAX_FORM = (VIEWS.length + MAX_REFS) * MAX_IMAGE + 1024 * 1024; // four views, the kept photos and the setup
 const MAX_MODEL = 300 * 1024 * 1024; // a dropped 3D model: its GLB, the original file and a preview
 export const MODEL_EXTS = ['.glb', '.gltf', '.fbx', '.obj', '.usdz']; // 3D files the Drop step takes
 const MAX_RENDER_FILE = 128 * 1024 * 1024; // a 6144 px PNG sprite sheet fits easily
@@ -387,7 +388,12 @@ export async function startServer({
       const file = form.get(view);
       if (file && typeof file === 'object') views[view] = await toImage(Buffer.from(await file.arrayBuffer()), file.type);
     }
-    return { setup, views, name: form.get('name'), workspace: workspaceOf(form.get('workspace')), kind: form.get('kind') };
+    const refs = []; // photos kept for checking detail: saved with the model, never sent
+    for (let i = 0; i < MAX_REFS; i++) {
+      const file = form.get(`ref${i}`);
+      if (file && typeof file === 'object') refs.push(await toImage(Buffer.from(await file.arrayBuffer()), file.type));
+    }
+    return { setup, views, refs, name: form.get('name'), workspace: workspaceOf(form.get('workspace')), kind: form.get('kind') };
   }
   const workspaceOf = (w) => (w === 'warframe' ? 'warframe' : 'car');
   // What a model is, humanoid or car: picked on creation (the form's kind, else the workspace: Warframe makes
@@ -418,11 +424,16 @@ export async function startServer({
       return out.task_id;
     }
     if (setup.provider === 'tripo') {
-      const { image, type } = views.front;
-      const form = new FormData();
-      form.append('file', new Blob([image], { type }), 'image' + IMAGE_TYPES[type]);
-      const { file_token } = await tripo('/files', { body: form }); // uploads are free
-      const { task_id } = await paid('tripo', spend, () => tripo('/generation/image-to-model', { json: tripoDirectBody(setup.options, file_token) }));
+      const tokens = {};
+      for (const [view, { image, type }] of Object.entries(views)) {
+        const form = new FormData();
+        form.append('file', new Blob([image], { type }), 'image' + IMAGE_TYPES[type]);
+        tokens[view] = (await tripo('/files', { body: form })).file_token; // uploads are free
+      }
+      // 2 to 4 sides: one multiview job (front first). One photo: image to model, as before.
+      const multi = setup.mode === 'views';
+      const { task_id } = await paid('tripo', spend, () => tripo(multi ? '/generation/multiview-to-model' : '/generation/image-to-model',
+        { json: tripoDirectBody(setup.options, multi ? tokens : tokens.front) }));
       return task_id;
     }
     const uris = Object.fromEntries(Object.entries(views).map(([view, { image, type }]) => [view, `data:${type};base64,${image.toString('base64')}`]));
@@ -443,6 +454,15 @@ export async function startServer({
     }
     return names;
   }
+  // Kept photos: source{-vN}-ref1.ext and so on.
+  async function saveRefs(m, n, refs = []) {
+    const names = [];
+    for (const [i, { image, type }] of refs.entries()) {
+      names.push(`${vname('source', n)}-ref${i + 1}${IMAGE_TYPES[type]}`);
+      await writeFile(path.join(MODELS, m.id, names[i]), image);
+    }
+    return names;
+  }
   async function readViews(m, v) {
     const names = v.views || { front: v.source };
     const views = {};
@@ -456,14 +476,14 @@ export async function startServer({
     provider: setup.provider, engine: setup.engine, mode: setup.mode, options: setup.options,
     prompt: typeof setup.options?.prompt === 'string' ? setup.options.prompt : null, credits: estimate(setup).credits,
   });
-  const newVersion = (n, setup, task_id, names) => {
+  const newVersion = (n, setup, task_id, names, refs) => {
     const now = new Date().toISOString();
     return {
       n, created_at: now, submitted_at: now, provider: setup.provider, engine: setup.engine, mode: setup.mode, options: setup.options,
       generation: generationOf(setup),
       estimate: estimate(setup).credits, task_id, status: 'generating', progress: 0,
       ...(setup.provider === 'tripo' ? { tripo_status: 'queued' } : { upstream_status: 'PENDING' }),
-      source: names.front, ...(setup.mode === 'views' && { views: names }), exports: {},
+      source: names.front, ...(setup.mode === 'views' && { views: names }), ...(refs?.length && { refs }), exports: {},
     };
   };
 
@@ -509,7 +529,7 @@ export async function startServer({
   }
 
   async function createModel(req, queryName) {
-    const { setup, views, name, workspace, kind } = await readInput(req);
+    const { setup, views, refs, name, workspace, kind } = await readInput(req);
     if (!setup) throw new HttpError(400, 'Add a photo');
     checkViews(setup, views);
     const id = randomUUID();
@@ -518,7 +538,7 @@ export async function startServer({
     m.kind = kindOf(kind, m.workspace);
     m.slug = uniqueSlug(m.name, slugsExcept(m));
     await mkdir(path.join(MODELS, m.id), { recursive: true });
-    m.versions.push(newVersion(1, setup, task_id, await saveViews(m, 1, views)));
+    m.versions.push(newVersion(1, setup, task_id, await saveViews(m, 1, views), await saveRefs(m, 1, refs)));
     library.unshift(mirror(m));
     await save();
     return m;
@@ -536,7 +556,7 @@ export async function startServer({
     const task_id = await submit(setup, views, m.id);
     const names = fresh ? await saveViews(m, n, views)
       : Object.fromEntries(Object.keys(views).map((view) => [view, (active(m).views || { front: active(m).source })[view]]));
-    m.versions.push(newVersion(n, setup, task_id, names));
+    m.versions.push(newVersion(n, setup, task_id, names, fresh ? await saveRefs(m, n, input.refs) : active(m).refs));
     m.activeVersion = n;
     mirror(m);
     await save();

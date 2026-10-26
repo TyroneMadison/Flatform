@@ -97,7 +97,7 @@ const JARGON = [
 const UI_FILES = [
   ...readdirSync(path.join(ROOT, 'public/views')).map((f) => `public/views/${f}`),
   'public/app.js', 'public/index.html',
-  ...['stage', 'shortcuts', 'look', 'render-types', 'render-ideas', 'tennogen-ui', 'notices', 'render-status', 'templates', 'engines', 'pricing', 'plain-errors', 'sheets', 'checklist', 'import-flow', 'health', 'testrig', 'render-effects', 'environments', 'importer', 'tennogen', 'identify', 'pipeline', 'version', 'palette', 'drawing-tips'].map((f) => `public/lib/${f}.js`),
+  ...['stage', 'shortcuts', 'look', 'render-types', 'render-ideas', 'tennogen-ui', 'notices', 'render-status', 'templates', 'engines', 'pricing', 'plain-errors', 'sheets', 'checklist', 'import-flow', 'health', 'testrig', 'render-effects', 'environments', 'importer', 'tennogen', 'identify', 'pipeline', 'version', 'palette', 'drawing-tips', 'photo-set'].map((f) => `public/lib/${f}.js`),
 ];
 // Every string literal in a JS file (a template's ${…} becomes •, and strings inside it are read too).
 function literals(src) {
