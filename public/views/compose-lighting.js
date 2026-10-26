@@ -1,11 +1,14 @@
 // Compose, the "Lighting studio" group (Sadie half): one-click environments (garage, desert dusk, white
 // cyclorama and the studio ones) and a compare strip that shows the current model under each one.
-// Swapping only replaces the environment; the stage is not rebuilt (look.js lookNeedsRebuild).
+// Swapping only replaces the environment; the stage is not rebuilt (look.js lookNeedsRebuild), except for the
+// studios with a 3D set (preset), which switch the scene to it.
 import { esc } from '../app.js';
 import { LIGHTING_PRESETS, applyLightingPreset, lightingPresetOf } from '../lib/look.js';
 import { Studio } from '../lib/studio.js';
 
 let ctx; // { scene, studio, change, renderInspector, modelUrl }
+// The scene change one lighting preset makes: its look, plus its 3D set if it has one.
+const sceneFor = (scene, id) => ({ look: applyLightingPreset(scene.look, id), ...(LIGHTING_PRESETS[id].preset && { preset: LIGHTING_PRESETS[id].preset }) });
 let thumbs = {}, thumbKey = '', busy = false;
 export function initLighting(c) { ctx = c; thumbs = {}; thumbKey = ''; busy = false; }
 
@@ -29,10 +32,10 @@ async function makeThumbs() {
     s = new Studio(canvas, { preserveDrawingBuffer: true });
     s.resize(192, 144, 1);
     const scene = ctx.scene();
-    await s.setState({ ...scene, look: applyLightingPreset(scene.look, Object.keys(LIGHTING_PRESETS)[0]) });
+    await s.setState({ ...scene, ...sceneFor(scene, Object.keys(LIGHTING_PRESETS)[0]) });
     await s.load(url);
     for (const k of Object.keys(LIGHTING_PRESETS)) {
-      await s.setState({ ...scene, look: applyLightingPreset(scene.look, k) });
+      await s.setState({ ...scene, ...sceneFor(scene, k) });
       s.render();
       thumbs[k] = canvas.toDataURL('image/jpeg', 0.8);
       ctx.renderInspector();
@@ -45,7 +48,7 @@ async function makeThumbs() {
 }
 
 export async function onLightingClick(t) {
-  if (t.dataset.light) { await ctx.change({ look: applyLightingPreset(ctx.scene().look, t.dataset.light) }); return true; }
+  if (t.dataset.light) { await ctx.change(sceneFor(ctx.scene(), t.dataset.light)); return true; }
   if (t.dataset.lightCompare !== undefined) { makeThumbs(); return true; }
   return false;
 }

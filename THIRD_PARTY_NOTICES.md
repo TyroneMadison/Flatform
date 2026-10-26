@@ -40,6 +40,14 @@ Seven 1k environment maps from [Poly Haven](https://polyhaven.com), released und
 | `goegap_road.hdr` | https://polyhaven.com/a/goegap_road (Greg Zaal) |
 | `white_studio_02.hdr` | https://polyhaven.com/a/white_studio_02 (Grzegorz Wronkowski) |
 
+## 3D environments (`public/lib/environments.js`)
+
+Every scene (Showroom, White Cyc Studio, Soft studio, Luxury Garage, Golden Hour Coast, Night City Rain, Desert Highway
+Dusk, Modern Villa Driveway) is built in code from primitives by Flatform itself: no third-party models or textures.
+Skies and reflections reuse the CC0 Poly Haven HDRIs listed above (`goegap_road`, `kloofendal_48d_partly_cloudy_puresky`,
+`garage`, `white_studio_02`, `studio_small_03`); Golden Hour Coast uses a procedural sky (three.js `Sky`, MIT; Blender's
+Sky Texture). Any CC0 model added later goes in `public/env/` and gets a row here with its source URL and license.
+
 ## Fonts (bundled in `public/fonts/`, SIL Open Font License 1.1)
 
 | Font | License text |

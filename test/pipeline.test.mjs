@@ -103,7 +103,7 @@ test('three looks; the light rig and glass are validated and merged', () => {
   for (const bad of [{ tint: 'red' }, { opacity: 2 }, { on: 'yes' }, { transmission: 1 }]) assert.equal(P.cleanGlass(bad), null);
 });
 
-test('plate camera: the car stands where the photo floor is', () => {
+test('environment camera: the car stands on the floor at eye level', () => {
   const near = (a, b, d = 1e-6) => assert.ok(Math.abs(a - b) < d, `${a} vs ${b}`);
   // Where a point straight ahead (x = 0) lands in the frame, 0 = top: its angle from the view axis over the half fov.
   const project = (cam, [, y, z]) => {
@@ -111,13 +111,13 @@ test('plate camera: the car stands where the photo floor is', () => {
     const off = Math.atan2(cy - y, cz - z) - Math.atan2(cy - ty, cz - tz); // radians below the view axis
     return (1 + Math.tan(off) / Math.tan((cam.vfov * Math.PI) / 360)) / 2;
   };
-  for (const [slug, plate] of Object.entries(P.PLATES)) {
-    const cam = P.plateCamera(plate.cam);
-    near(project(cam, [0, 0, 0]), plate.cam.ground, 1e-9); // the car's ground point lands on the photo's floor
+  for (const [slug, plate] of Object.entries(P.ENVIRONMENTS)) {
+    const cam = P.envCamera(plate.cam);
+    near(project(cam, [0, 0, 0]), plate.cam.ground, 1e-9); // the car's ground point lands where the frame puts the floor
     near(project(cam, [0, cam.position[1], -1e7]), plate.cam.horizon, 1e-3); // eye level lands on the horizon
     assert.ok(cam.position[1] > 0.3 && cam.position[1] < 3, `${slug}: camera height ${cam.position[1]}`);
   }
-  assert.equal(P.plateUrl('showroom'), '/img/backplates/showroom.jpg');
+  assert.equal(P.envThumb('showroom'), '/img/environments/showroom.jpg');
 });
 
 test('the Drop step tells 3D models from photos', async () => {

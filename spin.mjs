@@ -9,7 +9,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SPIN_OPTIONS, DEFAULT_OPTION } from './public/lib/spinset.js';
 import { handoffManifest, spinHandoffText, manifestFile, webDir } from './public/lib/handoff.js';
-import { LOOKS, PLATES, plateCamera } from './public/lib/pipeline.js';
+import { LOOKS, ENVIRONMENTS, envCamera } from './public/lib/pipeline.js';
+import { blenderEnvironment } from './public/lib/environments.js';
 import { MAX_REALISM, withProfile, blenderProfile, createBasePath } from './realism.mjs';
 import { sendToDudRents } from './handoff.mjs';
 
@@ -72,7 +73,6 @@ export function createSpinService(ctx) {
     const job = { status: 'running', frame: 0, frames: o.frames, look: 'showroom', option, interior, applied: null, error: null, ran: [] };
     jobs.set(m.id, job);
     const sceneFile = path.join(ctx.modelsDir, m.id, 'scene.json');
-    const plate = PLATES.showroom;
     (async () => {
       job.ran = await basePath.prepare(m, MAX_REALISM); // material inference and the local detail steps
       await withProfile(ctx.settings, MAX_REALISM, async (effective, applied) => {
@@ -88,7 +88,7 @@ export function createSpinService(ctx) {
             '--look', 'showroom', '--frames', String(o.frames), '--step', String(o.step), '--res', `${width}x${height}`,
             ...(existsSync(sceneFile) ? ['--scene', sceneFile] : []),
             '--rig', JSON.stringify({ lighting: effective.lighting, glass: effective.glass }),
-            '--plate', JSON.stringify({ slug: 'showroom', modeled: false, camera: plateCamera(plate.cam, width / height), light: plate.light }),
+            '--environment', JSON.stringify(blenderEnvironment('showroom', envCamera(ENVIRONMENTS.showroom.cam, width / height))),
             '--samples', String(MAX_REALISM.samples), '--profile', JSON.stringify(blenderProfile(MAX_REALISM)), ...extra,
           ]);
         }

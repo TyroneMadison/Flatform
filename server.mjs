@@ -10,7 +10,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
-import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, PLATES, plateCamera } from './public/lib/pipeline.js';
+import { uniqueSlug, stillName, LOOKS, FRAMES, HALF, STEP, DEFAULT_LIGHTING, DEFAULT_GLASS, cleanLighting, cleanGlass, ENVIRONMENTS, envCamera } from './public/lib/pipeline.js';
+import { blenderEnvironment } from './public/lib/environments.js';
 import { PROVIDERS, VIEWS, DEFAULT_PROVIDER, normalize, baseSetup, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
 import { estimate } from './public/lib/pricing.js';
 import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
@@ -74,7 +75,7 @@ const BACKDROP_TYPES = ['.jpg', '.jpeg', '.png', '.hdr', '.exr'];
 const FAILED = ['failed', 'cancelled', 'banned'];
 // Global keys work on .ai; .com (the host the docs show) is the China region and rejects global keys.
 const REGIONS = { global: 'https://openapi.tripo3d.ai/v3', china: 'https://openapi.tripo3d.com/v3' };
-const SCENES = [...Object.keys(PLATES), 'ring', 'transparent', 'cyclorama', 'miami', 'custom']; // 'ring' was called 'gold' before v0.4
+const SCENES = [...Object.keys(ENVIRONMENTS), 'ring', 'transparent', 'cyclorama', 'miami', 'custom']; // 'ring' was called 'gold' before v0.4
 // Version fields mirrored at the top level of each library entry, so v0.2 readers and the UI see the active version.
 const VERSION_FIELDS = ['task_id', 'status', 'progress', 'tripo_status', 'glb', 'thumb', 'credits', 'error', 'exports', 'source',
   'provider', 'engine', 'mode', 'views', 'upstream_status', 'note', 'generation', 'file', 'fileName'];
@@ -1150,18 +1151,19 @@ export async function startServer({
     if (jobs.get(m.id)?.status === 'running') throw new HttpError(409, 'Blender is already rendering this car');
     const v = active(m);
     const sceneFile = path.join(MODELS, m.id, 'scene.json');
-    // Photo scenes: Blender renders the car on a shadow catcher with the plate's camera and light; the page lays
-    // the frames over the plate when it makes the sprites. The Showroom look always uses the showroom plate.
-    const plateArg = (look) => {
+    // 3D environments: Blender builds the same place (environments.js) around the car, with its eye-level camera
+    // and matched light. The Showroom look always uses the showroom.
+    const builtinHdri = (name) => (Object.hasOwn(HDRIS, name) ? path.join(hdriDir, `${name}.hdr`) : null);
+    const envArg = (look) => {
       const preset = look === 'showroom' ? 'showroom' : look === 'transparent' ? null : m.scene?.preset || settings.defaultScene;
-      if (!PLATES[preset]) return [];
-      const modeled = preset === 'showroom' && Boolean(m.scene?.modeled);
-      return ['--plate', JSON.stringify({ slug: preset, modeled, camera: plateCamera(PLATES[preset].cam, 4 / 3), light: PLATES[preset].light })];
+      if (!ENVIRONMENTS[preset]) return [];
+      const glb = (file) => path.join(PUBLIC, 'env', path.basename(file));
+      return ['--environment', JSON.stringify(blenderEnvironment(preset, envCamera(ENVIRONMENTS[preset].cam, 4 / 3), { hdri: builtinHdri, glb }))];
     };
     // The scene look (look.js) and the painted pieces' materials (tenno.js), resolved here so the script only applies them.
     const lookJson = mergeLook(m.scene?.look);
     const hdri = lookJson.hdri.file;
-    const hdriPath = hdri ? (hdri.startsWith('builtin:') ? (Object.hasOwn(HDRIS, hdri.slice(8)) ? path.join(hdriDir, `${hdri.slice(8)}.hdr`) : null) : path.join(BACKDROPS, hdri)) : null;
+    const hdriPath = hdri ? (hdri.startsWith('builtin:') ? builtinHdri(hdri.slice(8)) : path.join(BACKDROPS, hdri)) : null;
     const lookArg = ['--scenelook', JSON.stringify(blenderLook(lookJson, { hdriPath }))];
     const paint = m.scene?.paint;
     const materialsFile = path.join(MODELS, m.id, 'blender-materials.json');
@@ -1182,7 +1184,7 @@ export async function startServer({
           ...(existsSync(sceneFile) ? ['--scene', sceneFile] : []),
           '--rig', JSON.stringify({ lighting: settings.lighting, glass: settings.glass }),
           ...lookArg, '--materials', materialsFile,
-          ...plateArg(look),
+          ...envArg(look),
           ...(still !== undefined ? ['--still', String(still), '--still-out', path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still))] : []),
         ]);
       }

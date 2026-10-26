@@ -229,7 +229,9 @@ test('Generate Spin Set: fake Blender gets the profile, frames and names match, 
     const args = JSON.parse(await readFile(path.join(slugDir, 'frames', 'showroom', 'fake-blender-args.json'), 'utf8'));
     const opt = (k) => args[args.indexOf(`--${k}`) + 1];
     assert.deepEqual([opt('frames'), opt('step'), opt('look'), opt('samples'), opt('res')], ['72', '5', 'showroom', '512', '2048x1536']);
-    assert.equal(JSON.parse(opt('plate')).slug, 'showroom');
+    const env = JSON.parse(opt('environment'));
+    assert.equal(env.slug, 'showroom');
+    assert.ok(env.parts.some((p) => p.room), 'the spin set renders inside the 3D showroom');
     assert.equal(JSON.parse(opt('rig')).glass.on, true);
     const profile = JSON.parse(opt('profile'));
     for (const k of ['hdri', 'lighting', 'ambientOcclusion', 'reflections', 'refraction', 'subsurface', 'glass', 'denoise', 'tonemap', 'quality', 'samples']) assert.ok(k in profile, `profile sent ${k}`);
