@@ -132,7 +132,7 @@ test('an arm bent across the body is not guessed: the rig says so plainly and of
   assert.ok(r.problems.length);
   const f = rigFailure(r.problems);
   assert.equal(f.fallback, 'markers');
-  assert.match(f.error, /^Could not place the joints by itself: .+\. Show me where the joints are instead\.$/);
+  assert.match(f.error, /^Flatform could not find the joints by itself \(.+\), so click the 10 spots on the model\.$/);
   // Not a person at all: a box.
   const box = humanoidMesh({ arms: 't' });
   const cube = new Float32Array(box.positions.length).map((_, i) => ((i * 7919) % 97) / 97);

@@ -15,6 +15,7 @@ import { timeAgo } from './lib/session.js';
 import { displayVersion } from './lib/version.js';
 import { journey, dockFor, stepOf, isSheet, SHEETS, DEFAULT_TOOL, ringDash } from './lib/stage.js';
 import { updateNotice, lowNotice } from './lib/notices.js';
+import { toastPlan } from './lib/toasts.js';
 
 export const $ = (s, root = document) => root.querySelector(s);
 export const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -54,7 +55,12 @@ export const send = (path, method, data) => api(path, { method, headers: { 'Cont
 // kind: 'error', 'info' or 'ok' (a green border and a check that draws itself). Toasts stack under the top bar.
 export function toast(msg, kind = 'error', actions = []) {
   const box = $('#toasts');
+  const live = [...box.children].filter((c) => !c.classList.contains('out'));
+  const plan = toastPlan(live.map((c) => c.dataset.msg), msg);
+  if (plan.same != null) { live[plan.same].refresh(); return; } // the same words: keep that one up longer, no second copy
+  live.slice(0, plan.drop).forEach((c) => c.remove());
   const t = document.createElement('div');
+  t.dataset.msg = msg;
   t.className = `toast t-${kind}`;
   t.setAttribute('role', kind === 'error' ? 'alert' : 'status');
   if (kind === 'ok') t.insertAdjacentHTML('beforeend', '<svg class="tcheck" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg>');
@@ -67,8 +73,9 @@ export function toast(msg, kind = 'error', actions = []) {
     t.append(b);
   }
   box.append(t);
-  while (box.children.length > 3) box.firstElementChild.remove();
-  setTimeout(kill, kind === 'ok' ? 8000 : actions.length ? 15000 : kind === 'info' ? 4000 : 6000);
+  let timer;
+  t.refresh = () => { clearTimeout(timer); timer = setTimeout(kill, kind === 'ok' ? 8000 : actions.length ? 15000 : kind === 'info' ? 4000 : 6000); };
+  t.refresh();
 }
 export const announce = (msg) => { $('#live').textContent = msg; };
 

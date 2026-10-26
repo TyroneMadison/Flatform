@@ -12,7 +12,7 @@ import { modelInfo } from '../lib/rig.js';
 import { icon } from '../lib/icons.js';
 import { FRAMES, HALF, STEP, pad3, LOOKS, ENVIRONMENTS, ROOMS, roomFor } from '../lib/pipeline.js';
 import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf, toggleView, FREE_TIP } from '../lib/studio.js';
-import { initMotion, renderMotionGroup, onMotionClick, onMotionInput, onMotionChange, stopMotion, onMotionCanvasClick } from './compose-motion.js';
+import { initMotion, renderMotionGroup, onMotionClick, onMotionInput, onMotionChange, stopMotion, onMotionCanvasClick, syncPlacement } from './compose-motion.js';
 import { unriggedVersion } from '../lib/autorig.js';
 import { initHandPose, renderHandPoseGroup, onHandPoseClick, onHandPoseInput, onHandPoseChange, syncHandPose, stopHandPose, isPosing } from './compose-handpose.js';
 import { initTestRig, renderTestRigGroup, onTestRigClick, onTestRigChange, stopTestRig } from './compose-testrig.js';
@@ -65,7 +65,7 @@ export async function mount(el, { id }) {
   initPaint({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector, swapVersion, reload: async (next, { glb = true } = {}) => { m = upsert(next); if (studio) studio.kind = m.kind; renderModel(); if (glb) await loadModel(); refresh(); } });
   initHandPose({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
-  initTestRig({ scene: () => scene, studio: () => studio, change, draw });
+  initTestRig({ model: () => m, scene: () => scene, studio: () => studio, change, draw });
   initTools({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initPath({ scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initShelf({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, redraw: () => renderAside(true) });
@@ -80,6 +80,7 @@ export async function mount(el, { id }) {
       <div class="hud h3" id="hudLook"></div>
       <div class="hud dims" id="hudDims" hidden></div>
       <div class="hud measure" id="hudMeasure" hidden></div>
+      <div class="jp-ov" id="jpOv" aria-hidden="true" hidden></div>
       <div class="hud msg" id="hudMsg" role="status">Loading model…</div>
       <div class="rtag" id="renderTag" aria-live="polite" hidden></div>
       <div class="vtool" role="toolbar" aria-label="View tools">
@@ -221,6 +222,7 @@ function draw() {
   raf = requestAnimationFrame(() => {
     syncHandPose(); // the Pose by hand dots follow their joints
     studio.render();
+    syncPlacement(); // the joints placement dots, bones and target ring
     const f = studio.frameRect;
     Object.assign($('#safe', root).style, { left: `${f.x + 6}px`, top: `${f.y + 6}px`, width: `${f.width - 12}px`, height: `${f.height - 12}px` });
     if (studio.tracing && !studio.pt?.done) { // progressive path tracing: one sample per frame until done
@@ -532,6 +534,7 @@ function applyTool() {
     const el = root && $(`#${id}`, root);
     if (el) el.classList.toggle('off', !el.closest('#insp') && !shows(t, id));
   }
+  syncPlacement(); // the placement dots show only while the Pose card is up
 }
 // The inspector card: the clicked part's Color and Material groups move into it (same buttons, same handlers).
 function placeInspector() {
@@ -741,7 +744,7 @@ function bind() {
   cv.addEventListener('click', (e) => {
     if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4 || !studio?.model) return;
     const r = cv.getBoundingClientRect();
-    if (onMotionCanvasClick(e.clientX - r.left, e.clientY - r.top)) return; // clicking the landmarks for Add joints
+    if (onMotionCanvasClick(e.clientX - r.left, e.clientY - r.top)) return; // placing the joints for Add joints
     if (onDecalCanvasClick(e.clientX - r.left, e.clientY - r.top)) return;
     if (onCanvasClick(e.clientX - r.left, e.clientY - r.top)) return;
     const key = studio.pick(e.clientX - r.left, e.clientY - r.top);

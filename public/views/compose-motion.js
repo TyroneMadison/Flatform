@@ -7,7 +7,7 @@ import { tagsFor, modelInfo } from '../lib/rig.js';
 import { listPieces } from '../lib/paint.js';
 import { posesFor, detectParts, carStance } from '../lib/poses.js';
 import { fromPreset } from '../lib/handpose.js';
-import { MARKERS, MARKER_LABELS, nextMarker } from '../lib/autorig.js';
+import { SPOTS, SPOT_NAMES, BONE_LINES, spotHelp, newPlacement, placedCount, currentSpot, canRig, rigLabel, place, setMirror, pick, undoLast, startOver, guessSpot, insideDistance, middleOf } from '../lib/joint-place.js';
 import { rigChanged } from './compose-render.js';
 
 let PRESETS = null; // from /api/poses (public/poses/*.json plus <library>/poses/*.json)
@@ -76,7 +76,7 @@ export function renderMotionGroup() {
       ${['doors', 'hood', 'trunk'].filter((k) => Object.values(tags).some((v) => v.tag === (k === 'doors' ? 'door' : k))).map((k) => num(`mo-${k}`, `${k[0].toUpperCase() + k.slice(1)} open`, 0, 80, 1, s[k], `stance.${k}`, `How far to open the ${k}`)).join('')}
       <details><summary>Name the parts (${Object.keys(tags).length})</summary>${whole.slice(0, 200).map((p) => `<label class="row-sel"><span>${esc(p.name)}</span><select class="inp" data-mo-tag="${esc(p.key)}" title="Say what this part is, so it can move"><option value="">None</option>${Object.entries(TAGS).map(([k, l]) => `<option value="${k}" ${tags[p.key]?.tag === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`).join('') || '<p class="fine keep">This model has no separate parts to name.</p>'}</details></details>`;
   } else if (!hasSkeleton(studio.model)) {
-    body = rigPanel();
+    return `<div class="grp" id="grp-motion"><h3>Pose and motion</h3>${typeSel}${rigPanel()}</div>`; // no movement to try without joints
   } else {
     const pose = deserializePose(mo.pose || { preset: 'tpose' });
     const v = pose.bones[boneSel] || [0, 0, 0];
@@ -88,37 +88,82 @@ export function renderMotionGroup() {
 }
 // A humanoid with no bones: poses would do nothing, so say so and offer the free Blender rig instead. Adding joints
 // runs on its own (its own job in Blender); the model on screen stays as it is until the rigged version is ready and
-// checked, then swaps in as one undo step. If the limbs can't be found by themselves, the user clicks them.
+// checked, then swaps in as one undo step. One path: Add joints tries by itself, and if it can't find the limbs it
+// goes straight to the placement screen (lib/joint-place.js), where the user clicks 10 spots and presses Rig it.
 let rigging = null; // { id, step } while joints are being added
 let failed = null; // { id, error, fallback } after a rig that did not work
-let marking = null; // { id, points: { chin: [x, y, z], ... } } while the user clicks the landmarks
+let marking = null; // { id, pl (joint-place.js), why, verts, mid (the body's middle) } on the placement screen
 function rigPanel() {
   const id = ctx.model()?.id;
   const busy = rigging?.id === id;
   const noBlender = state.blender && !state.blender.found; // checked at startup and in Settings (/api/blender)
-  if (marking?.id === id) {
-    const next = nextMarker(marking.points);
-    const done = MARKERS.filter((k) => marking.points[k]).length;
-    return `<div class="warnbox" role="status"><b>Show me where the joints are</b>
-      <p>${next ? `Click <b>${esc(MARKER_LABELS[next])}</b> on the model. (${done + 1} of ${MARKERS.length})` : 'All done. Add joints to use these spots.'}</p></div>
-      <ol class="fine marks">${MARKERS.map((k) => `<li class="${marking.points[k] ? 'ok' : ''}">${marking.points[k] ? '✓ ' : ''}${esc(MARKER_LABELS[k])}</li>`).join('')}</ol>
-      <div class="mg-row"><button class="btn pri" type="button" data-mo-act="rig-marks" title="Add joints where you clicked" ${next ? 'disabled' : ''}>Add joints</button>
-        <button class="btn ghostbtn" type="button" data-mo-act="marks-undo" title="Take back the last click" ${done ? '' : 'disabled'}>Back one</button>
-        <button class="btn ghostbtn" type="button" data-mo-act="marks-cancel" title="Stop clicking spots">Cancel</button></div>`;
-  }
-  const err = failed?.id === id ? `<div class="warnbox" role="alert"><b>The joints could not be added</b><p>${esc(failed.error)}</p>
-      ${failed.fallback === 'markers' ? '<button class="btn pri" type="button" data-mo-act="marks" title="Click the chin, groin, elbows, wrists, knees and ankles on the model, then add joints there">Show me where the joints are</button>' : ''}</div>` : '';
+  if (marking?.id === id) return placementPanel(busy);
+  const err = failed?.id === id ? `<div class="warnbox" role="alert"><b>The joints could not be added</b><p>${esc(failed.error)}</p></div>` : '';
   return `<div class="warnbox" role="alert"><b>No joints yet</b><p>This model has no joints, so poses and movements can't move it. Add joints first.</p></div>${err}
     ${noBlender ? '<p class="fine keep" id="noBlender"><b>Blender is not on this computer.</b> Adding joints needs Blender 4 or later (free from blender.org). Install it, or show where it is in Settings, then come back.</p>' : ''}
-    <button class="btn pri" type="button" data-mo-act="rig" title="Add joints to this model for free, using Blender. The model stays as it is on screen until the joints are ready." ${busy || noBlender ? 'disabled' : ''}>${busy ? `Rigging… ${esc(rigging.step || '')}` : 'Add joints'}</button>
+    <button class="btn pri" type="button" data-mo-act="rig" title="Add joints to this model for free, using Blender. If it can't find them, you click 10 spots instead." ${busy || noBlender ? 'disabled' : ''}>${busy ? `Rigging… ${esc(rigging.step || '')}` : 'Add joints'}</button>
     <p class="fine">Adds joints so the model can pose, and saves it as a new version. Renders of this model wait until it is done. Works best standing up, arms out or down.</p>`;
 }
+
+// The mini body map: the 10 spots on a little figure seen from the front (the model's left on your right).
+const MAP = { chin: [30, 21], groin: [30, 52], leftElbow: [43, 38], leftWrist: [49, 50], rightElbow: [17, 38], rightWrist: [11, 50], leftKnee: [35, 72], leftAnkle: [36, 92], rightKnee: [25, 72], rightAnkle: [24, 92] };
+function bodyMap(pl, next) {
+  const line = ([a, b]) => `<line x1="${MAP[a][0]}" y1="${MAP[a][1]}" x2="${MAP[b][0]}" y2="${MAP[b][1]}"/>`;
+  const dot = (k) => `<circle class="${k === next ? 'glow' : pl.points[k] ? 'done' : ''}" cx="${MAP[k][0]}" cy="${MAP[k][1]}" r="${k === next ? 4 : 2.6}"/>`;
+  return `<svg class="jp-map" viewBox="0 0 60 100" aria-hidden="true"><circle class="head" cx="30" cy="11" r="7"/><g class="bones">${BONE_LINES.map(line).join('')}</g>${SPOTS.map(dot).join('')}</svg>`;
+}
+function progressRing(n) {
+  const C = 2 * Math.PI * 17;
+  return `<svg class="jp-ring" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="17"/><circle class="on" cx="20" cy="20" r="17" stroke-dasharray="${(C * n) / SPOTS.length} ${C}"/></svg><span class="jp-ringtx">${n} of ${SPOTS.length}</span>`;
+}
+function placementPanel(busy) {
+  const { pl, why } = marking;
+  const n = placedCount(pl), next = currentSpot(pl);
+  const row = (k) => {
+    const st = k === next ? 'now' : pl.points[k] ? 'done' : 'later';
+    const tag = st === 'now' ? '<span class="jp-tag">now</span>' : pl.mirrored[k] ? '<span class="jp-tag mir">mirrored</span>' : '';
+    return `<li><button class="jp-row ${st}" type="button" data-jp-pick="${k}" ${st === 'now' ? 'aria-current="step"' : ''} title="${pl.points[k] ? `Place the ${SPOT_NAMES[k].toLowerCase()} again` : `Place the ${SPOT_NAMES[k].toLowerCase()} next`}"><span class="jp-ck" aria-hidden="true">${pl.points[k] && st !== 'now' ? '✓' : ''}</span><span>${SPOT_NAMES[k]}</span>${tag}</button></li>`;
+  };
+  return `<div class="jp" id="jp">
+    <p class="jp-kick">Pose · Add joints</p>
+    <p class="jp-title" role="status">${n} of ${SPOTS.length} placed</p>
+    ${why ? `<p class="jp-why keep">${esc(why)}</p>` : ''}
+    <label class="jp-card tg" title="Place the left side and the right side is copied for you"><span>Mirror left to right<small>Place the left side, we copy it.</small></span><input class="sw" type="checkbox" role="switch" data-jp-mirror ${pl.mirror ? 'checked' : ''}></label>
+    <div class="jp-next">${bodyMap(pl, next)}<div class="jp-nexttx"><small>Next spot</small><b>${next ? SPOT_NAMES[next] : 'All spots placed'}</b><p class="keep">${next ? spotHelp(next) : 'Press Rig it to add the joints.'}</p></div><div class="jp-prog">${progressRing(n)}</div></div>
+    <ol class="jp-list" aria-label="Spots to place">${SPOTS.map(row).join('')}</ol>
+    <button class="btn pri jp-rig" type="button" data-mo-act="rig-marks" title="${canRig(pl) ? 'Add the joints where you placed them' : 'Place all 10 spots first'}" ${canRig(pl) && !busy ? '' : 'disabled'}>${busy ? `Rigging… ${esc(rigging.step || '')}` : rigLabel(pl)}</button>
+    <div class="mg-row"><button class="btn ghostbtn" type="button" data-jp="undo" title="Take back the last spot you placed" ${pl.history.length && !busy ? '' : 'disabled'}>Undo last</button>
+      <button class="btn ghostbtn" type="button" data-jp="over" title="Clear every spot and start again" ${n && !busy ? '' : 'disabled'}>Start over</button></div></div>`;
+}
+// The model's own (glTF) points, a few thousand of them, for the guesses and the middle line.
+function sampleVerts(model) {
+  const out = [], v = new THREE.Vector3();
+  model.updateMatrixWorld(true);
+  const inv = model.matrixWorld.clone().invert();
+  let total = 0;
+  model.traverse((o) => { if (o.isMesh) total += o.geometry.attributes.position.count; });
+  const step = Math.max(1, Math.floor(total / 8000));
+  model.traverse((o) => {
+    if (!o.isMesh) return;
+    const pos = o.geometry.attributes.position;
+    const m = inv.clone().multiply(o.matrixWorld);
+    for (let i = 0; i < pos.count; i += step) out.push(v.fromBufferAttribute(pos, i).applyMatrix4(m).toArray());
+  });
+  return out;
+}
+function startPlacement(why) {
+  const model = ctx.studio()?.model;
+  const verts = model ? sampleVerts(model) : [];
+  marking = { id: ctx.model().id, pl: newPlacement(true), why, verts, mid: middleOf(verts) };
+}
+const placing = () => marking && marking.id === ctx.model()?.id && $('#grp-motion:not(.off) #jp', ctx.root);
+
 const setRigging = (on) => { state.rigging ||= new Set(); if (on) state.rigging.add(on); else state.rigging.clear(); rigChanged(); };
 async function rig(markers = null) {
   const m = ctx.model();
   const before = m.activeVersion;
   try { await send(`/api/models/${m.id}/rig`, 'POST', markers ? { markers } : {}); } catch (e) { toast(e.message); return; }
-  rigging = { id: m.id, step: 'Starting' }; failed = null; marking = null;
+  rigging = { id: m.id, step: 'Starting' }; failed = null;
   setRigging(m.id);
   ctx.renderInspector();
   let job;
@@ -130,11 +175,14 @@ async function rig(markers = null) {
   rigging = null;
   setRigging(null);
   if (job?.status !== 'done') {
-    failed = { id: m.id, error: job?.error || 'no answer from Flatform', fallback: job?.fallback || null };
-    toast(`Could not add joints: ${failed.error}`);
-    if (ctx.model()?.id === m.id) ctx.renderInspector();
+    const error = job?.error || 'no answer from Flatform';
+    if (marking?.id === m.id) marking.why = error; // the spots stay, so they can be moved and tried again
+    else if (job?.fallback === 'markers' && ctx.model()?.id === m.id) startPlacement(error); // straight to clicking the spots
+    else { failed = { id: m.id, error, fallback: job?.fallback || null }; toast(`Could not add joints: ${error}`); }
+    if (ctx.model()?.id === m.id) { ctx.renderInspector(); ctx.draw(); }
     return;
   }
+  if (marking?.id === m.id) marking = null;
   toast(`Joints added · version ${job.version}${job.seconds ? ` · ${job.seconds} s` : ''}. Undo takes them off again.`, 'info');
   if (ctx.model()?.id !== m.id) return;
   await ctx.swapVersion(job.version, 'Add joints', { from: before }); // one undo step, the model swapped in once loaded
@@ -145,17 +193,47 @@ async function rig(markers = null) {
   }
   ctx.renderInspector();
 }
-/** Compose canvas click: while clicking landmarks, the spot on the model goes to the next landmark. */
+/**
+ * Compose canvas click on the placement screen: the spot goes inside the limb under the click (where the ray goes
+ * in and comes out again). A click on empty space does nothing.
+ */
 export function onMotionCanvasClick(x, y) {
-  if (!marking || marking.id !== ctx.model()?.id) return false;
+  if (!placing()) return false;
   const studio = ctx.studio();
-  const next = nextMarker(marking.points);
-  const p = next && studio?.pickPoint(x, y);
-  if (!p) { if (next) toast(`Click right on the model, on ${MARKER_LABELS[next]}`, 'info'); return true; }
-  const v = studio.model.worldToLocal(new THREE.Vector3(...p)); // the model's own (glTF) coordinates
-  marking.points[next] = [v.x, v.y, v.z].map((n) => Math.round(n * 1e5) / 1e5);
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(new THREE.Vector2((x / studio.width) * 2 - 1, -(y / studio.height) * 2 + 1), studio.camera);
+  const hits = ray.intersectObject(studio.model, true).filter((h) => h.face);
+  if (!hits.length) return true;
+  const n = new THREE.Vector3();
+  const d = insideDistance(hits.map((h) => ({ distance: h.distance, entering: n.copy(h.face.normal).transformDirection(h.object.matrixWorld).dot(ray.ray.direction) < 0 })));
+  const v = studio.model.worldToLocal(ray.ray.at(d, new THREE.Vector3())); // the model's own (glTF) coordinates
+  const done = place(marking.pl, v.toArray(), marking.mid);
+  if (done) toast(`Nice! ${SPOT_NAMES[done.key]} placed.`, 'info');
   ctx.renderInspector();
+  ctx.draw();
   return true;
+}
+// The 3D view while placing: red dots with a number and name, white hollow dots for mirrored spots, red bones
+// between placed spots, a pulsing ring with a Click here pill on the next spot's best guess, and a small legend.
+let guessFor = null; // { key, at } so the guess is worked out once per spot
+export function syncPlacement() {
+  const ov = $('#jpOv', ctx.root);
+  if (!ov) return;
+  const studio = ctx.studio();
+  if (!placing() || !studio?.model) { if (!ov.hidden) { ov.hidden = true; ov.innerHTML = ''; } return; }
+  const { pl } = marking;
+  const scr = (p) => studio.toScreen(studio.model.localToWorld(new THREE.Vector3(...p)).toArray());
+  const at = Object.fromEntries(SPOTS.filter((k) => pl.points[k]).map((k) => [k, scr(pl.points[k])]));
+  const next = currentSpot(pl);
+  if (next && (guessFor?.key !== next || guessFor.pl !== pl.history.length)) guessFor = { key: next, pl: pl.history.length, at: pl.points[next] || guessSpot(next, marking.verts, pl, marking.mid) };
+  const g = next && guessFor.at ? scr(guessFor.at) : null;
+  const px = ([x, y]) => `left:${x.toFixed(1)}px;top:${y.toFixed(1)}px`;
+  const lines = BONE_LINES.filter(([a, b]) => at[a] && at[b]).map(([a, b]) => `<line x1="${at[a][0]}" y1="${at[a][1]}" x2="${at[b][0]}" y2="${at[b][1]}"/>`).join('');
+  const dots = Object.entries(at).filter(([k]) => k !== next).map(([k, p]) => `<div class="jp-pin${pl.mirrored[k] ? ' mir' : ''}" style="${px(p)}"><i></i><span><b>${SPOTS.indexOf(k) + 1}</b> ${SPOT_NAMES[k]}</span></div>`).join('');
+  const target = g ? `<div class="jp-target" style="${px(g)}"><i></i></div><div class="jp-pill" style="${px(g)}">Click here: ${SPOT_NAMES[next]}</div>` : '';
+  ov.innerHTML = `<svg class="jp-bones">${lines}</svg>${dots}${target}
+    <div class="jp-legend"><span><i class="lg-pin"></i>You placed</span><span><i class="lg-mir"></i>Mirrored</span><span><i class="lg-next"></i>Next</span></div>`;
+  ov.hidden = false;
 }
 const hasSkeleton = (m) => { let b = false; m.traverse((o) => { if (o.isBone) b = true; }); return b; };
 
@@ -171,10 +249,9 @@ export async function onMotionClick(t) {
   if (t.dataset.moStance) { stop(); await setMotion({ stance: applyStance(motionOf().stance, t.dataset.moStance) }); return true; }
   if (t.dataset.moPose) { const p = deserializePose(motionOf().pose || {}); await setMotion({ pose: { preset: t.dataset.moPose, bones: t.dataset.moPose === p.preset ? p.bones : {} } }); return true; }
   if (t.dataset.moAct === 'rig') { await rig(); return true; }
-  if (t.dataset.moAct === 'marks') { marking = { id: ctx.model().id, points: {} }; failed = null; ctx.renderInspector(); return true; }
-  if (t.dataset.moAct === 'marks-undo') { const done = MARKERS.filter((k) => marking?.points[k]); if (done.length) delete marking.points[done.at(-1)]; ctx.renderInspector(); return true; }
-  if (t.dataset.moAct === 'marks-cancel') { marking = null; ctx.renderInspector(); return true; }
-  if (t.dataset.moAct === 'rig-marks') { const pts = marking?.points; if (pts && !nextMarker(pts)) await rig(pts); return true; }
+  if (t.dataset.moAct === 'rig-marks') { if (marking && canRig(marking.pl)) await rig(marking.pl.points); return true; }
+  if (t.dataset.jpPick && marking) { pick(marking.pl, t.dataset.jpPick); ctx.renderInspector(); ctx.draw(); return true; }
+  if (t.dataset.jp && marking) { if (t.dataset.jp === 'undo') undoLast(marking.pl); else startOver(marking.pl); ctx.renderInspector(); ctx.draw(); return true; }
   if (t.dataset.moAct === 'play') {
     if (playing) { stop(); ctx.renderInspector(); return true; }
     playing = true; t0 = performance.now() - clipT * 1000; raf = requestAnimationFrame(tick); ctx.renderInspector(); return true;
@@ -206,6 +283,7 @@ export async function onMotionChange(t) {
     return true;
   }
   if (t.dataset.moClip !== undefined) { stop(); clipT = 0; ctx.studio()?.setClipTime(t.value ? 0 : null); await setMotion({ clip: t.value || null }); return true; }
+  if (t.dataset.jpMirror !== undefined && marking) { setMirror(marking.pl, t.checked, marking.mid); ctx.renderInspector(); ctx.draw(); return true; }
   if (t.dataset.moLoop !== undefined) { await setMotion({ loop: t.checked }, { inspector: false }); return true; }
   if (t.dataset.moBone !== undefined) { boneSel = t.value; ctx.renderInspector(); return true; }
   if (t.dataset.moTag !== undefined) { const tags = { ...(motionOf().tags || {}) }; tags[t.dataset.moTag] = { tag: t.value || null }; await setMotion({ tags }); return true; }

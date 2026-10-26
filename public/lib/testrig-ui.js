@@ -47,3 +47,8 @@ export function contextPrompt(p, world = ARENA, T = TUNE) {
   if (rise <= JUMP + DOUBLE + T.reach - spare) return 'Space, then Space again to climb';
   return '';
 }
+
+// The Test Rig button in the Pose panel: always there for a person, greyed with this hint until it has joints.
+export const TEST_RIG_LATER = 'Opens after your model is rigged';
+/** { show, enabled, hint }. humanoid: a person (cars have no Test Rig); rigged: it has joints Test Rig can move. */
+export const testRigGate = ({ humanoid, rigged }) => ({ show: Boolean(humanoid), enabled: Boolean(humanoid && rigged), hint: humanoid && !rigged ? TEST_RIG_LATER : '' });

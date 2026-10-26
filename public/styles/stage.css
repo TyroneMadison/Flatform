@@ -336,3 +336,56 @@ body.rm .tip { animation: none; }
 .setup.v3 .su-panel .slc output { width: 60px; }
 .setup.v3 .su-panel .slc .sl-ends { padding-right: 72px; }
 .su-ready .su-warn { margin: 0 0 10px; text-align: left; }
+
+/* Joints placement (compose-motion.js placementPanel and syncPlacement): the Pose card side and the 3D view side. */
+.jp { --jp: #ff4f45; display: grid; gap: 10px; }
+.jp-kick { margin: 0; font: 700 10.5px var(--sans); letter-spacing: .18em; text-transform: uppercase; color: var(--jp); }
+.jp-title { margin: -4px 0 0; font: 700 22px var(--display); letter-spacing: -.01em; }
+.jp-why { margin: 0; font-size: 12.5px; color: var(--ink-2, inherit); }
+.jp-card { margin: 0; padding: 10px 12px; min-height: 44px; border: 1px solid var(--line-3); border-radius: 12px; background: var(--tint); }
+.jp-next { display: grid; grid-template-columns: 48px 1fr auto; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--line-3); border-radius: 12px; }
+.jp-nexttx small { display: block; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; opacity: .6; }
+.jp-nexttx b { display: block; font: 700 18px var(--display); }
+.jp-nexttx p { margin: 2px 0 0; font-size: 11.5px; opacity: .8; }
+.jp-map { width: 48px; height: 80px; }
+.jp-map .head, .jp-map .bones line { fill: none; stroke: var(--line-5, #777); stroke-width: 2; stroke-linecap: round; }
+.jp-map circle:not(.head) { fill: var(--line-4, #555); }
+.jp-map circle.done { fill: var(--jp); }
+.jp-map circle.glow { fill: var(--jp); filter: drop-shadow(0 0 3px var(--jp)); animation: jpPulse 1.4s ease-in-out infinite; }
+.jp-prog { position: relative; width: 52px; height: 52px; display: grid; place-items: center; }
+.jp-ring { position: absolute; inset: 0; transform: rotate(-90deg); }
+.jp-ring circle { fill: none; stroke: var(--line-3); stroke-width: 4; }
+.jp-ring circle.on { stroke: var(--jp); stroke-linecap: round; }
+.jp-ringtx { font: 700 10px var(--sans); text-align: center; width: 34px; line-height: 1.1; }
+.jp-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.jp-row { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid transparent; border-radius: 10px; background: none; color: inherit; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.jp-row:hover { background: var(--tint); }
+.jp-row.later { opacity: .5; }
+.jp-row.now { border-color: var(--jp); box-shadow: 0 0 0 1px var(--jp); font-weight: 700; }
+.jp-ck { flex: none; width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line-4); display: grid; place-items: center; font-size: 11px; color: #fff; }
+.jp-row.done .jp-ck { background: var(--jp); border-color: var(--jp); }
+.jp-row.now .jp-ck { border-color: var(--jp); }
+.jp-tag { margin-left: auto; font: 700 10px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--jp); }
+.jp-tag.mir { color: inherit; opacity: .7; }
+.jp-rig { width: 100%; position: sticky; bottom: 8px; z-index: 2; } /* the next step stays in sight while the list scrolls */
+.jp-rig:disabled { opacity: 1; background: var(--surface-1); color: var(--text); border: 1px solid var(--line-4); cursor: not-allowed; box-shadow: 0 6px 18px rgba(0, 0, 0, .45); }
+.jp-ov { position: absolute; inset: 0; z-index: 5; pointer-events: none; --jp: #ff4f45; }
+.jp-bones { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.jp-bones line { stroke: var(--jp); stroke-width: 3; stroke-linecap: round; opacity: .9; }
+.jp-pin { position: absolute; transform: translate(-7px, -7px); display: flex; align-items: center; gap: 6px; }
+.jp-pin i { width: 14px; height: 14px; border-radius: 50%; background: var(--jp); border: 2px solid #fff; box-shadow: 0 0 6px rgba(0, 0, 0, .6); }
+.jp-pin.mir i { background: transparent; border: 3px solid #fff; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, .7), inset 0 0 0 1.5px rgba(0, 0, 0, .7); }
+.jp-pin span { font: 600 11px var(--sans); color: #fff; background: rgba(5, 4, 3, .72); padding: 2px 7px; border-radius: 8px; white-space: nowrap; }
+.jp-pin b { color: var(--jp); }
+.jp-target { position: absolute; transform: translate(-50%, -50%); width: 46px; height: 46px; }
+.jp-target i { position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--jp); animation: jpRing 1.4s ease-out infinite; }
+.jp-target::after { content: ''; position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px; border-radius: 50%; background: var(--jp); }
+.jp-pill { position: absolute; transform: translate(30px, -50%); padding: 6px 12px; border-radius: 999px; background: var(--jp); color: #fff; font: 700 12.5px var(--sans); white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, .45); }
+.jp-legend { position: absolute; right: 12px; top: 128px; display: flex; gap: 12px; padding: 6px 10px; border-radius: 10px; background: rgba(5, 4, 3, .72); color: #fff; font: 600 11px var(--sans); }
+.jp-legend span { display: flex; align-items: center; gap: 6px; }
+.jp-legend i { display: inline-block; border-radius: 50%; }
+.lg-pin { width: 12px; height: 12px; background: var(--jp); border: 2px solid #fff; }
+.lg-mir { width: 12px; height: 12px; border: 3px solid #fff; }
+.lg-next { width: 7px; height: 7px; background: var(--jp); }
+@keyframes jpRing { 0% { transform: scale(.55); opacity: 1; } 100% { transform: scale(1.25); opacity: .15; } }
+@keyframes jpPulse { 50% { opacity: .45; } }
