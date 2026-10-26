@@ -27,6 +27,7 @@ import { threeDAIStudio, createLimiter, THREE_D_AI_BASE, HIGH } from './provider
 import { createKeyStore } from './keys.mjs';
 import { createUpdater, parseVersion, updateOptions } from './updates.mjs';
 import { ENHANCE, enhanceBlock } from './enhance.mjs';
+import { createShares } from './share.mjs';
 import { SERVICES, CONVERT_CREDITS, entry, append, parse, summary, defaultThresholds } from './ledger.mjs';
 import { createSpinService } from './spin.mjs';
 import { identifyCar } from './public/lib/identify.js';
@@ -153,6 +154,7 @@ export async function startServer({
   const MODELS = path.join(dataDir, 'models');
   const BACKDROPS = path.join(dataDir, 'backdrops');
   const LIB = path.join(dataDir, 'library.json');
+  const shares = createShares({ file: path.join(dataDir, 'shares.json'), baseUrl: () => settings?.share?.baseUrl || null });
   const SETTINGS = path.join(dataDir, 'settings.json');
   await mkdir(MODELS, { recursive: true });
 
@@ -1266,6 +1268,13 @@ export async function startServer({
       }
     }
 
+    // Share links: mock links until the share worker is deployed (share-worker/README.md). Nothing uploads from here.
+    if (area === 'shares') {
+      if (!id && method === 'GET') return send(res, 200, await shares.list());
+      if (!id && method === 'POST') { try { return send(res, 201, await shares.create(await readJson(req))); } catch (e) { throw new HttpError(400, e.message); } }
+      if (id && method === 'PATCH') { const s = await shares.setExpiry(id, (await readJson(req)).expiresInDays ?? null); if (!s) throw new HttpError(404, 'No such link'); return send(res, 200, s); }
+      if (id && method === 'DELETE') return send(res, 200, { ok: await shares.remove(id) });
+    }
     if (area === 'identify' && !id && method === 'POST') return send(res, 200, await identify(await readJson(req, 64 * 1024)));
     if (area === 'spin') {
       if (id === 'import' && method === 'POST') return send(res, 201, await importSpinCar(await readJson(req, 16 * 1024)));
