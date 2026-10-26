@@ -12,6 +12,7 @@ import { REGIONS } from '../lib/infer.js';
 import { DEFAULT_LOOK, mergeLook, STUDIO_PRESETS, LIGHT_PRESETS, lightsFromPreset, HDRIS, TONE_MAPPINGS, QUALITIES, BACKGROUND_KINDS, isHdri, isBackgroundImage } from '../lib/look.js';
 import { compareSet, lumaStats } from '../lib/compare.js';
 import { ColorPicker } from '../lib/color-picker.js';
+import { normalizeDecals, FINISHES, FINISH_VALUES, finishOf, decalUrl } from '../lib/decals.js';
 import { inferFromPhoto, revertInference, exportTennoGen, exportGlb, setTextureWorkspace } from '../lib/paint.js';
 
 // Texture library (CC0 from ambientCG / Poly Haven, plus your own per workspace), loaded once per workspace.
@@ -52,6 +53,53 @@ function applyTexture(key, id) {
   updateMaterial({ texture: { id, scale: cur?.scale ?? 4, rotation: cur?.rotation ?? 0 } });
   selected = prev ?? key;
 }
+// ---- Decals: add a PNG/SVG, click the model to place it, then size, turn, nudge and finish it ----
+let decalSel = null; // selected decal id
+let placing = null; // { file, name, aspect } waiting for a click on the model, or { move: id }
+const decalsOf = () => normalizeDecals(ctx.scene().decals);
+const setDecals = (list, opts) => ctx.change({ decals: list }, opts);
+const patchDecal = (id, patch, opts) => setDecals(decalsOf().map((d) => (d.id === id ? { ...d, ...patch } : d)), opts);
+function decalGroup() {
+  const list = decalsOf();
+  const d = list.find((x) => x.id === decalSel);
+  return `<div class="grp" id="grp-decals"><h3>${icon('image', 14)} Decals</h3>
+    <div class="mg-row"><button class="btn pri" type="button" data-act="decal-add" ${ctx.studio()?.model ? '' : 'disabled'}>${icon('upload', 14)}<span>Add decal (PNG or SVG)</span></button></div>
+    ${placing ? `<p class="fine"><b>Click the model where the decal goes.</b> <button class="btn sm ghostbtn" type="button" data-act="decal-cancel">Cancel</button></p>` : ''}
+    <input type="file" id="decalFile" accept="image/png,image/svg+xml,.svg" hidden>
+    ${list.length ? `<div class="chips">${list.map((x) => `<button class="chip" type="button" data-decal="${esc(x.id)}" aria-pressed="${x.id === decalSel}" style="display:inline-flex;gap:6px;align-items:center"><img src="${decalUrl(x.file)}" alt="" style="width:20px;height:20px;object-fit:contain">${esc(x.name)}${x.visible ? '' : ' (hidden)'}</button>`).join('')}</div>` : '<p class="fine">Logos, numbers and stickers. They wrap over curves and go into renders and GLB exports.</p>'}
+    ${d ? `
+      <div class="chips" role="radiogroup" aria-label="Finish">${Object.entries(FINISHES).map(([k, l]) => `<button class="chip" type="button" role="radio" data-decal-finish="${k}" aria-checked="${finishOf(d) === k}">${l}</button>`).join('')}</div>
+      ${sl('decal', 'size', 'Size', 0.02, 3, 0.01, d.size, `${fixed(d.size)} m`)}${sl('decal', 'rotation', 'Turn', -180, 180, 1, d.rotation, `${d.rotation}°`)}
+      ${sl('decal', 'offsetX', 'Move left/right', -0.5, 0.5, 0.005, d.offsetX, `${fixed(d.offsetX, 3)} m`)}${sl('decal', 'offsetY', 'Move up/down', -0.5, 0.5, 0.005, d.offsetY, `${fixed(d.offsetY, 3)} m`)}
+      ${sl('decal', 'depth', 'Wrap depth', 0.02, 1, 0.01, d.depth, `${fixed(d.depth)} m`)}${sl('decal', 'gloss', 'Gloss', 0, 1, 0.01, d.gloss)}${sl('decal', 'metallic', 'Metallic', 0, 1, 0.01, d.metallic)}${sl('decal', 'reflective', 'Reflective', 0, 1, 0.01, d.reflective)}${sl('decal', 'opacity', 'Opacity', 0, 1, 0.01, d.opacity)}
+      <div class="mg-row"><button class="btn sm sec" type="button" data-act="decal-move">Place again</button>
+        <button class="btn sm ghostbtn" type="button" data-act="decal-hide">${d.visible ? 'Hide' : 'Show'}</button>
+        <button class="btn sm ghostbtn" type="button" data-act="decal-del">Delete</button></div>` : ''}
+  </div>`;
+}
+const DECAL_TEXT = { size: (v) => `${fixed(v)} m`, depth: (v) => `${fixed(v)} m`, rotation: (v) => `${v}°`, offsetX: (v) => `${fixed(v, 3)} m`, offsetY: (v) => `${fixed(v, 3)} m` };
+// Compose calls this for a click on the canvas; true when the click placed a decal.
+export function onDecalCanvasClick(x, y) {
+  if (!placing) return false;
+  const hit = ctx.studio()?.pickSurface(x, y);
+  if (!hit) { toast('Click on the model itself'); return true; }
+  if (placing.move) patchDecal(placing.move, { ...hit, offsetX: 0, offsetY: 0 });
+  else {
+    const id = `d${Date.now().toString(36)}`;
+    setDecals([...decalsOf(), { id, file: placing.file, name: placing.name, aspect: placing.aspect, size: 0.3, ...hit, ...FINISH_VALUES.gloss }]);
+    decalSel = id;
+  }
+  placing = null;
+  ctx.renderInspector();
+  return true;
+}
+const imageAspect = (file) => new Promise((ok) => {
+  const img = new Image();
+  img.onload = () => ok(img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : 1);
+  img.onerror = () => ok(1);
+  img.src = decalUrl(file);
+});
+
 // Drag a texture tile onto the 3D view: the piece under the drop point gets it.
 export function onTextureDrop(id, key) { if (key) { applyTexture(key, id); selectPiece(key); } }
 
@@ -207,7 +255,7 @@ export function renderPaintGroups() {
       ${lastCompare ? `<div class="checklist" role="group" aria-label="TennoGen compare"><p class="fine"><b>${lastCompare.pass ? 'Ready to submit' : 'Fix before submitting'}</b> · checked against the TennoGen template set</p><ul>${lastCompare.checks.map((c) => `<li class="${c.pass ? 'ok' : 'bad'}">${c.pass ? 'Pass' : 'Fail'}: ${esc(c.label)}${!c.pass && c.got != null ? ` (got ${esc(String(c.got))})` : ''}</li>`).join('')}</ul></div>` : ''}
       ${lastWarnings.length ? `<ul class="warnlist">${lastWarnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     </div>`;
-  return parts + color + material + sceneGrp + exportGrp;
+  return parts + color + material + decalGroup() + sceneGrp + exportGrp;
 }
 
 // After the inspector HTML is in place: mount the picker.
@@ -276,6 +324,13 @@ export async function onPaintClick(t) {
     row.querySelector('.pname-edit').focus();
     return true;
   }
+  if (t.dataset.decal) { decalSel = decalSel === t.dataset.decal ? null : t.dataset.decal; ctx.renderInspector(); return true; }
+  if (t.dataset.decalFinish) { patchDecal(decalSel, FINISH_VALUES[t.dataset.decalFinish]); return true; }
+  if (act === 'decal-add') { $('#decalFile', ctx.root)?.click(); return true; }
+  if (act === 'decal-cancel') { placing = null; ctx.renderInspector(); return true; }
+  if (act === 'decal-move') { placing = { move: decalSel }; ctx.renderInspector(); toast('Click the model where the decal goes'); return true; }
+  if (act === 'decal-hide') { const d = decalsOf().find((x) => x.id === decalSel); if (d) patchDecal(d.id, { visible: !d.visible }); return true; }
+  if (act === 'decal-del') { setDecals(decalsOf().filter((x) => x.id !== decalSel)); decalSel = null; return true; }
   if (t.dataset.texture) { applyTexture(selected, t.dataset.texture); return true; }
   if (act === 'tex-clear') { updateMaterial({ texture: null }); return true; }
   if (act === 'tex-import') { $('#texFile', ctx.root)?.click(); return true; }
@@ -358,6 +413,13 @@ export function onPaintInput(t) {
     updateMaterial({ [t.dataset.mat]: v }, { inspector: false });
     return true;
   }
+  if (t.dataset.decal && t.type === 'range') {
+    const v = Number(t.value);
+    t.style.setProperty('--p', `${((v - t.min) / (t.max - t.min)) * 100}%`);
+    $(`#v-${t.id}`, ctx.root).textContent = (DECAL_TEXT[t.dataset.decal] || fixed)(v);
+    patchDecal(decalSel, { [t.dataset.decal]: v }, { inspector: false });
+    return true;
+  }
   if (t.dataset.tex && t.type === 'range') {
     const v = Number(t.value);
     t.style.setProperty('--p', `${((v - t.min) / (t.max - t.min)) * 100}%`);
@@ -410,6 +472,17 @@ export async function onPaintChange(t) {
   if (act === 'light-preset') { ctx.change({ look: { ...lookOf(), lights: lightsFromPreset(t.value) } }); return true; }
   if (act === 'export-part') { exportPart = t.value; ctx.renderInspector(); return true; }
   if (act === 'alt-helmet') { altHelmet = t.checked; return true; }
+  if (t.id === 'decalFile' && t.files[0]) {
+    const file = t.files[0];
+    t.value = '';
+    try {
+      const { file: stored } = await api('/api/decals', { method: 'POST', body: file });
+      placing = { file: stored, name: file.name.replace(/\.[^.]+$/, '').slice(0, 60) || 'Decal', aspect: await imageAspect(stored) };
+      ctx.renderInspector();
+      toast('Click the model where the decal goes');
+    } catch (e) { toast(e.message); }
+    return true;
+  }
   if (t.id === 'texFile' && t.files[0]) {
     const file = t.files[0];
     t.value = '';
@@ -495,7 +568,7 @@ async function runExport(glb) {
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `Could not write ${rel}`);
     };
     if (glb) {
-      await put(`models/${m.slug}-tennogen.glb`, await exportGlb(studio.model, paintOf()));
+      await put(`models/${m.slug}-tennogen.glb`, await exportGlb(studio.model, paintOf(), studio.decals));
       lastWarnings = [];
       toast(`GLB saved to ${started.outDir}`, 'info');
     } else {

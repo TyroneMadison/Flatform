@@ -461,8 +461,11 @@ export async function exportTennoGen(model, paint, { part = 'Body', altHelmet = 
 }
 
 // GLB with one clean, named material slot per section+slot (or piece), as the TennoGen tooling expects.
-export async function exportGlb(model, paint) {
+// The GLB as you see it: mirror applied (the geometry already is), decals included (pass studio.decals).
+export async function exportGlb(model, paint, decals = null) {
   const names = new Map();
+  const stashed = new Map(); // the mirror tool's original geometry, kept out of the GLB's extras
+  model.traverse((o) => { if (o.userData.origGeometry) { stashed.set(o, o.userData.origGeometry); delete o.userData.origGeometry; } });
   for (const p of listPieces(model)) {
     const rec = paint.pieces?.[p.key];
     const mats = [].concat(p.mesh.material);
@@ -474,9 +477,10 @@ export async function exportGlb(model, paint) {
     mat.name = name;
   }
   try {
-    const out = await new GLTFExporter().parseAsync(model, { binary: true });
+    const out = await new GLTFExporter().parseAsync(decals?.children.length ? [model, decals] : model, { binary: true });
     return new Blob([out], { type: 'model/gltf-binary' });
   } finally {
     for (const [mat, name] of names) mat.name = name;
+    for (const [o, g] of stashed) o.userData.origGeometry = g;
   }
 }

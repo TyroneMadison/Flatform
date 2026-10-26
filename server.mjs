@@ -30,6 +30,7 @@ import { SERVICES, LOCAL, CONVERT_CREDITS, entry, append, parse, summary, defaul
 import { check as checkTennogen, fixPlan, CONTENT_TYPES, EXPORT_MODES } from './public/lib/tennogen.js';
 import { pngSize, resizePng } from './png.mjs';
 import { createTextureLibrary } from './textures.mjs';
+import { decalKind, DECAL_FILE } from './public/lib/decals.js';
 import { localEngine as createLocalEngine, downloadWeights, weightsReady, checkCuda, UPSCALER_FILES } from './local.mjs';
 import { loadPoses } from './public/lib/poses.js';
 const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
@@ -156,6 +157,7 @@ export async function startServer({
 }) {
   const MODELS = path.join(dataDir, 'models');
   const BACKDROPS = path.join(dataDir, 'backdrops');
+  const DECALS = path.join(dataDir, 'decals'); // decal images, named by their SHA-1 so the same file is stored once
   const LIB = path.join(dataDir, 'library.json');
   const SETTINGS = path.join(dataDir, 'settings.json');
   await mkdir(MODELS, { recursive: true });
@@ -1210,6 +1212,7 @@ export async function startServer({
       if (method !== 'GET') throw new HttpError(404, 'Not found');
       if (parts[0] === 'files') return serveFile(res, inside(MODELS, parts.slice(1)));
       if (parts[0] === 'backdrops') return serveFile(res, inside(BACKDROPS, parts.slice(1)));
+      if (parts[0] === 'decals' && parts.length === 2 && DECAL_FILE.test(parts[1])) return serveFile(res, path.join(DECALS, parts[1]), { 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox", 'Cache-Control': 'max-age=31536000, immutable' });
       if (parts[0] === 'vendor' && parts[1] === 'three' && parts[2] === 'examples' && parts[3] === 'jsm') return serveFile(res, inside(threeAddons, parts.slice(4)));
       if (parts[0] === 'vendor' && parts[1] === 'three' && parts[2] === 'build') return serveFile(res, inside(THREE, parts.slice(2)));
       if (parts[0] === 'vendor' && VENDOR[parts[1]] && parts[2] === 'src') return serveFile(res, inside(VENDOR[parts[1]], parts.slice(3)));
@@ -1235,6 +1238,16 @@ export async function startServer({
     }
     if (area === 'local' && !id && method === 'GET') return send(res, 200, await localView());
     if (area === 'local' && id === 'download' && method === 'POST') { startDownload(); return send(res, 202, await localView()); }
+    // Decals: a PNG or SVG goes in, its stored name comes back. The scene keeps the placement.
+    if (area === 'decals' && !id && method === 'POST') {
+      const buf = await readBody(req, 10 * 1024 * 1024, 'Decal too large (max 10 MB)');
+      const kind = decalKind(buf);
+      if (!kind) throw new HttpError(415, 'Use a PNG, or an SVG without scripts');
+      const file = `${createHash('sha1').update(buf).digest('hex')}.${kind}`;
+      await mkdir(DECALS, { recursive: true });
+      if (!existsSync(path.join(DECALS, file))) await writeFile(path.join(DECALS, file), buf);
+      return send(res, 201, { file });
+    }
     // Texture library: CC0 surfaces synced from ambientCG / Poly Haven (cached for offline), and your own per workspace.
     if (area === 'textures') {
       const w = url.searchParams.get('workspace');

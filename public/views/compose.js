@@ -11,7 +11,7 @@ import { initMotion, renderMotionGroup, onMotionClick, onMotionInput, onMotionCh
 import { initTools, renderToolsGroup, onToolsClick, onToolsChange, onCanvasClick, onToolsKey } from './compose-tools.js';
 import { initPath, renderPathGroup, onPathClick, onPathChange } from './compose-path.js';
 import { initLighting, renderLightingGroup, onLightingClick } from './compose-lighting.js';
-import { initPaint, renderPaintGroups, afterRender, onPaintClick, onPaintInput, onPaintChange, selectPiece, onPaintDragStart, onTextureDrop } from './compose-paint.js';
+import { initPaint, renderPaintGroups, afterRender, onPaintClick, onPaintInput, onPaintChange, selectPiece, onPaintDragStart, onTextureDrop, onDecalCanvasClick } from './compose-paint.js';
 
 let root;
 let m;
@@ -589,6 +589,7 @@ function bind() {
   cv.addEventListener('click', (e) => {
     if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4 || !studio?.model) return;
     const r = cv.getBoundingClientRect();
+    if (onDecalCanvasClick(e.clientX - r.left, e.clientY - r.top)) return;
     if (onCanvasClick(e.clientX - r.left, e.clientY - r.top)) return;
     const key = studio.pick(e.clientX - r.left, e.clientY - r.top);
     if (key) { selectPiece(key); $('#grp-parts', el)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }

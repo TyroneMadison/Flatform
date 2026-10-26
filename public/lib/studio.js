@@ -21,6 +21,8 @@ import { GroundedSkybox } from 'three/addons/objects/GroundedSkybox.js';
 import { HorizontalBlurShader } from 'three/addons/shaders/HorizontalBlurShader.js';
 import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
+import { normalizeDecals, decalMaterialParams, decalUrl } from './decals.js';
 import { mergeLook, effectsFor, hdriUrl, lookNeedsRebuild } from './look.js';
 import { Post, PathTraced, TONE } from './post.js';
 import { applyPaint, regroup, pickPiece, listPieces } from './paint.js';
@@ -473,6 +475,7 @@ export class Studio {
     this.pieceMats.clear();
     this.applyModel();
     this.applyPaint();
+    this.applyDecals();
     this.applyCamera();
     this.ptDirty = true;
     return this.model;
@@ -534,7 +537,74 @@ export class Studio {
     this.applyLights();
     this.applyCamera();
     if (JSON.stringify(prev.paint) !== JSON.stringify(this.state.paint)) this.applyPaint();
+    this.applyDecals();
     await this.applyLook();
+  }
+
+  // Decals (decals.js): projected onto every mesh they touch, so they wrap over curves. They live in a group beside
+  // the model (same transform) so piece picking and painting never see them; exportGlb takes the group too.
+  applyDecals(force = false) {
+    const list = this.model ? normalizeDecals(this.state.decals).filter((d) => d.visible) : [];
+    const m0 = this.model;
+    const key = JSON.stringify([list, this.mirrorKey, m0?.uuid, m0?.position, m0?.quaternion, m0?.scale]);
+    if (!force && key === this.decalKey) return;
+    this.decalKey = key;
+    if (this.decals) { this.decals.parent?.remove(this.decals); this.decals.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } }); this.decals = null; }
+    if (!list.length) { this.ptDirty = true; return; }
+    const m = this.model;
+    const g = this.decals = new THREE.Group();
+    g.name = 'Decals';
+    g.position.copy(m.position); g.quaternion.copy(m.quaternion); g.scale.copy(m.scale);
+    m.parent.add(g);
+    m.updateWorldMatrix(true, true);
+    g.updateMatrixWorld(true);
+    const toLocal = g.matrixWorld.clone().invert();
+    const targets = [];
+    m.traverse((o) => { if (o.isMesh && !o.isSkinnedMesh) targets.push(o); });
+    this.decalTex ||= new Map();
+    const worldScale = m.getWorldScale(new THREE.Vector3()).x || 1;
+    for (const d of list) {
+      let tex = this.decalTex.get(d.file);
+      if (!tex) {
+        tex = new THREE.TextureLoader().load(decalUrl(d.file), () => { this.ptDirty = true; });
+        tex.colorSpace = THREE.SRGBColorSpace;
+        this.decalTex.set(d.file, tex);
+      }
+      const normal = new THREE.Vector3(...d.normal).transformDirection(m.matrixWorld);
+      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+      q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), THREE.MathUtils.degToRad(d.rotation)));
+      const pos = m.localToWorld(new THREE.Vector3(...d.point))
+        .add(new THREE.Vector3(1, 0, 0).applyQuaternion(q).multiplyScalar(d.offsetX * worldScale))
+        .add(new THREE.Vector3(0, 1, 0).applyQuaternion(q).multiplyScalar(d.offsetY * worldScale));
+      const size = new THREE.Vector3(d.size, d.size / d.aspect, d.depth).multiplyScalar(worldScale);
+      const reach = new THREE.Box3().setFromCenterAndSize(pos, new THREE.Vector3().setScalar(size.length()));
+      const mat = new THREE.MeshPhysicalMaterial({ map: tex, ...decalMaterialParams(d) });
+      mat.name = `Decal_${d.name.replace(/[^\w-]+/g, '_')}`;
+      for (const t of targets) {
+        if (!new THREE.Box3().setFromObject(t).intersectsBox(reach)) continue;
+        const geo = new DecalGeometry(t, pos, new THREE.Euler().setFromQuaternion(q), size);
+        if (!geo.attributes.position.count) { geo.dispose(); continue; }
+        geo.applyMatrix4(toLocal);
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.name = `Decal ${d.name}`;
+        mesh.userData.decal = d.id;
+        mesh.raycast = () => {};
+        g.add(mesh);
+      }
+    }
+    this.ptDirty = true;
+  }
+
+  // The model surface under a canvas point, in the model's own space: { point, normal }, for placing a decal.
+  pickSurface(x, y) {
+    if (!this.model) return null;
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2((x / this.width) * 2 - 1, -(y / this.height) * 2 + 1), this.camera);
+    const hit = ray.intersectObject(this.model, true)[0];
+    if (!hit) return null;
+    const n = (hit.face?.normal || new THREE.Vector3(0, 0, 1)).clone().transformDirection(hit.object.matrixWorld);
+    const inv = new THREE.Matrix4().copy(this.model.matrixWorld).invert();
+    return { point: this.model.worldToLocal(hit.point.clone()).toArray(), normal: n.transformDirection(inv).toArray() };
   }
 
   // The look (look.js): background, HDRI, light preset, tone mapping, effects. Runs after the preset and the
