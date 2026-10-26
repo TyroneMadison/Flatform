@@ -39,7 +39,7 @@ export const BUILTIN_TEMPLATES = [
   { id: 'car-white-cyc', kind: 'car', name: 'White cyclorama', note: 'Clean white, soft even light',
     scene: { preset: 'white-cyc-studio', camera: 'side', turn: 90, lens: 50, view: 'car', fit: 'footprint', matchLighting: true, look: {} } },
   { id: 'car-night-city', kind: 'car', name: 'Night city', note: 'Wet street, neon reflections',
-    scene: { preset: 'night-city-rain', camera: 'low', turn: 25, lens: 35, view: 'car', fit: 'footprint', matchLighting: true, look: { bloom: { on: true, strength: 0.5, threshold: 0.9 } } } },
+    scene: { preset: 'night-city-rain', camera: 'low', turn: 25, lens: 35, view: 'car', fit: 'footprint', matchLighting: true, look: { bloom: { on: true, strength: 0.2, threshold: 1.6 } } } }, // bloom runs before tone mapping: keep it to the signs, not the sky
 ];
 
 export const templatesFor = (kind) => BUILTIN_TEMPLATES.filter((t) => t.kind === (kind === 'warframe' ? 'warframe' : 'car'));

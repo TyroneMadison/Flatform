@@ -41,3 +41,15 @@ test('save, list and delete your own templates per workspace', async () => {
     assert.equal(d.status, 200); assert.deepEqual(await d.json(), []);
   } finally { await srv.close(); }
 });
+
+test('Night City is not washed out: soft bloom, high threshold, dimmer signs, capped glow input', async () => {
+  const { bloom } = BUILTIN_TEMPLATES.find((t) => t.id === 'car-night-city').scene.look;
+  assert.ok(bloom.on && bloom.strength <= 0.25, `bloom strength ${bloom.strength} (was 0.5)`);
+  assert.ok(bloom.threshold >= 1.5, `bloom threshold ${bloom.threshold} (was 0.9)`);
+  const { ENVIRONMENTS } = await import('../public/lib/environments.js');
+  const m = ENVIRONMENTS['night-city-rain'].mats;
+  for (const k of ['pink', 'cyan', 'lamp']) assert.ok(m[k].emit <= 2.5, `${k} sign emit ${m[k].emit}`);
+  // A specular spike on wet asphalt is unbounded HDR, so the glow's input is capped in post.js.
+  const { readFile } = await import('node:fs/promises');
+  assert.match(await readFile(new URL('../public/lib/post.js', import.meta.url), 'utf8'), /min\( gl_FragColor, vec4\( 2\.0 \) \)/);
+});

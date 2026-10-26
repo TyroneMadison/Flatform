@@ -158,8 +158,8 @@ export const ENVIRONMENTS = {
     sky: { hdri: 'shanghai_bund', sunU: 0.093, intensity: 0.7 }, // sunU: its brightest light, put behind the car as the rim
     mats: {
       asphalt: { color: '#17181c', rough: 0.12 }, line: { color: '#cfcfcf', rough: 0.5 }, curb: { color: '#3a3a40', rough: 0.8 },
-      tower: { color: '#2a2c38', rough: 0.6 }, window: { color: '#ffd59a', rough: 0.5, emit: 0.6 }, pink: { color: '#ff2fb0', rough: 0.4, emit: 4 },
-      cyan: { color: '#2fe0ff', rough: 0.4, emit: 4 }, lamp: { color: '#ffe0b0', rough: 0.4, emit: 5 },
+      tower: { color: '#2a2c38', rough: 0.6 }, window: { color: '#ffd59a', rough: 0.5, emit: 0.6 }, pink: { color: '#ff2fb0', rough: 0.4, emit: 2 },
+      cyan: { color: '#2fe0ff', rough: 0.4, emit: 2 }, lamp: { color: '#ffe0b0', rough: 0.4, emit: 2.5 },
     },
     parts: [
       { box: [600, 0.02, 14], at: [0, -0.01, 0], mat: 'asphalt' },
