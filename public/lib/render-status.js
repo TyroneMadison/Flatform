@@ -34,13 +34,13 @@ export function statusLight(job, waiting = 0, now = Date.now()) {
   return { light: 'busy', pct, text: `${name}: ${pct}% · ${formatEta(etaSeconds({ ...job, now }))}${more}`, tip: job.phaseText || 'Rendering' };
 }
 
-// One line for a queued render: "Still + 360° turntable · Compose scene, Transparent".
+// One line for a queued render: "Still + 360° spin · My scene, See-through".
 export function taskLabel(o) {
-  const what = [o.still && 'Still', o.t360 && '360° turntable', o.t180 && '180° half turn', o.models && 'Model files'].filter(Boolean);
+  const what = [o.still && 'Still', o.t360 && '360° spin', o.t180 && '180° half spin', o.models && 'Model files'].filter(Boolean);
   const looks = (o.still || o.t360 || o.t180) ? Object.keys(LOOKS).filter((l) => o[l]).map(lookName) : [];
   return `${what.join(' + ') || 'Nothing'}${looks.length ? ` · ${looks.join(', ')}` : ''}`;
 }
-export const lookName = (l) => ({ showroom: 'Showroom', studio: 'Compose scene', transparent: 'Transparent' })[l] || l;
+export const lookName = (l) => ({ showroom: 'Showroom', studio: 'My scene', transparent: 'See-through' })[l] || l;
 
 // The one file a finished render is best shown by, relative to its handoff folder: the drag-to-spin viewer for a
 // turntable, else the still, else the model file.
@@ -64,8 +64,8 @@ export function trimQueue(queue, keep = 5) {
 // The two connection lights in the top bar.
 export function blenderLight(blender) {
   if (!blender) return { ok: null, text: 'Blender: checking', tip: 'Looking for Blender on this computer' };
-  return blender.found ? { ok: true, text: 'Blender ready', tip: `${blenderStatus(blender)}. Renders can use it for extra realism.` }
-    : { ok: false, text: 'No Blender', tip: 'Blender is optional. Install Blender 4.x or newer, or click Browse in Settings to show Flatform where it is.' };
+  return blender.found ? { ok: true, text: 'Blender ready', tip: `${blenderStatus(blender)}. Renders can use it for more real light.` }
+    : { ok: false, text: 'No Blender', tip: 'Blender is optional. Install Blender 4 or newer, or click Browse in Settings to show where it is.' };
 }
 /** The one-line Blender status in Settings. */
 export const blenderStatus = (b) => (!b ? 'Looking for Blender...' : b.found ? `Blender found: ${b.version || 'ready'}` : 'Blender not found - click Browse');

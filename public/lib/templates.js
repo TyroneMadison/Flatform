@@ -26,7 +26,7 @@ export const BUILTIN_TEMPLATES = [
   { id: 'wf-turnaround', kind: 'warframe', name: 'Studio turnaround', note: 'Neutral studio for a full spin',
     scene: { preset: 'cyclorama', camera: 'side', turn: 0, lens: 50, view: 'car', fit: 'all', reflection: 0.2, shadow: 0.5,
       look: { background: { kind: 'solid', color: '#2a2b30' }, hdri: { file: 'builtin:studio_small_03', intensity: 1 }, lights: lit('studio'), ao: { on: true, strength: 1 }, tone: 'neutral' } } },
-  { id: 'wf-tennogen-shot', kind: 'warframe', name: 'TennoGen shot', note: 'Workshop-style front shot',
+  { id: 'wf-tennogen-shot', kind: 'warframe', name: 'TennoGen shot', note: 'A front shot like the Steam Workshop',
     scene: { preset: 'cyclorama', camera: 'front34', turn: 15, lens: 50, view: 'car', fit: 'all', reflection: 0, shadow: 0.4,
       look: { background: { kind: 'solid', color: '#15161a' }, hdri: { file: 'builtin:studio_small_03', intensity: 1.2, rotation: 30 }, lights: lightsFromPreset('studio'), ao: { on: true, strength: 1 }, tone: 'agx', bloom: { on: true, strength: 0.5 }, aa: 'smaa', quality: 'high' } } },
   // Car
@@ -36,7 +36,7 @@ export const BUILTIN_TEMPLATES = [
     scene: { preset: 'luxury-garage', camera: 'front34', turn: 35, lens: 50, view: 'car', fit: 'footprint', matchLighting: true, look: {} } },
   { id: 'car-desert-dusk', kind: 'car', name: 'Desert dusk', note: 'Low sun, open road',
     scene: { preset: 'desert-highway-dusk', camera: 'low', turn: 30, lens: 35, view: 'car', fit: 'footprint', matchLighting: true, look: {} } },
-  { id: 'car-white-cyc', kind: 'car', name: 'White cyclorama', note: 'Clean white, soft even light',
+  { id: 'car-white-cyc', kind: 'car', name: 'White studio', note: 'Clean white, soft even light',
     scene: { preset: 'white-cyc-studio', camera: 'side', turn: 90, lens: 50, view: 'car', fit: 'footprint', matchLighting: true, look: {} } },
   { id: 'car-night-city', kind: 'car', name: 'Night city', note: 'Wet street, neon reflections',
     scene: { preset: 'night-city-rain', camera: 'low', turn: 25, lens: 35, view: 'car', fit: 'footprint', matchLighting: true, look: { bloom: { on: true, strength: 0.2, threshold: 1.6 } } } }, // bloom runs before tone mapping: keep it to the signs, not the sky

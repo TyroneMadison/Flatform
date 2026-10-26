@@ -44,8 +44,8 @@ const version = () => m.versions.find((v) => v.n === m.activeVersion) || m.versi
 
 function dropSection(v) {
   if (v.provider === 'upload') {
-    return `<p>Imported 3D file <b class="mono">${esc(v.fileName || 'model.glb')}</b>${v.file ? ' · converted to GLB' : ''}</p>
-      ${v.file ? `<a class="btn ghostbtn sm" href="${fileUrl(m, v.file)}" download="${esc(v.fileName)}">${icon('download', 14)}<span>Original file</span></a>` : ''}`;
+    return `<p>Imported 3D file <b class="mono">${esc(v.fileName || 'model.glb')}</b>${v.file ? ' · changed to a .glb 3D file' : ''}</p>
+      ${v.file ? `<a class="btn ghostbtn sm" href="${fileUrl(m, v.file)}" download="${esc(v.fileName)}" title="Download the file you first added">${icon('download', 14)}<span>Original file</span></a>` : ''}`;
   }
   const views = v.views || (v.source ? { front: v.source } : {});
   if (!Object.keys(views).length) return '<p class="muted">No source photo saved.</p>';
@@ -53,15 +53,15 @@ function dropSection(v) {
 }
 
 function settingsSection(v) {
-  if (v.provider === 'upload') return '<p class="muted">Not generated: this model was dropped in as a 3D file.</p>';
+  if (v.provider === 'upload') return '<p class="muted">Not made here: this model was added as a 3D file.</p>';
   const g = v.generation;
   if (!g) return `<p class="muted">Not recorded. This version was made before Flatform kept its prompt and settings${v.engine ? `; it ran on ${esc(engineLabel(v))}` : ''}.</p>`;
   const specs = ENGINES[g.engine] ? optionSpecs(g.engine) : [];
   const label = (k) => specs.find((s) => s.key === k)?.label || k;
   const value = (val) => (val === true ? 'On' : val === false ? 'Off' : val == null ? 'Auto' : String(val));
   const rows = [
-    ['Provider', PROVIDERS[g.provider]?.name || g.provider], ['Engine', ENGINES[g.engine]?.label || g.engine],
-    ['Photos', g.mode === 'views' ? 'Four views' : 'One photo'], ['Estimate', `${g.credits} credits`],
+    ['Made with', PROVIDERS[g.provider]?.name || g.provider], ['Engine', ENGINES[g.engine]?.label || g.engine],
+    ['Photos', g.mode === 'views' ? 'Four photos' : 'One photo'], ['Cost guess', `${g.credits} credits`],
     ...Object.entries(g.options || {}).filter(([k]) => k !== 'prompt').map(([k, val]) => [label(k), value(val)]),
   ];
   return `<p><b>Prompt</b> ${g.prompt ? esc(g.prompt) : '<span class="muted">none (made from the photo alone)</span>'}</p>
@@ -71,16 +71,16 @@ function settingsSection(v) {
 function rendersSection() {
   const r = m.renders;
   if (!isRendered(m) && !r?.stills?.length) {
-    return `<p class="muted">Not rendered yet.</p>${m.status === 'ready' ? `<a class="btn pri" href="#/compose/${m.id}/render" title="Open Compose at its render options">${icon('film')}<span>Render</span></a>` : ''}`;
+    return `<p class="muted">Not rendered yet.</p>${m.status === 'ready' ? `<a class="btn pri" href="#/compose/${m.id}/render" title="Open the Scene step at Render">${icon('film')}<span>Render</span></a>` : ''}`;
   }
   const looks = Object.keys(LOOKS).filter((l) => [360, 180].some((t) => r[`${l}${t}`]));
   return `${r.poster ? `<img class="mp-poster" src="${fileUrl(m, r.poster)}" alt="Rendered poster of ${esc(m.name)}">` : ''}
-    <dl class="mp-dl"><dt>Turntables</dt><dd>${renderedTurns(m).map((t) => `${t}°`).join(' and ') || 'none'}</dd>
+    <dl class="mp-dl"><dt>Spin videos</dt><dd>${renderedTurns(m).map((t) => `${t}°`).join(' and ') || 'none'}</dd>
       <dt>Looks</dt><dd>${looks.map((l) => esc(LOOKS[l].label)).join(', ') || 'none'}</dd>
-      ${r.stills?.length ? `<dt>Stills</dt><dd>${r.stills.length}</dd>` : ''}
+      ${r.stills?.length ? `<dt>Pictures</dt><dd>${r.stills.length}</dd>` : ''}
       <dt>Folder</dt><dd class="mono">${esc(r.outDir || '')}</dd>${r.at ? `<dt>Rendered</dt><dd>${esc(new Date(r.at).toLocaleString())}</dd>` : ''}</dl>
-    <div class="mp-act">${native && r.outDir ? `<button class="btn ghostbtn" type="button" data-act="open">${icon('folder')}<span>Open folder</span></button>` : ''}
-      <a class="btn sec" href="#/compose/${m.id}/render" title="Open Compose at its render options">${icon('film')}<span>Render again</span></a></div>`;
+    <div class="mp-act">${native && r.outDir ? `<button class="btn ghostbtn" type="button" data-act="open" title="Show the render files in a folder">${icon('folder')}<span>Open folder</span></button>` : ''}
+      <a class="btn sec" href="#/compose/${m.id}/render" title="Open the Scene step at Render">${icon('film')}<span>Render again</span></a></div>`;
 }
 
 function page() {
@@ -89,16 +89,16 @@ function page() {
   const ready = m.status === 'ready';
   return `
     <div class="libhead"><div><a class="link" href="#/library">${icon('library', 14)} Library</a><h1 class="ph">${esc(m.name)}</h1>
-      <p class="sub">${esc(statusText(m))}${ready && v.provider !== 'upload' ? ` · ${esc(engineLabel(m))}` : ''}${m.approved ? ' · Approved' : ''}${m.versions.length > 1 ? ` · version ${m.activeVersion} of ${m.versions.length}` : ''}</p></div>
-      <div class="lh-act">${ready ? `<a class="btn ghostbtn" href="${fileUrl(m, m.glb)}" download="${esc(m.slug || 'model')}.glb">${icon('download')}<span>GLB</span></a>` : ''}
-        ${isGenerating(m) ? `<a class="btn sec" href="#/generate/${m.id}">${icon('eye')}<span>Show progress</span></a>` : ''}
-        <button class="btn dangerbtn" type="button" data-act="delete">Delete</button></div></div>
-    <section class="mp-sec glass"><h2 class="label">Drop</h2>${dropSection(v)}</section>
+      <p class="sub keep">${esc(statusText(m))}${ready && v.provider !== 'upload' ? ` · ${esc(engineLabel(m))}` : ''}${m.approved ? ' · Approved' : ''}${m.versions.length > 1 ? ` · version ${m.activeVersion} of ${m.versions.length}` : ''}</p></div>
+      <div class="lh-act">${ready ? `<a class="btn ghostbtn" href="${fileUrl(m, m.glb)}" download="${esc(m.slug || 'model')}.glb" title="Download the 3D file (.glb)">${icon('download')}<span>3D file</span></a>` : ''}
+        ${isGenerating(m) ? `<a class="btn sec" href="#/generate/${m.id}" title="See how far along it is">${icon('eye')}<span>Show progress</span></a>` : ''}
+        <button class="btn dangerbtn" type="button" data-act="delete" title="Delete this model and its files from this computer">Delete</button></div></div>
+    <section class="mp-sec glass"><h2 class="label">What you added</h2>${dropSection(v)}</section>
     <section class="mp-sec glass"><h2 class="label">Prompt and settings</h2>${settingsSection(v)}</section>
-    <section class="mp-sec glass"><div class="rowhead"><h2 class="label">Compose</h2>${ready ? `<a class="btn pri sm" href="#/compose/${m.id}">${icon('scene', 14)}<span>Open in Compose</span></a>` : ''}</div>
-      ${ready ? `<p class="sub">${esc(PRESETS[scene.preset]?.label || scene.preset)} · turn ${Math.round(scene.turn)}°</p>
+    <section class="mp-sec glass"><div class="rowhead"><h2 class="label">Scene</h2>${ready ? `<a class="btn pri sm" href="#/compose/${m.id}" title="Open the model in the Scene step">${icon('scene', 14)}<span>Open in Scene</span></a>` : ''}</div>
+      ${ready ? `<p class="sub keep">${esc(PRESETS[scene.preset]?.label || scene.preset)} · turn ${Math.round(scene.turn)}°</p>
       <div class="mp-view"><canvas id="mcv" aria-label="${esc(m.name)} in its scene"></canvas></div>` : '<p class="muted">The model is not ready yet.</p>'}</section>
-    <section class="mp-sec glass"><h2 class="label">Rendered outputs</h2>${rendersSection()}</section>`;
+    <section class="mp-sec glass"><h2 class="label">Renders</h2>${rendersSection()}</section>`;
 }
 
 // The model in its composed scene, exactly as Compose and the renders frame it. Nothing drawn over it.
@@ -129,7 +129,7 @@ async function onClick(e) {
   if (!t) return;
   if (t.dataset.act === 'open') native?.openPath(m.renders.outDir).catch((err) => toast(err.message));
   if (t.dataset.act === 'delete') {
-    if (!(await confirmDialog({ title: `Delete “${m.name}”?`, text: 'This removes the model, every version and its files from this computer. Rendered handoff folders are not touched.', ok: 'Delete model' }))) return;
+    if (!(await confirmDialog({ title: `Delete “${m.name}”?`, text: 'This removes the model, every version and its files from this computer. Folders you rendered to are kept.', ok: 'Delete model' }))) return;
     try {
       await api(`/api/models/${m.id}`, { method: 'DELETE' });
       state.models = state.models.filter((x) => x.id !== m.id);

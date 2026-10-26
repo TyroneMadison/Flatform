@@ -50,17 +50,17 @@ export function checkScene(root, { tennogen = false, budget = tennogen ? TENNO_B
     if (/decal/i.test(o.name || '') && !mats.some((m) => m.map)) note('decal', o.name);
   });
   const LABELS = {
-    'texture-missing': ['error', 'Textures that did not load', null],
-    material: ['error', 'Parts with no material', 'material'],
-    normals: ['warn', 'Parts with no normals (they look flat or black)', 'normals'],
-    uvs: ['warn', 'Parts with no UVs (textures cannot show)', null],
-    'texture-size': ['warn', `Textures not a power of two or over ${budget.maxTex}px`, null],
+    'texture-missing': ['error', 'Paint pictures that did not load', null],
+    material: ['error', 'Parts with no paint at all', 'material'],
+    normals: ['warn', 'Parts that may look flat or black', 'normals'],
+    uvs: ['warn', 'Parts the paint cannot wrap onto', null],
+    'texture-size': ['warn', `Paint pictures with an odd size or over ${budget.maxTex}px`, null],
     manifold: ['warn', 'Parts with holes or loose edges', null],
-    decal: ['warn', 'Decals with no picture linked', null],
+    decal: ['warn', 'Stickers with no picture', null],
   };
   const checks = Object.entries(found).map(([id, names]) => ({ id, level: LABELS[id][0], label: LABELS[id][1], count: names.length, names: names.slice(0, 8), fix: LABELS[id][2] }));
-  if (tris > budget.tris) checks.push({ id: 'tris', level: 'warn', label: `Too many triangles: ${tris.toLocaleString('en-US')} (budget ${budget.tris.toLocaleString('en-US')})`, count: 1, names: [], fix: null });
-  if (tennogen && meshes && !tint) checks.push({ id: 'tint', level: 'warn', label: 'No tint mask (_t) texture found', count: 1, names: [], fix: null });
+  if (tris > budget.tris) checks.push({ id: 'tris', level: 'warn', label: `Too many pieces: ${tris.toLocaleString('en-US')} (limit ${budget.tris.toLocaleString('en-US')})`, count: 1, names: [], fix: null });
+  if (tennogen && meshes && !tint) checks.push({ id: 'tint', level: 'warn', label: 'No color mask picture (_t) found', count: 1, names: [], fix: null });
   if (!meshes) checks.push({ id: 'empty', level: 'error', label: 'The model has no visible parts', count: 1, names: [], fix: null });
   return { pass: !checks.some((c) => c.level === 'error'), clean: !checks.length, tris, meshes, checks };
 }

@@ -13,7 +13,7 @@ export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     const [id, file] = url.pathname.slice(1).split('/');
-    if (!ID.test(id || '')) return new Response('Not found', { status: 404 });
+    if (!ID.test(id || '')) return new Response('This link does not work. Ask for a new one.', { status: 404 });
     if (req.method === 'POST') {
       if (req.headers.get('authorization') !== `Bearer ${env.SHARE_TOKEN}`) return new Response('Forbidden', { status: 403 });
       const key = file === 'meta' ? `${id}/meta.json` : `${id}/${file === 'poster.jpg' ? 'poster.jpg' : 'video.mp4'}`;
@@ -26,13 +26,13 @@ export default {
       return new Response('ok');
     }
     const metaObj = await env.BUCKET.get(`${id}/meta.json`);
-    if (!metaObj) return new Response('Not found', { status: 404 });
+    if (!metaObj) return new Response('This link does not work. Ask for a new one.', { status: 404 });
     const m = await metaObj.json();
-    if (m.expiresAt && Date.parse(m.expiresAt) <= Date.now()) return new Response('This link has expired', { status: 410 });
+    if (m.expiresAt && Date.parse(m.expiresAt) <= Date.now()) return new Response('This link has stopped working. Ask for a new one.', { status: 410 });
     if (file === 'video.mp4' || file === 'poster.jpg') {
       const o = await env.BUCKET.get(`${id}/${file}`);
       const type = file.endsWith('mp4') ? 'video/mp4' : /^image\/(webp|png|jpeg)$/.test(m.posterType || '') ? m.posterType : 'image/jpeg';
-      return o ? new Response(o.body, { headers: { 'content-type': type } }) : new Response('Not found', { status: 404 });
+      return o ? new Response(o.body, { headers: { 'content-type': type } }) : new Response('This link does not work. Ask for a new one.', { status: 404 });
     }
     return new Response(page(id, m, url.origin), { headers: { 'content-type': 'text/html; charset=utf-8' } });
   },

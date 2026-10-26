@@ -23,22 +23,22 @@ export function renderPathGroup() {
   const pp = presets['camera-paths'] || [], sp = presets.skies || [];
   return `<div class="grp" id="grp-path"><h3>Camera move and sky</h3>
     <h4 class="fine">Camera move</h4>
-    ${marks.length < 2 ? '<p class="fine">Save at least two camera spots in Tools. The move goes from spot to spot.</p>'
-      : `<button class="btn big ${p.on ? 'sec' : ''}" type="button" data-path="make">${p.on ? 'Rebuild from my spots' : 'Make a move from my spots'}</button>`}
-    ${p.on ? `<p class="fine">${p.stops.length} stops: ${p.stops.map((x) => esc(x.name || 'spot')).join(' → ')}</p>
-      <div class="chips seg" role="radiogroup" aria-label="How it moves">${Object.entries(EASINGS).map(([k, l]) => `<button class="chip" type="button" role="radio" data-path-ease="${k}" aria-checked="${p.easing === k}">${l}</button>`).join('')}</div>
-      <label class="check"><input type="checkbox" data-path-spin ${p.spin ? 'checked' : ''}> <span>Turn the model too</span></label>
-      <div class="mg-row"><button class="btn big" type="button" data-path="play">${playing ? 'Stop' : 'Play it'}</button><button class="btn big sec" type="button" data-path="off">Turn off</button></div>
-      <div class="mg-row"><button class="btn sm ghostbtn" type="button" data-path="save">Save this move</button></div>` : ''}
-    ${pp.length ? `<div class="chips" role="group" aria-label="Saved moves">${pp.map((x) => `<span class="chipset"><button class="chip" type="button" data-path-load="${esc(x.name)}">${esc(x.name)}</button><button class="chip sm" type="button" data-path-del="${esc(x.name)}" title="Delete">✕</button></span>`).join('')}</div>` : ''}
+    ${marks.length < 2 ? '<p class="fine keep">Save two camera spots in Tools first. The camera moves from spot to spot.</p>'
+      : `<button class="btn big ${p.on ? 'sec' : ''}" type="button" data-path="make" title="Make a camera move that goes through your saved spots">${p.on ? 'Remake move' : 'Make camera move'}</button>`}
+    ${p.on ? `<p class="fine keep">${p.stops.length} stops: ${p.stops.map((x) => esc(x.name || 'spot')).join(' → ')}</p>
+      <div class="chips seg" role="radiogroup" aria-label="How it moves">${Object.entries(EASINGS).map(([k, l]) => `<button class="chip" type="button" role="radio" data-path-ease="${k}" aria-checked="${p.easing === k}" title="How the camera speeds up and slows down">${l}</button>`).join('')}</div>
+      <label class="check"><input type="checkbox" data-path-spin title="Spin the model while the camera moves" ${p.spin ? 'checked' : ''}> <span>Turn the model too</span></label>
+      <div class="mg-row"><button class="btn big" type="button" data-path="play" title="Play or stop the camera move">${playing ? 'Stop' : 'Play'}</button><button class="btn big sec" type="button" data-path="off" title="Stop using the camera move">Turn off</button></div>
+      <div class="mg-row"><button class="btn sm ghostbtn" type="button" data-path="save" title="Keep this camera move under a name">Save move</button></div>` : ''}
+    ${pp.length ? `<div class="chips" role="group" aria-label="Saved moves">${pp.map((x) => `<span class="chipset"><button class="chip" type="button" data-path-load="${esc(x.name)}" title="Use this saved camera move">${esc(x.name)}</button><button class="chip sm" type="button" data-path-del="${esc(x.name)}" title="Delete this saved move">✕</button></span>`).join('')}</div>` : ''}
     <h4 class="fine">Sky</h4>
-    <label class="check"><input type="checkbox" data-sky-on ${sky.on ? 'checked' : ''}> <span>Move the sky during the turn</span></label>
-    ${sky.on ? `<label class="check"><span>Turn the sky by <b>${sky.spin}°</b></span><input class="inp" type="range" min="-360" max="360" step="15" value="${sky.spin}" data-sky-spin></label>
-      <p class="fine">Switch skies (optional). Each one starts at a point in the clip.</p>
-      ${sky.playlist.map((e, i) => `<div class="skyrow"><select class="inp" data-sky-file="${i}">${hdris.map(([k, l]) => `<option value="${k}" ${k === e.file ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><input class="inp" type="number" min="0" max="100" step="5" value="${Math.round(e.at * 100)}" data-sky-at="${i}" aria-label="Starts at percent"><span>%</span><button class="chip sm" type="button" data-sky-del="${i}" title="Remove">✕</button></div>`).join('')}
-      ${sky.playlist.length < 8 ? '<button class="btn sm ghostbtn" type="button" data-sky="add">Add a sky</button>' : ''}
-      <div class="mg-row"><button class="btn sm ghostbtn" type="button" data-sky="save">Save this sky</button></div>` : ''}
-    ${sp.length ? `<div class="chips" role="group" aria-label="Saved skies">${sp.map((x) => `<span class="chipset"><button class="chip" type="button" data-sky-load="${esc(x.name)}">${esc(x.name)}</button><button class="chip sm" type="button" data-sky-del-preset="${esc(x.name)}" title="Delete">✕</button></span>`).join('')}</div>` : ''}
+    <label class="check"><input type="checkbox" data-sky-on title="Turn or change the sky while the model spins" ${sky.on ? 'checked' : ''}> <span>Move the sky during the turn</span></label>
+    ${sky.on ? `<label class="check"><span>Turn the sky by <b>${sky.spin}°</b></span><input class="inp" type="range" min="-360" max="360" step="15" value="${sky.spin}" data-sky-spin title="How far the sky turns over the clip"></label>
+      <p class="fine">You can change skies during the clip. Each one starts at a set point.</p>
+      ${sky.playlist.map((e, i) => `<div class="skyrow"><select class="inp" data-sky-file="${i}" title="Pick a sky picture">${hdris.map(([k, l]) => `<option value="${k}" ${k === e.file ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><input class="inp" type="number" min="0" max="100" step="5" value="${Math.round(e.at * 100)}" data-sky-at="${i}" aria-label="Starts at percent" title="When this sky starts, as a percent of the clip"><span>%</span><button class="chip sm" type="button" data-sky-del="${i}" title="Remove this sky">✕</button></div>`).join('')}
+      ${sky.playlist.length < 8 ? '<button class="btn sm ghostbtn" type="button" data-sky="add" title="Add another sky to the clip">Add sky</button>' : ''}
+      <div class="mg-row"><button class="btn sm ghostbtn" type="button" data-sky="save" title="Keep these sky settings under a name">Save sky</button></div>` : ''}
+    ${sp.length ? `<div class="chips" role="group" aria-label="Saved skies">${sp.map((x) => `<span class="chipset"><button class="chip" type="button" data-sky-load="${esc(x.name)}" title="Use these saved sky settings">${esc(x.name)}</button><button class="chip sm" type="button" data-sky-del-preset="${esc(x.name)}" title="Delete these saved sky settings">✕</button></span>`).join('')}</div>` : ''}
   </div>`;
 }
 

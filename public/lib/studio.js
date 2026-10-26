@@ -51,7 +51,7 @@ export const CAMERAS = {
 // metres; the rest are built here.
 export const PRESETS = {
   ...Object.fromEntries(Object.entries(ENVIRONMENTS).map(([key, p]) => [key, { label: p.label, note: p.note, env: true, thumb: envThumb(key) }])),
-  cyclorama: { label: 'White cyclorama', note: 'Seamless white, soft top light' },
+  cyclorama: { label: 'Plain white room', note: 'Plain white, soft top light' },
   ring: { label: 'Escalade ring studio', note: 'Reflective floor · coral ring · side light bars' },
   transparent: { label: 'Transparent', note: 'RGBA PNG with soft contact shadow' },
   miami: { label: 'Miami street at night', note: 'Add your Miami HDRI' },

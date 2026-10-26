@@ -8,7 +8,7 @@ export const COLUMNS = 12; // sprite sheet columns
 export const WEB_WIDTHS = [512, 256]; // frame widths of the web sprite sheets
 export const LOOKS = {
   showroom: { width: 2048, height: 1536, label: 'Showroom' }, // 4:3, the 3D showroom: Dud Rents' house look
-  studio: { width: 2048, height: 1536, label: 'Composed scene' }, // 4:3, whatever scene was set up in Compose
+  studio: { width: 2048, height: 1536, label: 'Your scene' }, // 4:3, whatever scene was set up in Compose
   transparent: { width: 2048, height: 2048, label: 'Transparent' }, // RGBA with a soft contact shadow
 };
 

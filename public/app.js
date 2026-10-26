@@ -2,6 +2,8 @@
 // Each screen is a module in views/ with mount(el, params), and optionally update() and unmount().
 import { icon } from './lib/icons.js';
 import { applyTheme } from './lib/theme.js';
+import { applyHelpText } from './lib/help-text.js';
+import { installTips } from './lib/tips.js';
 import { PROVIDERS, ENGINES, VIEWS, normalize, presetConfig, matchPreset, PRESETS } from './lib/engines.js';
 import { estimate } from './lib/pricing.js';
 import { isModelFile, importModel } from './lib/importer.js';
@@ -98,9 +100,9 @@ export const sourceType = (file = '') => (/\.png$/i.test(file) ? 'PNG' : 'JPEG')
 
 // Generation stages, from the provider's job status and progress.
 const STAGE_NAMES = {
-  tripo: ['Uploaded to Tripo', 'Task started', 'Building geometry', 'Painting textures', 'Saving GLB to library'],
-  local: ['Sent to your graphics card', 'Waiting for its turn', 'Building the shape', 'Painting textures', 'Saving GLB to library'],
-  '3daistudio': ['Sent to 3D AI Studio', 'Waiting for its turn', 'Building geometry', 'Painting textures', 'Saving GLB to library'],
+  tripo: ['Sent to Tripo', 'Started', 'Building the shape', 'Painting it', 'Saving to your library'],
+  local: ['Sent to your graphics card', 'Waiting for its turn', 'Building the shape', 'Painting it', 'Saving to your library'],
+  '3daistudio': ['Sent to 3D AI Studio', 'Waiting for its turn', 'Building the shape', 'Painting it', 'Saving to your library'],
 };
 export const providerOf = (v) => (v?.provider === '3daistudio' || v?.provider === 'local' ? v.provider : 'tripo');
 export const stagesOf = (v) => STAGE_NAMES[providerOf(v)];
@@ -116,10 +118,10 @@ export function stageOf(v) {
 export function statusText(m) {
   if (m.status === 'ready') return 'Ready';
   if (m.status === 'spin') return m.spin ? 'Spin set from photos' : 'Photos for a spin set';
-  if (m.status === 'failed') return m.error || 'Generation failed';
+  if (m.status === 'failed') return m.error || 'Could not make it';
   if (m.note) return m.note;
   const stage = stageOf(m);
-  return stage === 1 ? `Queued at ${PROVIDERS[providerOf(m)].name}` : `${stagesOf(m)[stage]} · ${m.progress || 0}%`;
+  return stage === 1 ? `Waiting at ${PROVIDERS[providerOf(m)].name}` : `${stagesOf(m)[stage]} · ${m.progress || 0}%`;
 }
 export const statusClass = (m) => ({ ready: 'ready', spin: 'ready', failed: 'fail' })[m.status] || 'gen';
 // "Tripo v3.1" or "3D AI Studio · Hitem3D 3.0", for a version (or the model's active one).
@@ -136,7 +138,7 @@ export const accountOf = (provider) => state.accounts[provider] || null;
 export function creditsText(provider = state.settings?.provider || 'tripo') {
   const a = accountOf(provider);
   if (!a?.hasKey || a.balance == null) return '';
-  return `${PROVIDERS[provider].name} balance ${fmtBalance(a.balance)} credits${a.frozen ? ` · ${fmt(a.frozen)} frozen` : ''}.`;
+  return `${PROVIDERS[provider].name} balance ${fmtBalance(a.balance)} credits${a.frozen ? ` · ${fmt(a.frozen)} held` : ''}.`;
 }
 
 // ---- setups: provider, engine and options for the next generation ----
@@ -331,7 +333,7 @@ export function openKeyDialog(provider = state.settings?.provider || 'tripo') {
   const p = PROVIDERS[provider];
   $('#keyTitle').textContent = provider === 'tripo' ? 'Connect your Tripo account' : 'Connect 3D AI Studio';
   $('#keyLink').href = p.keyUrl; // "Where do I find this?" opens the page that makes the key
-  $('#keyLink').title = `Opens ${provider === 'tripo' ? 'developers.tripo3d.com/en/keys' : 'the 3D AI Studio dashboard'}, where you make and copy your key`;
+  $('#keyLink').title = `Opens the ${provider === 'tripo' ? 'Tripo' : '3D AI Studio'} page where you make and copy your key`;
   $('#keyTo').textContent = p.name;
   $('#keyInput').placeholder = p.keyHint || 'Paste your key';
   $('#keyError').textContent = '';
@@ -377,13 +379,13 @@ function showUpdate(force = false) {
   $('#updatePill').hidden = !n;
   if (!n) return;
   $('#updatePill .tb-l').textContent = n.pill;
-  $('#updatePill').title = `${n.title}. Click to see what is new and download it.`;
+  $('#updatePill').title = `${n.title}. Click to see what is new.`;
   if (toldUpdate === n.version && !force) return;
   toldUpdate = n.version;
   announce(`${n.title} to download`);
   toast(`${n.title}. ${n.note}`, 'info', [
     { label: 'Download', title: 'Open the download page for the new version', run: () => window.open(state.update.downloadUrl, '_blank', 'noopener') },
-    { label: 'Later', title: 'Hide this. The Update button in the top bar stays until you install it.', run: () => {} },
+    { label: 'Later', title: 'Hide this for now. The Update button stays in the top bar.', run: () => {} },
     { label: 'Skip this version', title: 'Do not ask about this version again', run: skipUpdate },
   ]);
 }
@@ -410,7 +412,7 @@ function showLow(force = false) {
   announce(n.title);
   toast(`${n.title}. ${n.note}`, 'info', [
     { label: 'Top up', title: 'Open the page where you buy more credits', run: () => topUp(n.service) },
-    { label: 'Later', title: 'Hide this. The amber dot in the top bar stays until you top up.', run: () => {} },
+    { label: 'Later', title: 'Hide this for now. The amber dot stays until you top up.', run: () => {} },
   ]);
   return n;
 }
@@ -626,9 +628,9 @@ function drawWorkspaces() {
   el.hidden = !ws;
   if (!ws) return;
   const cur = activeWorkspace();
-  el.innerHTML = `<button class="wsbtn" type="button" id="wsBtn" aria-haspopup="menu" aria-expanded="false" title="Switch project (Ctrl+1 to Ctrl+9)"><span class="wsico ${esc(cur?.kind)}" aria-hidden="true"></span><span>${esc(cur?.name || 'Workspace')}</span></button>
-    <div class="wsmenu glass" id="wsMenu" role="menu" hidden>${ws.list.map((w, i) => `<button type="button" role="menuitemradio" aria-checked="${w.id === ws.active}" data-ws="${esc(w.id)}"><span class="wsico ${esc(w.kind)}" aria-hidden="true"></span>${esc(w.name)}${i < 9 ? `<small>Ctrl+${i + 1}</small>` : ''}</button>`).join('')}
-    <button type="button" role="menuitem" data-ws-new>+ New workspace</button></div>`;
+  el.innerHTML = `<button class="wsbtn" type="button" id="wsBtn" aria-haspopup="menu" aria-expanded="false" title="Switch workspace (Ctrl+1 to Ctrl+9)"><span class="wsico ${esc(cur?.kind)}" aria-hidden="true"></span><span>${esc(cur?.name || 'Workspace')}</span></button>
+    <div class="wsmenu glass" id="wsMenu" role="menu" hidden>${ws.list.map((w, i) => `<button type="button" role="menuitemradio" aria-checked="${w.id === ws.active}" data-ws="${esc(w.id)}" title="Switch to ${esc(w.name)}"><span class="wsico ${esc(w.kind)}" aria-hidden="true"></span>${esc(w.name)}${i < 9 ? `<small>Ctrl+${i + 1}</small>` : ''}</button>`).join('')}
+    <button type="button" role="menuitem" data-ws-new title="Make a new workspace with its own models">+ New workspace</button></div>`;
 }
 export async function switchWorkspace(id) {
   if (!state.workspaces || id === state.workspaces.active) return;
@@ -647,7 +649,7 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('[data-ws-new]')) {
     const name = prompt('Name the new workspace');
     if (!name) return;
-    const kind = confirm('Is it for Warframe models? OK for Warframe, Cancel for cars.') ? 'warframe' : 'car';
+    const kind = confirm('Is it for Warframe? Press OK for Warframe, or Cancel for cars.') ? 'warframe' : 'car';
     try { state.workspaces = await send('/api/workspaces', 'POST', { name, kind }); drawWorkspaces(); } catch (err) { toast(err.message); }
     return;
   }
@@ -681,8 +683,8 @@ export async function restoreLastSession() {
   let s;
   try { s = await api('/api/session?latest'); } catch (e) { return toast(e.message); }
   const m = s.last && findModel(s.last.modelId);
-  if (!m) return toast('Everything is saved. There is no earlier session to bring back yet.', 'info');
-  const ok = await confirmDialog({ title: 'Restore your last session?', text: `${m.name}, as it was ${timeAgo(s.last.at)}. The scene you have open now is replaced, and Undo brings it back.`, ok: 'Restore last session' });
+  if (!m) return toast('Everything is saved. There is nothing older to bring back yet.', 'info');
+  const ok = await confirmDialog({ title: 'Restore your last session?', text: `${m.name}, as it was ${timeAgo(s.last.at)}. This replaces the scene you have open. Undo brings it back.`, ok: 'Restore' });
   if (ok) restoreSnapshot(s.last);
 }
 async function loadSession() {
@@ -710,7 +712,7 @@ export function setMode(mode) {
   if (['drop', 'warframe'].includes(route.name)) go('#/drop'); // the Photo step's words change with the mode
   else refresh();
 }
-const present = () => { const m = focusModel(); return m ? go(`#/preview/${m.id}`) : toast('Make or open a 3D model first, then show it to a client.', 'info'); };
+const present = () => { const m = focusModel(); return m ? go(`#/preview/${m.id}`) : toast('Open a 3D model first, then show it to a client.', 'info'); };
 const shareSheet = () => { const m = focusModel(); go(m ? `#/share/${m.id}` : '#/share'); };
 // Reduce motion: the system setting, or this switch (Settings, Look). Stops loops and makes every animation instant.
 export const reduceMotion = (on) => {
@@ -734,7 +736,7 @@ function wireTopBar(palette) {
     return state.accounts[provider]?.hasKey ? go('#/settings/providers') : openKeyDialog(provider);
   });
   $('#blenderLight').addEventListener('click', () => (showTray(true) || go('#/settings/rendering')));
-  $('#renderLight').addEventListener('click', () => { if (!showTray()) toast('Nothing in the render queue yet. Start one from Render in Scene and render.', 'info'); });
+  $('#renderLight').addEventListener('click', () => { if (!showTray()) toast('Nothing in the render queue yet. Start one with Render in the Scene step.', 'info'); });
   $('#sheetClose').addEventListener('click', closeSheet);
   $('#dock').addEventListener('click', (e) => { const b = e.target.closest('[data-dock]'); if (b) pickDock(b.dataset.dock); });
   // Esc closes a sheet (Library, Settings, Share, Usage) when nothing else is open.
@@ -755,25 +757,25 @@ function paletteCommands() {
   const href = stepHrefs();
   const screens = [
     ['Go to Photo', 'Step 1 · drop or choose photos', href.photo],
-    ['Go to 3D model', 'Step 2 · recipe and Generate', href.model],
+    ['Go to 3D model', 'Step 2 · pick a recipe and make it', href.model],
     ['Go to Scene and render', m ? `Step 3 · ${m.name}` : 'Step 3 · pick a model first', href.scene],
     ['Go to Finish', 'Step 4 · check, compare and share', href.finish],
     ['Library', 'Everything you have made', '#/library'],
     ['Library: renders', 'Finished pictures and spins', '#/library'],
     ['Usage and spend', 'What you have spent', '#/usage'],
-    ['Settings', 'Accounts, look, folders, updates and shortcuts', '#/settings'],
+    ['Settings', 'Accounts, look, folders, updates and keys', '#/settings'],
     ['Check for updates', 'Settings · About and updates', '#/settings/about'],
     m && ['Version history', `Older versions of ${m.name}`, `#/model/${m.id}`],
-    m && ['Spin set from photos', 'Photo frames for Dud Rents', `#/spin/${m.id}`],
+    m && ['Spin set from photos', 'Photo spin for Dud Rents', `#/spin/${m.id}`],
   ].filter(Boolean).map(([label, hint, to]) => ({ label, hint, run: () => go(to) }));
   // The Scene tools, each one click from anywhere.
   const tools = m ? dockFor('scene', { humanoid: state.humanoid }).map(([id, , label, tip]) => ({ label: `Scene: ${label}`, hint: tip, run: () => { state.tool.scene = id; go(`#/compose/${m.id}`); if (route.name === 'compose') pickDock(id); } })) : [];
   const actions = [
     { label: 'Show a client', hint: 'Clean full screen, slow spin', run: present },
     { label: 'Share links', hint: 'Send someone a link', run: shareSheet },
-    { label: 'Restore last session', hint: 'Bring back your last auto-save', run: restoreLastSession },
+    { label: 'Restore last session', hint: 'Bring back your last save', run: restoreLastSession },
     { label: 'Show render queue', hint: 'Every render waiting or running', run: () => showTray(true) || toast('Nothing in the render queue yet.', 'info') },
-    { label: 'Connect Tripo account', hint: 'Paste your key', run: () => openKeyDialog('tripo') },
+    { label: 'Connect Tripo account', hint: 'Paste your Tripo key', run: () => openKeyDialog('tripo') },
     { label: state.mode === 'car' ? 'Switch to Warframe mode' : 'Switch to Car mode', hint: 'Top bar · Car / Warframe', run: () => setMode(state.mode === 'car' ? 'warframe' : 'car') },
     { label: reduceMotion() ? 'Turn animations back on' : 'Reduce motion', hint: 'Stops moving effects', run: () => toast(reduceMotion(!reduceMotion()) ? 'Animations are off.' : 'Animations are on.', 'info') },
   ];
@@ -782,7 +784,7 @@ function paletteCommands() {
   const shortcuts = SHORTCUTS.filter((s) => s.id !== 'palette').map((s) => {
     const here = worksOn(s, route.name);
     const k = keyOf(s.id, keys);
-    return { label: s.label, hint: here ? k : `${k} · in Scene`, title: here ? `${s.label} (${k})` : `Opens Scene and render. There, press ${k} for this.`,
+    return { label: s.label, hint: here ? k : `${k} · in Scene`, title: here ? `${s.label} (${k})` : `Opens Scene and render. Then press ${k}.`,
       run: () => (here ? hotkeys.act(s.id) : m ? go(`#/compose/${m.id}`) : toast('Pick a model first.', 'info')) };
   });
   return [...recents, ...screens, ...tools, ...actions, ...shortcuts];
@@ -796,6 +798,8 @@ function paletteCommands() {
   state.settings = settings;
   state.blender = blender;
   applyTheme(settings?.theme);
+  applyHelpText(settings);
+  installTips();
   await loadWorkspaces();
   await loadSession();
   const palette = installPalette({ commands: paletteCommands });

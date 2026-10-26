@@ -15,7 +15,7 @@ export const SLOTS = [
   { id: 'secondary', label: 'Secondary', tint: 'Tint1', channel: 1 },
   { id: 'tertiary', label: 'Tertiary', tint: 'Tint2', channel: 2 },
   { id: 'accents', label: 'Accents', tint: 'Tint3', channel: 3 },
-  { id: 'emissive', label: 'Emissive', tint: null, channel: null },
+  { id: 'emissive', label: 'Glow', tint: null, channel: null },
   { id: 'energy', label: 'Energy', tint: null, channel: null },
 ];
 export const TINT_SLOTS = SLOTS.filter((s) => s.tint).map((s) => s.id); // primary … accents, in channel order
@@ -133,12 +133,17 @@ export function deserializeMaterial(json) {
   return out;
 }
 // What the Blender script needs for a piece: Principled BSDF inputs including Subsurface Weight/Radius/Color.
-export function blenderMaterial(m, colors) {
-  const base = m.color || colors?.primary || DEFAULT_COLORS.primary;
+// slot: the piece's colour slot, as in paint.js pieceMaterial: its colour tints the piece (energy and emissive glow).
+// keep_color: no own or slot colour, so Blender keeps the imported material's base colour, as the app does.
+export function blenderMaterial(m, colors, slot = null) {
+  const tint = slot && slot !== 'energy' ? colors?.[slot] : null;
+  const glow = slot === 'emissive' || slot === 'energy';
+  const base = m.color || tint || colors?.primary || DEFAULT_COLORS.primary;
   return {
-    base_color: base, metallic: m.metalness, roughness: m.roughness, coat_weight: m.clearcoat, coat_roughness: m.clearcoatRoughness,
+    base_color: base, keep_color: !m.color && !tint, metallic: m.metalness, roughness: m.roughness, coat_weight: m.clearcoat, coat_roughness: m.clearcoatRoughness,
     sheen_weight: m.sheen, sheen_roughness: m.sheenRoughness, sheen_tint: m.sheenColor, transmission_weight: m.transmission, ior: m.ior,
-    emission_color: m.emissive, emission_strength: m.emissiveIntensity, normal_strength: m.normalScale, alpha: m.opacity,
+    emission_color: glow ? colors?.[slot] || m.emissive : m.emissive, emission_strength: glow ? Math.max(m.emissiveIntensity, 2) : m.emissiveIntensity,
+    normal_strength: m.normalScale, alpha: m.opacity,
     subsurface_weight: m.sss, subsurface_radius: [1, 0.2, 0.1].map((v) => v * m.sssRadius * 0.01), subsurface_color: m.sssColor, // radius in metres
   };
 }
@@ -148,6 +153,22 @@ export const defaultPaint = () => ({ sections: SECTIONS.map((s) => ({ ...s })), 
 // A piece record: name, section, slot (primary … accents, emissive, or null = untinted), material, colours, region.
 export const piece = (key, name, extra = {}) => ({ key, name, section: null, slot: null, material: null, colors: null, ...extra });
 export const upsertPiece = (paint, key, patch) => ({ ...paint, pieces: { ...paint.pieces, [key]: { ...(paint.pieces[key] || piece(key, key)), ...patch } } });
+// A colour picked in the Color panel, made to show on the model. The colour is stored at its level (setColor), and the
+// pieces it is for wear that colour's slot: before, a piece with no slot was untinted, so a picked colour was saved but
+// never reached the mesh (the model stayed white). level: 'global', a section id or a piece key. targets: the piece
+// keys this pick is for (the piece; every piece in the section; every piece of the model for global). A piece pick
+// always switches the piece to this slot; section and global picks only fill pieces that have no slot yet.
+// names: piece key → name, for pieces that have no record yet.
+export function pickColor(paint, { level, key, hex, targets = [], names = {} }) {
+  let p = { ...defaultPaint(), ...paint };
+  const piecePick = level !== 'global' && targets.length === 1 && targets[0] === level;
+  for (const k of targets) {
+    const rec = p.pieces?.[k];
+    if (rec?.hidden || (!piecePick && rec?.slot)) continue;
+    if (rec?.slot !== key) p = upsertPiece(p, k, { ...(!rec && { name: names[k] || k }), slot: key });
+  }
+  return setColor(p, level, key, hex);
+}
 export function recentColor(paint, hex) {
   const recent = [hex.toLowerCase(), ...(paint.recent || []).filter((c) => c !== hex.toLowerCase())].slice(0, 12);
   return { ...paint, recent };

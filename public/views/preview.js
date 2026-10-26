@@ -7,15 +7,15 @@ let root, studio, raf = 0, spin = false, frame = 0, m, locked = false;
 
 export async function mount(el, { id }) {
   root = el; m = findModel(id); spin = false; frame = 0;
-  if (!m?.glb) { el.innerHTML = `<div class="pv-empty"><p class="ph">Nothing to show</p><p class="sub">Pick a finished model first.</p><button class="btn pri" data-pv="exit">Back</button></div>`; el.addEventListener('click', onClick); return; }
+  if (!m?.glb) { el.innerHTML = `<div class="pv-empty"><p class="ph">Nothing to show</p><p class="sub keep">Pick a finished model first.</p><button class="btn pri" data-pv="exit" title="Go back">Back</button></div>`; el.addEventListener('click', onClick); return; }
   locked = !!(await api('/api/preview').catch(() => ({}))).hasPin;
   state.presenting = true; document.documentElement.classList.add('presenting');
   el.innerHTML = `<div class="pv"><canvas id="pvc" aria-label="${esc(m.name)}, drag to look around"></canvas>
     <div class="pv-bar"><span class="pv-name">${esc(m.name)}</span>
-      <button class="btn sec sm" data-pv="spin" aria-pressed="false">Turntable (T)</button>
-      <button class="btn ghostbtn sm" data-pv="exit">End preview (Esc)</button></div>
-    <div class="pv-pin" id="pvpin" hidden><form class="card glass"><label class="label" for="pvpinin">Enter the PIN to end the preview</label>
-      <input id="pvpinin" inputmode="numeric" autocomplete="off" maxlength="8" type="password"><div class="row"><button class="btn pri">End preview</button><button type="button" class="btn ghostbtn" data-pv="stay">Keep showing</button></div><p class="fine" id="pvmsg" role="status"></p></form></div></div>`;
+      <button class="btn sec sm" data-pv="spin" aria-pressed="false" title="Turn the model slowly, on or off (T)">Spin (T)</button>
+      <button class="btn ghostbtn sm" data-pv="exit" title="Stop showing and go back (Esc)">End (Esc)</button></div>
+    <div class="pv-pin" id="pvpin" hidden><form class="card glass"><label class="label" for="pvpinin">Type the PIN to stop showing</label>
+      <input id="pvpinin" inputmode="numeric" autocomplete="off" maxlength="8" type="password" title="The PIN you set in Settings"><div class="row"><button class="btn pri" title="Check the PIN and stop showing">Stop showing</button><button type="button" class="btn ghostbtn" data-pv="stay" title="Go back to showing the model">Keep showing</button></div><p class="fine keep" id="pvmsg" role="status"></p></form></div></div>`;
   el.addEventListener('click', onClick);
   el.querySelector('form').addEventListener('submit', onPin);
   document.addEventListener('keydown', onKey, true);

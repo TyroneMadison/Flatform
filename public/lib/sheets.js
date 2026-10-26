@@ -2,7 +2,7 @@
 // Used by Compose's render area (Flatform's own web/ layout) and the Spin set screen (the Dud Rents layout).
 import * as P from './pipeline.js';
 
-export const toBlob = (canvas, type, quality) => new Promise((ok, fail) => canvas.toBlob((b) => (b ? ok(b) : fail(new Error(`Could not encode ${type}`))), type, quality));
+export const toBlob = (canvas, type, quality) => new Promise((ok, fail) => canvas.toBlob((b) => (b ? ok(b) : fail(new Error(`Could not save the ${type} picture`))), type, quality));
 
 // High-quality downscale: halve with smoothing until within 2x of the target, then one last step. Each halving
 // averages 2x2 pixels, so fine detail (badges, panel gaps) survives where one big jump would alias.

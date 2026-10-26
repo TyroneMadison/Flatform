@@ -26,12 +26,12 @@ function available() {
 
 export function renderTestRigGroup() {
   if (!available()) return '';
-  return `<div class="grp" id="grp-testrig"><h3>Test rig</h3><p class="fine">Run, jump and climb with this character in a small play area, to see how the rig moves.</p>
-    <button class="btn pri" type="button" data-tr="start" title="Play this character in a small arena (${keyOf('testrig')}). Press Esc to come back here">Test rig</button></div>`;
+  return `<div class="grp" id="grp-testrig"><h3>Test rig</h3><p class="fine">Run, jump and climb as this character in a small play area, to see how its joints move.</p>
+    <button class="btn pri" type="button" data-tr="start" title="Play as this character in a small play area (${keyOf('testrig')}). Esc comes back.">Test rig</button></div>`;
 }
 export async function onTestRigClick(t) {
   if (t.dataset.tr !== 'start') return false;
-  try { start(); } catch (err) { stopTestRig(); toast(`Test rig could not start: ${err.message}`); }
+  try { start(); } catch (err) { stopTestRig(); toast(`Test Rig could not start: ${err.message}`); }
   return true;
 }
 
@@ -115,7 +115,7 @@ function start() {
   el.innerHTML = `<canvas class="tr-cv" title="Click to look around with the mouse"></canvas>
     <div class="tr-state" aria-live="polite" title="What the character is doing right now">Standing</div>
     <ul class="tr-keys" aria-label="Keys">${KEYS.map(([k, d]) => `<li><kbd>${esc(k)}</kbd><span>${esc(d)}</span></li>`).join('')}</ul>
-    <button class="btn sec tr-exit" type="button" title="Go back to Compose (Esc)">Back to Compose</button>
+    <button class="btn sec tr-exit" type="button" title="Go back to the Scene screen (Esc)">Back to scene</button>
     <div class="tr-hint" title="Click the scene to look around">Click the scene to start. Your mouse turns the camera.</div>`;
   document.body.append(el);
   const cv = el.querySelector('canvas');
@@ -171,7 +171,7 @@ function start() {
   const onLock = () => {
     run.locked = document.pointerLockElement === cv;
     if (!run.locked) { run.unlockedAt = performance.now(); run.aim = false; }
-    el.querySelector('.tr-hint').textContent = run.locked ? 'Esc frees the mouse.' : 'Mouse is free. Click the scene to play, or press Esc again to go back to Compose.';
+    el.querySelector('.tr-hint').textContent = run.locked ? 'Esc frees the mouse.' : 'Mouse is free. Click the scene to play, or press Esc again to go back.';
   };
   window.addEventListener('keydown', onKey, true);
   window.addEventListener('keyup', onKey, true);

@@ -27,7 +27,7 @@
 
 export const ENVIRONMENTS = {
   'white-cyc-studio': {
-    label: 'White Cyc Studio', note: 'Bright infinity cove · soft even light',
+    label: 'White studio', note: 'Bright white room with no corners · soft even light',
     cam: { horizon: 0.5, ground: 0.72, width: 7.4, hfov: 45 },
     light: { sun: { azimuth: -30, elevation: 60, kelvin: 6000 }, key: 0.9, fill: 0.7, rim: 0.4, sky: ['#ffffff', '#d8dade', 0.9], shadow: 0.6, reflection: 0.06, env: 1.0 },
     sky: { color: '#eceef1' }, reflect: 'white_studio_02',
@@ -50,7 +50,7 @@ export const ENVIRONMENTS = {
     ],
   },
   'soft-studio': {
-    label: 'Soft studio', note: 'Grey cove · big overhead softbox · strip lights',
+    label: 'Soft studio', note: 'Grey room with no corners · big soft light above · strip lights',
     cam: { horizon: 0.5, ground: 0.72, width: 7.4, hfov: 45 },
     light: { sun: { azimuth: -40, elevation: 55, kelvin: 5600 }, key: 0.8, fill: 0.45, rim: 1.2, sky: ['#e8eaee', '#2a2b2e', 0.35], shadow: 0.75, reflection: 0.12, env: 1.1 },
     sky: { color: '#2b2c30' }, reflect: 'studio_small_03',
@@ -73,7 +73,7 @@ export const ENVIRONMENTS = {
     ],
   },
   showroom: {
-    label: 'Showroom', note: 'Dark showroom · gold ring · ceiling softbox',
+    label: 'Showroom', note: 'Dark showroom · gold ring · soft ceiling light',
     cam: { horizon: 0.53, ground: 0.71, width: 7.3, hfov: 50 },
     light: { sun: { azimuth: 0, elevation: 70, kelvin: 6500 }, key: 1.0, fill: 0.15, rim: 1.6, sky: ['#d8dde6', '#2a1e10', 0.12], shadow: 0.85, reflection: 0.35, env: 0.9 },
     sky: { color: '#09090a' },

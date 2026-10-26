@@ -976,7 +976,7 @@ export async function startServer({
         const okPath = (x) => x === '' || (typeof x === 'string' && x.length < 1024 && path.isAbsolute(x));
         if (!l || typeof l !== 'object' || !okPath(l.weightsDir ?? '') || !okPath(l.python ?? '')) throw new HttpError(400, 'localEngine needs full folder and file paths');
         next.localEngine = { weightsDir: l.weightsDir ?? settings.localEngine.weightsDir, python: l.python ?? settings.localEngine.python };
-      } else if (['texture', 'pbr', 'alsoTransparent'].includes(k)) bool(k);
+      } else if (['texture', 'pbr', 'alsoTransparent', 'showHelp'].includes(k)) bool(k);
       else if (k === 'theme') next.theme = normalizeTheme(body.theme);
       else if (k === 'gridUnit') { if (!['m', 'ft'].includes(body.gridUnit)) throw new HttpError(400, 'Grid unit must be m or ft'); next.gridUnit = body.gridUnit; }
       else if (k === 'gitRepo') {

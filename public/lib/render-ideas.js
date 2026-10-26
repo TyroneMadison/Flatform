@@ -18,7 +18,7 @@ export const IDEAS = [
   { id: 'explode', label: 'Exploded parts', desc: 'Every part pulled apart a little, out from the middle. Needs a model made of separate parts',
     art: 'radial-gradient(circle,#c81e1e 0 18%,transparent 19%),radial-gradient(circle at 20% 30%,#333 0 10%,transparent 11%),radial-gradient(circle at 80% 70%,#333 0 10%,transparent 11%),#e6e6e8',
     scene: { preset: 'cyclorama', camera: 'front34' }, type: 'picture', extras: { effect: { explode: 0.15 } }, render: { still: true, t360: false, t180: false, ...SCENE_ONLY } },
-  { id: 'ingame', label: 'In-game Warframe shot', desc: 'Dark showroom, low hero angle, rim light', warframe: true,
+  { id: 'ingame', label: 'In-game Warframe shot', desc: 'Dark showroom, low hero angle, light on the edges', warframe: true,
     art: 'linear-gradient(160deg,#0b1a2a,#2a7fbf)', scene: { preset: 'showroom', camera: 'low' }, type: 'picture', render: { still: true, t360: false, t180: false, ...SCENE_ONLY } },
   { id: 'vertical', label: 'Phone spin 9:16', desc: 'A tall spin video for Reels and TikTok, cut from the middle of the spin',
     art: 'linear-gradient(90deg,#222 0 35%,#ff7a66 35% 65%,#222 65%)', scene: { preset: 'cyclorama', camera: 'side' }, type: 'spin', option: 'full', extras: { vertical: true }, render: { still: false, t360: true, t180: false, ...SCENE_ONLY } },

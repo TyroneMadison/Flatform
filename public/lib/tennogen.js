@@ -20,7 +20,7 @@
 //   Armor: chest 2,500 tris, shoulder/leg 5,000, authored 1024 x 1024, in-game 512 x 512.
 //   The page gives no Liset numbers, so Liset only gets the naming rules.
 
-export const MAPS = { d: 'base colour', e: 'emissive mask', n: 'tangent normal', r: 'roughness', s: 'reflectance', t: 'tint mask' };
+export const MAPS = { d: 'colour', e: 'glow', n: 'bumps', r: 'shine', s: 'metal', t: 'tint' }; // shown in the check's messages (same words as Export's Pictures tip)
 export const MAP_KEYS = Object.keys(MAPS); // d e n r s t
 
 // Per content type. set: the only allowed name before the underscore (null: the guides name none, sizes only).
@@ -85,14 +85,14 @@ export function check(type, files) {
   for (const f of pngs) {
     const name = f.name;
     if (ILLEGAL.test(name) || /\s/.test(name)) {
-      add(name, 'illegal-chars', 'error', 'Spaces or special characters in the name. Use letters, numbers and one underscore.');
+      add(name, 'illegal-chars', 'error', 'Spaces or odd characters in the name. Use letters, numbers and one underscore.');
     }
     if (!hasExt(name, '.png')) {
-      add(name, 'not-png', 'error', 'Materials must be PNG files.');
+      add(name, 'not-png', 'error', 'Pictures must be PNG files.');
       continue;
     }
     const p = parseName(name);
-    if (!p) { add(name, 'no-type', 'error', 'Name is not descriptive / type is not declared (expected Set_x.png, like Body_d.png).'); continue; }
+    if (!p) { add(name, 'no-type', 'error', 'The name does not say which picture this is. Use a name like Body_d.png.'); continue; }
     const map = p.map;
     const wanted = map && t.set ? properName(type, map) : null;
     const rename = wanted && wanted !== name ? { kind: 'rename', to: wanted } : undefined;
@@ -101,26 +101,26 @@ export function check(type, files) {
     else if (p.suffix !== map) add(name, 'long-suffix', 'error', `Only one character after the underscore: "_${p.suffix}" should be "_${map}".`, rename);
     if (t.set && p.set !== t.set) add(name, 'custom-set', 'error', `The set name must be "${t.set}_" for a ${t.label.toLowerCase()}, not "${p.set}_" (no custom names).`, rename);
     if (map) {
-      if (maps[map]) add(name, 'duplicate', 'error', `Two files for the ${MAPS[map]} map (${maps[map]} and ${name}).`);
+      if (maps[map]) add(name, 'duplicate', 'error', `Two files for the ${MAPS[map]} picture (${maps[map]} and ${name}).`);
       else maps[map] = name;
     }
     // Sizes, when the file's size is known and the guide sets one.
     const expected = map === 't' ? t.tint : map === 'e' ? t.emissive : map ? t.authored : null;
     if (expected && Number.isFinite(f.width) && Number.isFinite(f.height) && (f.width !== expected[0] || f.height !== expected[1])) {
-      add(name, 'size', 'error', `${MAPS[map]} is ${sizeText([f.width, f.height])}; a ${t.label.toLowerCase()} ${map === 't' ? 'tint mask' : map === 'e' ? 'emissive' : 'map'} is authored at ${sizeText(expected)}.`,
+      add(name, 'size', 'error', `The ${MAPS[map]} picture is ${sizeText([f.width, f.height])}; for a ${t.label.toLowerCase()} it should be ${sizeText(expected)}.`,
         { kind: 'resize', width: expected[0], height: expected[1] });
     }
   }
   const sets = new Set(pngs.map((f) => parseName(f.name)?.set).filter(Boolean));
-  if (sets.size > 1) add('*', 'mixed-sets', 'error', `The texture set name must be the same on every map (found ${[...sets].join(', ')}).`);
+  if (sets.size > 1) add('*', 'mixed-sets', 'error', `Every picture must start with the same name (found ${[...sets].join(', ')}).`);
   const missing = MAP_KEYS.filter((k) => !maps[k]);
-  if (pngs.length && missing.length) add('*', 'missing-maps', 'error', `Missing ${missing.map((k) => `_${k} (${MAPS[k]})`).join(', ')}. A set has exactly six maps.`);
-  if (!pngs.length) add('*', 'no-textures', 'error', 'No texture files found.');
+  if (pngs.length && missing.length) add('*', 'missing-maps', 'error', `Missing ${missing.map((k) => `_${k} (${MAPS[k]})`).join(', ')}. A set needs all six pictures.`);
+  if (!pngs.length) add('*', 'no-textures', 'error', 'No pictures found.');
   for (const f of meshes) {
-    if (ILLEGAL.test(f.name) || /\s/.test(f.name)) add(f.name, 'illegal-chars', 'error', 'Spaces or special characters in the mesh name.');
+    if (ILLEGAL.test(f.name) || /\s/.test(f.name)) add(f.name, 'illegal-chars', 'error', 'Spaces or odd characters in the 3D file name.');
     const base = stem(f.name);
     if (t.set && base.toLowerCase() !== t.set.toLowerCase() && !base.toLowerCase().startsWith(t.set.toLowerCase())) {
-      add(f.name, 'mesh-name', 'warn', `Mesh "${base}" does not match the texture set "${t.set}". Keep mesh and texture names consistent.`, { kind: 'rename', to: `${t.set}.fbx` });
+      add(f.name, 'mesh-name', 'warn', `The 3D file "${base}" should match the pictures and be called "${t.set}".`, { kind: 'rename', to: `${t.set}.fbx` });
     }
   }
   const errors = issues.filter((i) => i.severity === 'error').length;
@@ -157,4 +157,4 @@ export function guessType(files) {
   return null;
 }
 
-export const EXPORT_MODES = { warn: 'Warn before export', block: 'Block the export', off: 'Off' };
+export const EXPORT_MODES = { warn: 'Warn me', block: 'Stop export', off: 'Off' };

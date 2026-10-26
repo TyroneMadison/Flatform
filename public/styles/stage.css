@@ -275,3 +275,63 @@ body:has(#queueTray:not([hidden])) .icard { max-height: calc(50% - 40px); }
 .setup.v3 .su-photo, .setup.v3 .su-views { flex: none; height: min(30vh, 340px); min-height: 150px; }
 .setup.v3 .su-center .su-left { min-height: 0; }
 .setup.v3 .sh { margin-bottom: 2px; }
+
+/* ---- 1.1.1 polish ---- */
+/* Help text: the small grey lines hide unless Settings › Show help text is on. .keep marks a line with live info. */
+body.hide-descriptions :is(p.fine, p.sub, span.sub, .tg small, .help):not(.keep) { display: none; }
+/* One button style across the side panel: same size, weight and font, labels wrap instead of overflowing. */
+.tcard .grp .btn:not(.pri):not(.icon):not(.huge) {
+  min-height: 44px; height: auto; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line-5); background: var(--surface-1);
+  color: var(--text); font: 600 13px/1.2 var(--sans); letter-spacing: 0; text-transform: none; white-space: normal; text-align: center;
+}
+.tcard .grp .btn[aria-pressed='true'] { border-color: var(--accent); color: var(--accent-hi); }
+.tcard .mg-row.trio { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.tcard .grp .row-sel { grid-template-columns: 78px minmax(0, 1fr); }
+.tcard .grp .row-sel select { width: 100%; min-width: 0; }
+/* Cards wrap fully: nothing wider than the panel, no clipping under the scroll bar. */
+.tc-body { scrollbar-gutter: stable; }
+.tcard .grp > * { max-width: 100%; min-width: 0; box-sizing: border-box; }
+.tcard :is(.warnbox, .warnlist, .checklist, .saveto) { overflow-wrap: anywhere; }
+.saveto b { font-weight: 600; color: var(--text); }
+/* The undo and redo note: one 36px line with an inline link, at the top edge so it never covers the model. */
+.toast.undo { height: 36px; min-height: 0; flex-wrap: nowrap; gap: 2px; padding: 0 6px 0 14px; border-radius: 99px; white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, .3); }
+.toast.undo > span { flex: none; padding: 0; }
+.toast.undo > span::after { content: ' ·'; color: var(--muted); }
+.toast.undo .btn { min-height: 0; min-width: 0; height: 28px; padding: 0 8px; border: 0; background: none; color: var(--accent-hi); font: 700 13px var(--sans); letter-spacing: 0; text-transform: none; text-decoration: underline; text-underline-offset: 3px; }
+/* Version history: picture on the left, versions and the one action on the right. */
+body[data-screen='history'] .ph { font-size: 28px; }
+.hv { grid-template-columns: minmax(0, 3fr) minmax(220px, 2fr); align-items: start; gap: 16px; padding: 16px; }
+.hv-main { display: grid; gap: 8px; }
+.hv-side { display: grid; gap: 10px; align-content: start; }
+.hv-side .hv-chips { flex-direction: column; align-items: stretch; }
+.hv-wipe, .hv-one { max-height: 52vh; }
+@media (max-width: 900px) { .hv { grid-template-columns: minmax(0, 1fr); } }
+#grp-tools .chips.seg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#grp-tools .chips.seg .chip { white-space: normal; text-align: center; justify-content: center; }
+/* Recipe: the slider's true low and high ends under it, and the warning when low detail caps the recipe. */
+.slc { flex-wrap: wrap; row-gap: 2px; }
+.slc .sl-ends { flex-basis: 100%; display: flex; justify-content: space-between; padding-right: 96px; font: 500 11px var(--mono); color: var(--muted); }
+.su-warn { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 0; padding: 8px 12px; border: 1px solid var(--warn, #e8b44c); border-radius: 10px; font-size: 12.5px; line-height: 1.35; overflow-wrap: anywhere; }
+/* A failed queue job: one short line, Details for the full message, buttons on their own row. */
+.qi.qfail { flex-wrap: wrap; }
+.qi.qfail .qt { flex: 1 1 100%; }
+.qi.qfail .qt > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qi.qfail details { font-size: 11.5px; }
+.qi.qfail details summary { cursor: pointer; color: var(--muted); }
+.qi.qfail details code { display: block; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.4 var(--mono); opacity: .8; }
+.qi.qfail > .btn { flex: none; }
+/* Quick hover tips (lib/tips.js): one short line in the app's own colours, shown after a short pause. */
+.tip { position: fixed; z-index: 1000; max-width: 280px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line-5); background: var(--surface-1h);
+  color: var(--text); font: 500 12px/1.35 var(--sans); box-shadow: 0 6px 18px rgba(0, 0, 0, .35); pointer-events: none; animation: tipIn 120ms var(--out, ease-out); }
+.tip[hidden] { display: none; }
+@keyframes tipIn { from { opacity: 0; transform: translateY(2px); } }
+body.rm .tip { animation: none; }
+/* Recipe rows in the narrow v3 panel: the label gets room to read on one or two lines, the control shrinks to fit. */
+.setup.v3 .su-panel .r { flex-wrap: wrap; row-gap: 4px; padding: 4px 0; }
+.setup.v3 .su-panel .r .l { flex: 1 1 110px; line-height: 1.25; }
+.setup.v3 .su-panel .r .c { width: auto; flex: 0 1 200px; min-width: 0; }
+.setup.v3 .su-panel :is(.segc, .selc, .slc) { width: 100%; }
+.setup.v3 .su-panel .tgc { width: auto; }
+.setup.v3 .su-panel .slc output { width: 60px; }
+.setup.v3 .su-panel .slc .sl-ends { padding-right: 72px; }
+.su-ready .su-warn { margin: 0 0 10px; text-align: left; }

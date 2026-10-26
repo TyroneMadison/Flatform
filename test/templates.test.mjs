@@ -9,7 +9,7 @@ import { createKeyStore } from '../keys.mjs';
 
 test('built-in templates: five per kind, each sets lighting, camera and background', () => {
   assert.deepEqual(templatesFor('warframe').map((t) => t.name), ['Orokin hall', 'Void black', 'Relay plaza', 'Studio turnaround', 'TennoGen shot']);
-  assert.deepEqual(templatesFor('car').map((t) => t.name), ['Dud Rents showroom', 'Garage', 'Desert dusk', 'White cyclorama', 'Night city']);
+  assert.deepEqual(templatesFor('car').map((t) => t.name), ['Dud Rents showroom', 'Garage', 'Desert dusk', 'White studio', 'Night city']);
   for (const t of BUILTIN_TEMPLATES) {
     const s = templateScene(t.scene);
     assert.ok(s.preset && s.camera && s.look?.lights && s.look?.background, t.id);

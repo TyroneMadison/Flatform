@@ -31,21 +31,21 @@ export function mount(el, { id }) {
   if (m && m.id !== state.spinLast) { photos = []; selected = []; guess = null; notes = []; }
   state.spinLast = m?.id ?? null;
   el.innerHTML = `
-  <div class="libhead"><div><h1 class="ph">${icon('retry', 36)} Spin set</h1><p class="sub">Drop car photos in. Flatform names the car and builds the 360.</p></div></div>
+  <div class="libhead"><div><h1 class="ph">${icon('retry', 36)} Spin set</h1><p class="sub">Drop car photos in. Flatform names the car and builds the spin.</p></div></div>
   <section class="spin">
     <div class="spin-top">
       <div class="dropzone glass big" id="dz"><div class="dz-hit" role="button" tabindex="0" aria-label="Drop photos here or tap to pick"></div>
         ${icon('upload', 40)}<h2>Drop photos here</h2><p class="muted">or tap to pick</p><p class="dz-status" id="dzNote" aria-live="polite"></p></div>
       <div class="glass card" id="who"></div>
     </div>
-    <button class="btn pri huge" type="button" data-act="generate" id="genBtn">${icon('retry')}<span>Generate Spin Set</span></button>
-    <div class="renderbar" id="bar" hidden><div><b id="barTitle"></b><span id="barSub" aria-live="polite"></span></div><div class="pbar big" role="progressbar" id="barBar"><i style="width:0"></i></div><div class="rb-act"><button class="btn ghostbtn" type="button" data-act="cancel">Cancel</button></div></div>
+    <button class="btn pri huge" type="button" data-act="generate" id="genBtn" title="Render a full spin of this car in Blender">${icon('retry')}<span>Make spin set</span></button>
+    <div class="renderbar" id="bar" hidden><div><b id="barTitle"></b><span id="barSub" aria-live="polite"></span></div><div class="pbar big" role="progressbar" id="barBar"><i style="width:0"></i></div><div class="rb-act"><button class="btn ghostbtn" type="button" data-act="cancel" title="Stop making the spin set">Cancel</button></div></div>
     <div class="rowhead"><h2 class="label">Frames (drag to reorder)</h2><div class="chips sm" id="frameTools"></div></div>
     <div class="strip" id="strip" role="listbox" aria-label="Frames" aria-multiselectable="true"></div>
-    <div class="sendrow"><button class="btn pri" type="button" data-act="send">${icon('upload')}<span>Send to Dud Rents</span></button><span class="muted">Saves to <code class="mono" data-dest title="Where Send to Dud Rents saves">${esc(state.settings?.outputRoot || 'no folder yet')}</code></span>
-      <button class="btn sec" type="button" data-act="dest">${icon('folder')}<span>Change folder</span></button>
-      <button class="btn ghostbtn" type="button" data-act="open" ${native ? '' : 'disabled'}>${icon('folder')}<span>Open folder</span></button></div>
-    <details class="adjust" id="adjust"><summary>Adjust (more options)</summary><div id="adjustBody"></div></details>
+    <div class="sendrow"><button class="btn pri" type="button" data-act="send" title="Pack the spin set so the Dud Rents website picks it up">${icon('upload')}<span>Send to Dud Rents</span></button><span class="muted">Saves to <code class="mono" data-dest title="Where Send to Dud Rents saves">${esc(state.settings?.outputRoot || 'no folder yet')}</code></span>
+      <button class="btn sec" type="button" data-act="dest" title="Pick the folder it saves to">${icon('folder')}<span>Change folder</span></button>
+      <button class="btn ghostbtn" type="button" data-act="open" ${native ? '' : 'disabled'} title="Show the saved files in a folder">${icon('folder')}<span>Open folder</span></button></div>
+    <details class="adjust" id="adjust"><summary>More options</summary><div id="adjustBody"></div></details>
   </section>
   <input id="spinPicker" type="file" accept="image/*,.heic,.heif" multiple hidden>`;
   const dz = $('#dz', el);
@@ -122,28 +122,28 @@ function whoHtml() {
   const name = m ? m.name : guess ? suggestName(guess, photos[0]?.name.replace(/\.[^.]+$/, '')) : '';
   if (!photos.length && !m) return `<h2 class="label">We think this is</h2><p class="muted">Drop photos and Flatform names the car for you.</p>`;
   const detail = guess || car ? [car?.bodyStyle || guess?.bodyStyle, car?.color || guess?.color].filter(Boolean).join(' · ') : '';
-  return `<h2 class="label">${m ? 'This car' : 'We think this is'}</h2><p class="who-name">${esc(name || 'Untitled car')}</p>${detail ? `<p class="sub">${esc(detail)}</p>` : ''}
-    <div class="row">${m ? '' : `<button class="btn ok-btn" type="button" data-act="yes">✓ Yes</button>`}<button class="btn ghostbtn" type="button" data-act="change">✎ Change</button></div>
-    <p class="fine">${guess?.pending ? 'Looking closer…' : 'Best quality is turned on for you.'}</p>
-    <form class="field pathform" id="nameForm" hidden><label class="sr-only" for="nameIn">Car name</label><input class="inp" id="nameIn" value="${esc(name)}" maxlength="100"><button class="btn ghostbtn" type="submit">Save</button></form>`;
+  return `<h2 class="label">${m ? 'This car' : 'We think this is'}</h2><p class="who-name">${esc(name || 'Untitled car')}</p>${detail ? `<p class="sub keep">${esc(detail)}</p>` : ''}
+    <div class="row">${m ? '' : `<button class="btn ok-btn" type="button" data-act="yes" title="Yes, that is the car. Save the name.">✓ Yes</button>`}<button class="btn ghostbtn" type="button" data-act="change" title="Type a different name">✎ Change</button></div>
+    <p class="fine keep">${guess?.pending ? 'Looking closer…' : 'Best quality is turned on for you.'}</p>
+    <form class="field pathform" id="nameForm" hidden><label class="sr-only" for="nameIn">Car name</label><input class="inp" id="nameIn" value="${esc(name)}" maxlength="100" title="The car's name"><button class="btn ghostbtn" type="submit" title="Save this name">Save</button></form>`;
 }
 function stripHtml() {
   const frames = photos.length ? photos.map((p, i) => ({ src: p.url, label: p.name })) : m?.spin ? Array.from({ length: Math.min(m.spin.frames, 72) }, (_, i) => ({ src: `/api/renders/${m.id}/file?path=${encodeURIComponent(H.frameFile(m.slug, m.spin.look, i))}`, label: `Frame ${P.pad3(i)}` })) : [];
-  if (!frames.length) return `<p class="muted empty">${hasModel() ? 'Press Generate Spin Set, or drop photos to use those instead.' : 'Your frames show up here.'}</p>`;
+  if (!frames.length) return `<p class="muted empty">${hasModel() ? 'Press Make spin set, or drop photos to use those instead.' : 'Your frames show up here.'}</p>`;
   return frames.map((f, i) => `<button class="fr${selected.includes(i) ? ' on' : ''}" type="button" role="option" aria-selected="${selected.includes(i)}" data-i="${i}" draggable="${photos.length ? 'true' : 'false'}" title="${esc(f.label)}"><img src="${esc(f.src)}" alt="${esc(f.label)}" loading="lazy"><span>${P.pad3(i)}</span></button>`).join('');
 }
 function toolsHtml() {
   if (!photos.length) return '';
   const n = selected.length;
-  return `<button class="chip" type="button" data-act="reverse">Reverse</button><button class="chip" type="button" data-act="start" ${n === 1 ? '' : 'disabled'}>Set as frame 000</button>
-    <button class="chip" type="button" data-act="delete" ${n ? '' : 'disabled'}>Delete${n ? ` ${n}` : ''}</button><button class="chip" type="button" data-act="build">${icon('film', 12)} Build from these photos</button>`;
+  return `<button class="chip" type="button" data-act="reverse" title="Flip the order so it spins the other way">Reverse</button><button class="chip" type="button" data-act="start" ${n === 1 ? '' : 'disabled'} title="Make the picked photo the first one">Make first</button>
+    <button class="chip" type="button" data-act="delete" ${n ? '' : 'disabled'} title="Remove the picked photos">Delete${n ? ` ${n}` : ''}</button><button class="chip" type="button" data-act="build" title="Make the spin set from these photos">${icon('film', 12)} Build from photos</button>`;
 }
 function adjustHtml() {
-  const seg = Object.entries(S.SPIN_OPTIONS).map(([k, o]) => `<button class="chip" type="button" role="radio" aria-checked="${Number(k) === opts.option}" data-option="${k}">${o.label}</button>`).join('');
+  const seg = Object.entries(S.SPIN_OPTIONS).map(([k, o]) => `<button class="chip" type="button" role="radio" aria-checked="${Number(k) === opts.option}" data-option="${k}" title="Use ${esc(o.label)} for the spin">${o.label}</button>`).join('');
   return `<div class="field"><span class="flabel">Frames</span><div class="chips seg" role="radiogroup" aria-label="Frame count">${seg}</div></div>
-    <label class="tg"><span>Fill missing frames by blending neighbours<small>For photo sets with gaps or fewer photos than frames</small></span><input class="sw" type="checkbox" role="switch" name="interpolate" ${opts.interpolate ? 'checked' : ''}></label>
-    <label class="tg"><span>Also render an interior spin<small>Camera inside the cabin, same frame count</small></span><input class="sw" type="checkbox" role="switch" name="interior" ${opts.interior ? 'checked' : ''} ${hasModel() ? '' : 'disabled'}></label>
-    <p class="fine">Generate Spin Set uses the Max realism profile: Dud Rents showroom, Blender Cycles final quality, see-through glass with a lit cabin, denoised, AgX. Your own render settings are not changed.</p>`;
+    <label class="tg" title="Make missing pictures by mixing the ones next to them"><span>Fill gaps by blending<small>For sets with missing photos</small></span><input class="sw" type="checkbox" role="switch" name="interpolate" ${opts.interpolate ? 'checked' : ''}></label>
+    <label class="tg" title="Also make a spin from inside the car"><span>Inside spin too<small>The camera sits inside the car</small></span><input class="sw" type="checkbox" role="switch" name="interior" ${opts.interior ? 'checked' : ''} ${hasModel() ? '' : 'disabled'}></label>
+    <p class="fine">Make spin set uses the best look: the Dud Rents showroom, top Blender quality and clear glass. Your own render settings stay the same.</p>`;
 }
 function bar() {
   const b = $('#bar', root);
@@ -168,7 +168,7 @@ export function update() {
   $('#dzNote', root).innerHTML = notes.map((n) => `<span>${esc(n)}</span>`).join('<br>');
   const gen = $('#genBtn', root);
   gen.disabled = running() || !hasModel() || !state.blender?.found;
-  gen.title = !hasModel() ? 'Open a car with a 3D model, or build from photos below' : !state.blender?.found ? 'Install Blender 4.x or locate it in Settings' : '';
+  gen.title = !hasModel() ? 'Open a car with a 3D model, or build from photos below' : !state.blender?.found ? 'Install Blender 4 or find it in Settings' : 'Render a full spin of this car in Blender';
   $('[data-act=send]', root).disabled = running() || !m?.spin;
   $('[data-act=open]', root).disabled = !native || !m?.renders?.outDir;
   bar();
@@ -273,10 +273,10 @@ async function finish(look, frames, framesOf, source, renderer) {
     check();
     const small = sheets.draw(i, await framesOf(i));
     if (i === 0) poster = small[512];
-    progress(`Sprite frame ${P.pad3(i + 1)} of ${P.pad3(frames)}`, i + 1, frames);
+    progress(`Picture sheet ${P.pad3(i + 1)} of ${P.pad3(frames)}`, i + 1, frames);
     if (i % 4 === 3) await sleep(0);
   }
-  progress('Writing sprite sheets', frames, frames);
+  progress('Saving picture sheets', frames, frames);
   await sheets.write(poster);
   const r = await send(`/api/spin/${m.id}/meta`, 'POST', { look, option: opts.option, source, renderer });
   upsert(await api(`/api/models/${m.id}`));
@@ -306,7 +306,7 @@ async function buildFromPhotos() {
     }
     await finish(look, plan.length, (i) => made[i], `${photos.length} photos`, 'photos');
     job.done = true;
-    progress(`Saved to ${m.renders?.outDir || 'the handoff folder'}`, plan.length, plan.length);
+    progress(`Saved to ${m.renders?.outDir || 'the save folder'}`, plan.length, plan.length);
     toast(`${m.name}: spin set ready`, 'info');
   } catch (err) { job.done = true; if (!job.cancelled) { job.error = err.message; toast(err.message); } }
   refresh();
@@ -315,14 +315,14 @@ async function buildFromPhotos() {
 async function generate() {
   if (running() || !hasModel()) return;
   if (!state.settings?.outputRoot) return toast('Pick where to save first: tap Change folder');
-  job = { phase: 'Max realism · starting Blender', frame: 0, total: 0, done: false };
+  job = { phase: 'Best look · starting Blender', frame: 0, total: 0, done: false };
   update();
   try {
     await send(`/api/spin/${m.id}/start`, 'POST', { option: opts.option, interior: opts.interior });
     for (;;) {
       await sleep(700);
       const b = await api(`/api/spin/${m.id}`);
-      progress(`${b.look === 'interior' ? 'Interior' : 'Showroom'} · Cycles frame ${P.pad3(b.frame)} of ${P.pad3(b.frames)}`, b.frame, b.frames || 1);
+      progress(`${b.look === 'interior' ? 'Inside' : 'Showroom'} · picture ${P.pad3(b.frame)} of ${P.pad3(b.frames)}`, b.frame, b.frames || 1);
       if (b.status === 'done') break;
       if (b.status !== 'running') throw new Error(b.error || `Blender ${b.status}`);
       check();
@@ -352,7 +352,7 @@ async function changeDest() {
 
 async function sendToDud() {
   if (!m?.spin) return;
-  if (!(await confirmDialog({ title: `Send ${m.name} to Dud Rents?`, text: `Zips the spin set with its details into ${m.renders?.outDir || 'the handoff folder'} and writes ready.json so the website bots pick it up. Nothing leaves this computer.`, ok: 'Send' }))) return;
+  if (!(await confirmDialog({ title: `Send ${m.name} to Dud Rents?`, text: `Packs the spin set into ${m.renders?.outDir || 'the save folder'} so the Dud Rents website picks it up. Nothing leaves this computer.`, ok: 'Send' }))) return;
   try {
     const r = await send(`/api/spin/${m.id}/send`, 'POST', { meta: {} });
     upsert(await api(`/api/models/${m.id}`));

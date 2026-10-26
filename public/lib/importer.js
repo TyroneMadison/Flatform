@@ -21,11 +21,11 @@ export async function toGlb(file) {
   const ext = extOf(file.name);
   if (ext === '.glb') return file;
   const make = LOADERS[ext];
-  if (!make) throw new Error(`${file.name}: use a GLB, GLTF, FBX, OBJ or USDZ file`);
+  if (!make) throw new Error(`${file.name}: use a .glb, .gltf, .fbx, .obj or .usdz 3D file`);
   const url = URL.createObjectURL(file);
   let loaded;
   try { loaded = await (await make()).loadAsync(url); } catch (e) {
-    throw new Error(`${file.name}: could not read it (${e.message || 'unknown error'})${ext === '.gltf' ? '. Use a GLB or a GLTF with everything embedded' : ''}`);
+    throw new Error(`${file.name}: could not read it (${e.message || 'unknown error'})${ext === '.gltf' ? '. Use a .glb file, or a .gltf with everything packed inside' : ''}`);
   } finally { URL.revokeObjectURL(url); }
   const root = loaded.scene || loaded; // GLTFLoader gives { scene }, the others a Group
   if (ext === '.obj') root.traverse((o) => { if (o.isMesh && !o.material?.isMeshStandardMaterial) o.material = new THREE.MeshStandardMaterial({ color: 0xbfc3c8, roughness: 0.5 }); });

@@ -20,34 +20,34 @@ const bar = (p, label) => `<div class="ubar" role="img" aria-label="${label}"><s
 
 function draw() {
   if (!root?.isConnected) return;
-  if (!u) { root.innerHTML = `<h1 class="ph">Usage</h1><p class="sub">Loading…</p>`; return; }
+  if (!u) { root.innerHTML = `<h1 class="ph">Usage</h1><p class="sub keep">Loading…</p>`; return; }
   const svc = Object.entries(u.spend?.services || {});
   const usd = svc.reduce((s, [, v]) => s + (v.month?.usd || 0), 0);
   const jobs = u.renders?.jobs || []; const ms = jobs.reduce((s, j) => s + j.ms, 0);
   const disk = u.disk || {}; const big = Math.max(...svc.map(([, v]) => v.month?.usd || 0), 0.01);
-  root.innerHTML = `<div class="libhead"><div><h1 class="ph">Usage</h1><p class="sub">This month. Nothing here costs anything to look at.</p></div></div>
+  root.innerHTML = `<div class="libhead"><div><h1 class="ph">Usage</h1><p class="sub">This month. Looking here is free.</p></div></div>
   <section class="usage">
     <div class="ustats">
-      <div class="card glass ustat"><p class="label">Render time</p><p class="unum">${dur(ms)}</p><p class="fine">${jobs.length} renders timed</p>${bar(pct(jobs.length, Math.max(jobs.length, 20)), `${jobs.length} renders`)}</div>
-      <div class="card glass ustat"><p class="label">Money spent</p><p class="unum">$${usd.toFixed(2)} <small>of $${limit()} limit</small></p><p class="fine">${pct(usd, limit())}% of your limit</p>${bar(pct(usd, limit()), `${pct(usd, limit())} percent of the limit`)}</div>
-      <div class="card glass ustat"><p class="label">Storage</p><p class="unum">${human(disk.total || 0)}</p><p class="fine">Models ${human(disk.models || 0)}</p>${bar(pct(disk.models || 0, disk.total || 1), 'Share used by models')}</div>
+      <div class="card glass ustat"><p class="label">Render time</p><p class="unum">${dur(ms)}</p><p class="fine keep">${jobs.length} renders timed</p>${bar(pct(jobs.length, Math.max(jobs.length, 20)), `${jobs.length} renders`)}</div>
+      <div class="card glass ustat"><p class="label">Money spent</p><p class="unum">$${usd.toFixed(2)} <small>of $${limit()} limit</small></p><p class="fine keep">${pct(usd, limit())}% of your limit</p>${bar(pct(usd, limit()), `${pct(usd, limit())} percent of the limit`)}</div>
+      <div class="card glass ustat"><p class="label">Storage</p><p class="unum">${human(disk.total || 0)}</p><p class="fine keep">Models ${human(disk.models || 0)}</p>${bar(pct(disk.models || 0, disk.total || 1), 'Share used by models')}</div>
     </div>
-    <div class="card glass"><h2 class="label">Spend by service</h2>
-      ${svc.map(([k, v]) => `<div class="urow"><span>${esc(SERVICE[k] || k)}</span>${bar(pct(v.month?.usd || 0, big), `${SERVICE[k] || k}`)}<b>$${(v.month?.usd || 0).toFixed(2)}</b></div>`).join('') || '<p class="fine">No spending yet.</p>'}
-      ${u.enhance?.calls ? `<p class="fine">Picture clean-ups: ${u.enhance.calls}, ${u.enhance.credits} credits.</p>` : ''}
+    <div class="card glass"><h2 class="label">Spent on each service</h2>
+      ${svc.map(([k, v]) => `<div class="urow"><span>${esc(SERVICE[k] || k)}</span>${bar(pct(v.month?.usd || 0, big), `${SERVICE[k] || k}`)}<b>$${(v.month?.usd || 0).toFixed(2)}</b></div>`).join('') || '<p class="fine keep">No spending yet.</p>'}
+      ${u.enhance?.calls ? `<p class="fine keep">Picture clean-ups: ${u.enhance.calls}, ${u.enhance.credits} credits.</p>` : ''}
     </div>
     <details class="adjust"><summary>Adjust (more options)</summary>
-      <div class="field"><label for="uLimit">Monthly money limit ($)</label><input id="uLimit" type="number" min="1" step="1" value="${limit()}"></div>
+      <div class="field"><label for="uLimit">Monthly money limit ($)</label><input id="uLimit" type="number" min="1" step="1" value="${limit()}" title="How much you plan to spend each month, in dollars"></div>
       <p class="label">Free up space</p>
-      ${Object.entries(CACHE).map(([k, l]) => `<div class="urow"><span>${l}</span><b>${human(disk[k] || 0)}</b><button class="btn ghostbtn sm" type="button" data-clear="${k}" ${disk[k] ? '' : 'disabled'}>Clear</button></div>`).join('')}
-      ${Object.keys(u.renders?.avgMs || {}).length ? `<p class="fine">Average render: ${Object.entries(u.renders.avgMs).map(([k, v]) => `${esc(k)} ${dur(v)}`).join(', ')}</p>` : ''}
+      ${Object.entries(CACHE).map(([k, l]) => `<div class="urow"><span>${l}</span><b>${human(disk[k] || 0)}</b><button class="btn ghostbtn sm" type="button" data-clear="${k}" title="Delete these files to free up space" ${disk[k] ? '' : 'disabled'}>Clear</button></div>`).join('')}
+      ${Object.keys(u.renders?.avgMs || {}).length ? `<p class="fine keep">Average render: ${Object.entries(u.renders.avgMs).map(([k, v]) => `${esc(k)} ${dur(v)}`).join(', ')}</p>` : ''}
     </details>
   </section>`;
 }
 
 async function onClick(e) {
   const k = e.target.closest('[data-clear]')?.dataset.clear; if (!k) return;
-  if (!(await confirmDialog({ title: `Clear ${CACHE[k].toLowerCase()}?`, text: 'Flatform makes these again when it needs them. Your models and renders are not touched.', ok: 'Clear' }))) return;
+  if (!(await confirmDialog({ title: `Clear ${CACHE[k].toLowerCase()}?`, text: 'Flatform makes these again when it needs them. Your models and pictures stay safe.', ok: 'Clear' }))) return;
   try { await send(`/api/usage/cache/${k}`, 'DELETE'); toast('Cleared.', 'ok'); } catch (err) { toast(err.message); }
   load();
 }

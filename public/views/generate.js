@@ -7,6 +7,10 @@ import { $, esc, state, route, stepper, findModel, fileUrl, sourceType, stagesOf
 import { PROVIDERS } from '../lib/engines.js';
 import { ringDash, timeLeft } from '../lib/stage.js';
 import { icon } from '../lib/icons.js';
+import { plainError } from '../lib/plain-errors.js';
+
+// The full error, folded away under the one-line message (only when it says more).
+const details = (raw) => (plainError(raw) === String(raw || '').trim() ? '' : `<details><summary title="Show the full message">Details</summary><code>${esc(raw)}</code></details>`);
 
 let root;
 let model;
@@ -31,16 +35,16 @@ export function mount(el, { id }) {
       <details class="genmore"><summary title="Each step the 3D model goes through">Steps</summary>
         <ol class="stl" id="stages"></ol>
         <p class="fine">${model && providerOf(model) === '3daistudio'
-          ? '3D AI Studio keeps results for 24 hours and allows 3 requests a minute, so Flatform checks twice a minute and saves the model the moment it is ready.'
-          : "Tripo's links expire after 5 minutes. Flatform saves the model locally the moment it's ready."}</p>
-        <p class="fine">${model ? `${esc(model.name)} · ${sourceType(model.source)}${model.views ? ` · ${Object.keys(model.views).length} views` : ''} · ${esc(engineLabel(model))}` : ''}</p>
+          ? '3D AI Studio keeps results for 24 hours. Flatform checks twice a minute and saves the model as soon as it is ready.'
+          : 'Flatform saves the model on this computer as soon as Tripo is done.'}</p>
+        <p class="fine keep">${model ? `${esc(model.name)} · ${sourceType(model.source)}${model.views ? ` · ${Object.keys(model.views).length} photos` : ''} · ${esc(engineLabel(model))}` : ''}</p>
       </details>
     </div>
     <aside class="queue card" aria-label="Queue">
       <h2 class="label">Queue</h2>
       <div class="qlist" id="qlist"></div>
-      <p class="fine" id="credits"></p>
-      <button class="qadd" type="button" id="qadd" title="Choose more photos. Each one becomes its own 3D model with the same recipe.">${icon('plus')}<span>Drop more photos to queue them<small id="qaddSetup"></small></span></button>
+      <p class="fine keep" id="credits"></p>
+      <button class="qadd" type="button" id="qadd" title="Choose more photos. Each one becomes its own 3D model with the same recipe.">${icon('plus')}<span>Add more photos<small id="qaddSetup"></small></span></button>
     </aside>
   </section>`;
 
@@ -75,7 +79,7 @@ export function mount(el, { id }) {
 async function affordable(provider, credits) {
   const a = accountOf(provider);
   if (a?.balance == null || credits <= Number(a.balance)) return true;
-  return confirmDialog({ title: 'Not enough credits?', text: `This costs about ${credits} credits and your ${PROVIDERS[provider].name} balance is ${fmtBalance(a.balance)}. Send it anyway?`, ok: 'Generate anyway' });
+  return confirmDialog({ title: 'Not enough credits?', text: `This costs about ${credits} credits and your ${PROVIDERS[provider].name} balance is ${fmtBalance(a.balance)}. Send it anyway?`, ok: 'Send anyway' });
 }
 
 export function update() {
@@ -94,10 +98,10 @@ export function update() {
     $('#stageName', root).className = failed ? 'st fail' : '';
     $('#pbar', root).setAttribute('aria-valuenow', pct);
     $('#genP', root).setAttribute('stroke-dasharray', ringDash(pct));
-    $('#fbNote', root).textContent = failed ? `${statusText(m)}. Retry sends the same photos and recipe to ${PROVIDERS[providerOf(m)].name} again.`
+    $('#fbNote', root).textContent = failed ? `${plainError(statusText(m)).replace(/\.$/, '')}. Try again sends the same photos and recipe to ${PROVIDERS[providerOf(m)].name}.`
       : m.status === 'ready' ? 'Opening it in Scene and render…' : `${timeLeft(pct, Date.now() - Date.parse(m.versions?.find((x) => x.n === m.activeVersion)?.created_at || m.created_at))}. You can keep working.`;
     root.querySelector('.forming').classList.toggle('done', m.status === 'ready');
-    const facts = failed ? `<button class="btn pri" type="button" data-act="retry" data-id="${m.id}" title="Send the same photos and recipe again">${icon('retry')}<span>Retry</span></button>`
+    const facts = failed ? `<button class="btn pri" type="button" data-act="retry" data-id="${m.id}" title="Send the same photos and recipe again">${icon('retry')}<span>Try again</span></button>`
       : m.status === 'ready' ? `<a class="btn pri" href="#/compose/${m.id}" title="Put your model in a scene and make pictures">${icon('scene')}<span>Open in Scene and render</span></a>`
         : '<a class="btn sec" href="#/library" title="Go on with something else. It keeps building and tells you when it is ready.">Run in background</a>';
     if ($('#facts', root).dataset.html !== facts) { $('#facts', root).dataset.html = facts; $('#facts', root).innerHTML = facts; }
@@ -107,24 +111,24 @@ export function update() {
     const sending = state.queue.find((q) => q.status === 'uploading');
     $('#fbNote', root).textContent = '';
     $('#stageName', root).textContent = sending ? `Sending ${sending.name} to ${PROVIDERS[sending.setup.provider].name}…`
-      : state.queue.length ? 'Waiting to send…' : 'Nothing is generating right now';
+      : state.queue.length ? 'Waiting to send…' : 'Nothing is being made right now';
   }
 
   // 3D AI Studio allows 3 requests a minute, so a submission can wait a little for its turn.
   const local = state.queue.map((q) => `
     <div class="qi${q.status === 'error' ? ' qfail' : ''}">
-      <div class="qt"><b>${esc(q.name)}</b><span>${q.status === 'uploading' ? `Sending to ${PROVIDERS[q.setup.provider].name}${q.setup.provider === '3daistudio' ? ' (3 requests a minute, may wait a moment)' : ''}…`
-        : q.status === 'error' ? esc(q.error) : 'Waiting to send'}</span></div>
-      ${q.status === 'error' ? `<button class="btn sm pri" type="button" data-act="requeue" data-id="${q.qid}">${icon('retry')}<span>Retry</span></button>` : ''}
-      ${q.status !== 'uploading' ? `<button class="btn sm ghostbtn" type="button" data-act="remove" data-id="${q.qid}" aria-label="Remove ${esc(q.name)} from the queue">${icon('close')}<span>Remove</span></button>` : ''}
+      <div class="qt"><b>${esc(q.name)}</b><span>${q.status === 'uploading' ? `Sending to ${PROVIDERS[q.setup.provider].name}${q.setup.provider === '3daistudio' ? ' (it may wait a moment for its turn)' : ''}…`
+        : q.status === 'error' ? esc(plainError(q.error)) : 'Waiting to send'}</span>${q.status === 'error' ? details(q.error) : ''}</div>
+      ${q.status === 'error' ? `<button class="btn sm pri" type="button" data-act="requeue" data-id="${q.qid}" title="Try sending this photo again">${icon('retry')}<span>Try again</span></button>` : ''}
+      ${q.status !== 'uploading' ? `<button class="btn sm ghostbtn" type="button" data-act="remove" data-id="${q.qid}" aria-label="Remove ${esc(q.name)} from the queue" title="Take this photo out of the queue">${icon('close')}<span>Remove</span></button>` : ''}
     </div>`).join('');
   const jobs = state.models.filter((x) => isGenerating(x) || x.status === 'failed').map((x) => `
     <div class="qi${x.status === 'failed' ? ' qfail' : ''}${x === m ? ' on' : ''}">
-      <div class="qt"><a href="#/generate/${x.id}"><b>${esc(x.name)}</b></a><span>${esc(statusText(x))}</span>
+      <div class="qt"><a href="#/generate/${x.id}"><b>${esc(x.name)}</b></a><span>${esc(x.status === 'failed' ? plainError(statusText(x)) : statusText(x))}</span>${x.status === 'failed' ? details(statusText(x)) : ''}
         ${x.status === 'failed' ? '' : `<div class="pbar"><i style="width:${x.progress || 0}%"></i></div>`}</div>
-      ${x.status === 'failed' ? `<button class="btn sm pri" type="button" data-act="retry" data-id="${x.id}">${icon('retry')}<span>Retry</span></button>` : ''}
+      ${x.status === 'failed' ? `<button class="btn sm pri" type="button" data-act="retry" data-id="${x.id}" title="Send the same photos and recipe again">${icon('retry')}<span>Try again</span></button>` : ''}
     </div>`).join('');
-  const html = local + jobs || '<p class="muted qempty">No jobs. Photos you drop wait here until they are sent.</p>';
+  const html = local + jobs || '<p class="muted qempty">Nothing here. Photos you drop wait here until they are sent.</p>';
   const q = $('#qlist', root);
   if (q.dataset.html !== html) { q.dataset.html = html; q.innerHTML = html; }
   const next = savedSetup();

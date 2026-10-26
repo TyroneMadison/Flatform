@@ -16,7 +16,7 @@ export const slug = s => String(s || 'model').toLowerCase().replace(/[^a-z0-9]+/
 export async function mount(el, { id }) {
   root = el; m = findModel(id) || focusModel(); tree = null; report = null; fixed = [];
   el.innerHTML = `<div class="libhead"><div><h1 class="ph">Check and finish</h1>
-    <p class="sub">${m ? esc(m.name) + ' · make sure it is right before you save it' : 'Pick a model in the Library first.'}</p></div></div>
+    <p class="sub keep">${m ? esc(m.name) + ' · make sure it is right before you save it' : 'Pick a model in the Library first.'}</p></div></div>
     <section class="finish"><div class="card glass" id="health" aria-live="polite"></div><div id="finish-more"></div></section>`;
   el.addEventListener('click', onClick);
   draw();
@@ -35,25 +35,25 @@ async function runCheck() {
   try { tree ||= await loadTree(); report = checkScene(tree, { tennogen: tenno() }); }
   catch (e) { report = { error: e.message }; }
   draw();
-  if (report.checks) announce(report.pass ? 'Check finished. Ready to export.' : `Check finished. ${report.checks.filter(c => c.level === 'error').length} things need fixing.`);
+  if (report.checks) announce(report.pass ? 'Check finished. Ready to save.' : `Check finished. ${report.checks.filter(c => c.level === 'error').length} things need fixing.`);
 }
 
 const LEVEL = { error: 'Needs fixing', warn: 'Worth a look' };
 function draw() {
   const h = root.querySelector('#health'); if (!h) return;
-  if (!m?.glb) { h.innerHTML = `<p class="sub">There is no 3D model to check yet.</p>`; return; }
-  const head = `<h2 class="label">Check before export</h2>`;
+  if (!m?.glb) { h.innerHTML = `<p class="sub keep">There is no 3D model to check yet.</p>`; return; }
+  const head = `<h2 class="label">Check before saving</h2>`;
   if (!report || report.running) { h.innerHTML = `${head}<p class="hc-status">Checking the model…</p>`; return; }
-  if (report.error) { h.innerHTML = `${head}<p class="hc-status bad">Could not open the model: ${esc(report.error)}</p><button class="btn pri" data-f="check">Try again</button>`; return; }
+  if (report.error) { h.innerHTML = `${head}<p class="hc-status bad">Could not open the model: ${esc(report.error)}</p><button class="btn pri" data-f="check" title="Load the model and check it again">Try again</button>`; return; }
   h.innerHTML = `${head}
-    <p class="hc-status ${report.pass ? 'ok' : 'bad'}">${report.pass ? (report.clean ? 'All good. Ready to export.' : 'Ready to export, with a few things worth a look.') : 'Not ready yet. Fix the items below.'}</p>
-    <p class="fine">${report.tris.toLocaleString()} triangles in ${report.meshes} parts${tenno() ? ' · checked against TennoGen limits' : ''}.</p>
+    <p class="hc-status ${report.pass ? 'ok' : 'bad'}">${report.pass ? (report.clean ? 'All good. Ready to save.' : 'Ready to save, with a few things worth a look.') : 'Not ready yet. Fix the items below.'}</p>
+    <p class="fine keep">${report.tris.toLocaleString()} pieces in ${report.meshes} parts${tenno() ? ' · checked against TennoGen limits' : ''}.</p>
     <ul class="hc-list">${report.checks.map(c => `<li class="hc ${c.level === 'error' ? 'bad' : 'warn'}">
-      <span class="hc-tag">${LEVEL[c.level]}</span><span class="hc-label">${esc(c.label)}${c.names?.length ? `<span class="fine"> ${esc(c.names.slice(0, 4).join(', '))}${c.names.length > 4 ? '…' : ''}</span>` : ''}</span>
-      ${c.fix ? `<button class="btn sec sm" data-f="fix" data-id="${c.id}">Fix it</button>` : ''}</li>`).join('')}</ul>
-    <div class="row"><button class="btn sec" data-f="check">Check again</button>
-    ${fixed.length ? `<button class="btn pri" data-f="save">Save fixed copy</button>` : ''}</div>
-    ${fixed.length ? `<p class="fine">Fixes are only in this window until you save. Your original file is never changed.</p>` : ''}`;
+      <span class="hc-tag">${LEVEL[c.level]}</span><span class="hc-label">${esc(c.label)}${c.names?.length ? `<span class="fine keep"> ${esc(c.names.slice(0, 4).join(', '))}${c.names.length > 4 ? '…' : ''}</span>` : ''}</span>
+      ${c.fix ? `<button class="btn sec sm" data-f="fix" data-id="${c.id}" title="Fix this here. Your original file stays the same.">Fix it</button>` : ''}</li>`).join('')}</ul>
+    <div class="row"><button class="btn sec" data-f="check" title="Run the check one more time">Check again</button>
+    ${fixed.length ? `<button class="btn pri" data-f="save" title="Save a fixed copy in the render folder">Save fixed copy</button>` : ''}</div>
+    ${fixed.length ? `<p class="fine keep">Fixes are only here until you save. Your original file is never changed.</p>` : ''}`;
 }
 
 async function saveFixed() {
@@ -74,7 +74,7 @@ function onClick(e) {
   else if (a === 'fix' && tree) {
     const n = applyFix(tree, b.dataset.id, { makeMaterial: () => new THREE.MeshStandardMaterial({ color: 0x9a9a9a, roughness: .6 }) });
     if (n) { fixed.push(b.dataset.id); report = checkScene(tree, { tennogen: tenno() }); draw(); announce('Fixed.'); }
-    else toast('That one needs a fix in the 3D app, not here.', 'warn');
+    else toast('That one has to be fixed in a 3D app like Blender, not here.', 'warn');
   } else if (a === 'save') saveFixed();
 }
 

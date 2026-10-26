@@ -2,9 +2,9 @@
 // render quality. Pure data and rules; studio.js applies them, render/blender_turntable.py reads blenderLook().
 // Every default is today's behaviour, so an old scene (no `look`) renders exactly as before.
 
-export const TONE_MAPPINGS = { neutral: 'Neutral (default)', aces: 'ACES Filmic', agx: 'AgX' };
-export const QUALITIES = { low: 'Low', medium: 'Medium', high: 'High', pathTraced: 'Path traced' };
-export const BACKGROUND_KINDS = { scene: 'Scene', solid: 'Solid colour', gradient: 'Gradient', image: 'Image' };
+export const TONE_MAPPINGS = { neutral: 'True colours (default)', aces: 'Movie (bold)', agx: 'Movie (soft)' };
+export const QUALITIES = { low: 'Low', medium: 'Medium', high: 'High', pathTraced: 'Best (slow)' };
+export const BACKGROUND_KINDS = { scene: 'Scene', solid: 'Solid colour', gradient: 'Two-colour fade', image: 'Image' };
 export const IMAGE_TYPES = ['.png', '.jpg', '.jpeg', '.webp']; // custom background images
 export const HDRI_TYPES = ['.hdr', '.exr'];
 // Built-in studio HDRIs: Poly Haven, CC0 (THIRD_PARTY_NOTICES.md). 1k versions, served from public/img/hdri/.
@@ -17,7 +17,7 @@ export const HDRIS = {
   kloofendal_48d_partly_cloudy_puresky: { label: 'Kloofendal sky', note: 'Partly cloudy outdoor sky', ground: [1.7, 120] },
   garage: { label: 'Garage', note: 'Concrete garage, daylight from the door', ground: [1.6, 12] },
   goegap_road: { label: 'Desert dusk', note: 'Desert road at sunset', ground: [1.7, 80] },
-  white_studio_02: { label: 'White cyclorama', note: 'Clean white studio, soft light', ground: [1.6, 10] },
+  white_studio_02: { label: 'White studio', note: 'Clean white room, soft light', ground: [1.6, 10] },
   umhlanga_sunrise: { label: 'Coast sunrise', note: 'Beach and sea at sunrise', ground: [1.7, 60] },
   shanghai_bund: { label: 'City night', note: 'Waterfront city lights at night', ground: [1.8, 40] },
 };
@@ -30,18 +30,18 @@ export const isBackgroundImage = (name) => IMAGE_TYPES.includes(String(name).sli
 // Accepts a built-in HDRI name or an imported .hdr/.exr file; anything else is refused.
 export function checkHdri(file) {
   if (file == null) return { ok: true, file: null };
-  if (typeof file !== 'string') return { ok: false, reason: 'Pick an HDRI' };
-  if (file.startsWith('builtin:')) return Object.hasOwn(HDRIS, file.slice(8)) ? { ok: true, file } : { ok: false, reason: 'Unknown built-in HDRI' };
+  if (typeof file !== 'string') return { ok: false, reason: 'Pick a sky picture' };
+  if (file.startsWith('builtin:')) return Object.hasOwn(HDRIS, file.slice(8)) ? { ok: true, file } : { ok: false, reason: 'That sky picture is not one of ours' };
   return isHdri(file) ? { ok: true, file } : { ok: false, reason: 'Use a .hdr or .exr file' };
 }
 
 const light = (on, intensity, color, azimuth, elevation) => ({ on, intensity, color, azimuth, elevation });
 // Light presets. 'match' = today's "Match lighting to scene" rig (the scene's own key/fill/rim), untouched.
 export const LIGHT_PRESETS = {
-  match: { label: 'Match photo', note: 'Key, fill and rim follow the scene (default)' },
-  studio: { label: 'Studio 3-point', key: light(true, 1.4, '#fff3e2', -35, 40), fill: light(true, 0.5, '#dfe8ff', 50, 15), rim: light(true, 1.2, '#ffffff', 160, 35) },
+  match: { label: 'Match photo', note: 'The lights follow the photo (default)' },
+  studio: { label: 'Three lights', key: light(true, 1.4, '#fff3e2', -35, 40), fill: light(true, 0.5, '#dfe8ff', 50, 15), rim: light(true, 1.2, '#ffffff', 160, 35) },
   softbox: { label: 'Soft box', key: light(true, 1.0, '#ffffff', -10, 65), fill: light(true, 0.8, '#ffffff', 30, 30), rim: light(false, 0.4, '#ffffff', 180, 40) },
-  rim: { label: 'Dramatic rim', key: light(true, 0.5, '#ffe9d6', -60, 25), fill: light(false, 0.2, '#dfe8ff', 60, 10), rim: light(true, 2.2, '#ffffff', 150, 30) },
+  rim: { label: 'Strong back light', key: light(true, 0.5, '#ffe9d6', -60, 25), fill: light(false, 0.2, '#dfe8ff', 60, 10), rim: light(true, 2.2, '#ffffff', 150, 30) },
   dusk: { label: 'Outdoor dusk', key: light(true, 1.6, '#ffb070', -80, 8), fill: light(true, 0.35, '#8fa8ff', 70, 30), rim: light(true, 0.8, '#ffd0a0', 170, 12) },
 };
 export const DEFAULT_LIGHTS = { preset: 'match', ...Object.fromEntries(['key', 'fill', 'rim'].map((k) => [k, LIGHT_PRESETS.studio[k]])), shadows: true, softness: 0.5 };
@@ -104,7 +104,7 @@ export const STUDIO_PRESETS = {
 export const LIGHTING_PRESETS = {
   garage: { label: 'Garage', hdri: { file: 'builtin:garage', rotation: 90, intensity: 1, background: true, blur: 0.15 }, tone: 'agx' },
   desertDusk: { label: 'Desert dusk', hdri: { file: 'builtin:goegap_road', rotation: 200, intensity: 1.1, background: true, blur: 0 }, tone: 'aces' },
-  whiteCyc: { label: 'White cyclorama', hdri: { file: 'builtin:white_studio_02', rotation: 0, intensity: 1, background: false, blur: 0 }, tone: 'neutral', preset: 'white-cyc-studio' },
+  whiteCyc: { label: 'White studio', hdri: { file: 'builtin:white_studio_02', rotation: 0, intensity: 1, background: false, blur: 0 }, tone: 'neutral', preset: 'white-cyc-studio' },
   studioSoft: { label: 'Soft studio', hdri: { file: 'builtin:studio_small_03', rotation: 30, intensity: 1.2, background: false, blur: 0 }, tone: 'agx', preset: 'soft-studio' },
   studioBright: { label: 'Bright studio', hdri: { file: 'builtin:studio_small_08', rotation: 0, intensity: 1, background: false, blur: 0 }, tone: 'neutral' },
   photoWarm: { label: 'Warm photo studio', hdri: { file: 'builtin:brown_photostudio_02', rotation: 0, intensity: 1, background: false, blur: 0 }, tone: 'neutral' },
@@ -143,7 +143,7 @@ export function blenderLook(look, { hdriPath = null } = {}) {
   const l = mergeLook(look);
   return {
     engine: l.pathTraced || l.finalEngine === 'cycles' ? 'CYCLES' : 'BLENDER_EEVEE_NEXT',
-    tone: { neutral: 'Khronos PBR Neutral', aces: 'Filmic', agx: 'AgX' }[l.tone], exposure: l.exposure,
+    tone: { neutral: /Khronos PBR Neutral/.source, aces: 'Filmic', agx: 'AgX' }[l.tone] /* Blender's own names, never shown */, exposure: l.exposure,
     background: l.background,
     hdri: l.hdri.file ? { path: hdriPath, rotation: l.hdri.rotation, intensity: l.hdri.intensity, background: l.hdri.background, blur: l.hdri.blur, ground: hdriGround(l.hdri.file) } : null,
     lights: l.lights.preset === 'match' ? null : l.lights,
