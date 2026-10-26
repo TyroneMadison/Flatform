@@ -5,9 +5,10 @@ import { $, esc, state, api, send, toast, refresh, native, fmt, fmtBalance, save
 import { PROVIDERS } from '../lib/engines.js';
 import { icon } from '../lib/icons.js';
 import { PRESETS } from '../lib/studio.js';
+import { EXTRA, EXTRA_HTML, wireExtra } from './settings-extra.js';
 
 const SCENES = Object.entries(PRESETS).map(([k, p]) => [k, k === 'showroom' ? 'Showroom (default)' : k === 'miami' ? 'Miami street at night (your HDRI)' : p.label]);
-const SECTIONS = [['providers', 'Providers'], ['spend', 'Spend'], ['rendering', 'Rendering'], ['output', 'Output folder'], ['appearance', 'Appearance'], ['history', 'History'], ['about', 'About']];
+const SECTIONS = [['providers', 'Providers'], ['spend', 'Spend'], ['rendering', 'Rendering'], ['output', 'Output folder'], ['appearance', 'Appearance'], ['history', 'History'], ...EXTRA, ['about', 'About']];
 const RELEASES = 'https://github.com/TyroneMadison/Flatform/releases';
 const results = {}; // provider → { ok, text } from the last Test or key change
 let root;
@@ -27,6 +28,7 @@ export function mount(el, { id }) {
   </div>`;
   el.addEventListener('click', onClick);
   el.addEventListener('change', onChange);
+  wireExtra(el);
   el.addEventListener('submit', onSubmit);
   el.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && replacing) { replacing = null; redraw(); }
@@ -347,7 +349,7 @@ function spendHtml() {
 
 export function update() {
   if (!state.settings || !root?.isConnected) return;
-  const html = { providers: providersHtml, spend: spendHtml, rendering: renderingHtml, output: outputHtml, appearance: appearanceHtml, history: historyHtml, about: aboutHtml }[section]();
+  const html = { providers: providersHtml, spend: spendHtml, rendering: renderingHtml, output: outputHtml, appearance: appearanceHtml, history: historyHtml, about: aboutHtml, ...EXTRA_HTML }[section]();
   const box = $('#settings', root);
   // Keep the page as it is while someone is typing in it.
   const focused = box.contains(document.activeElement) ? document.activeElement : null;

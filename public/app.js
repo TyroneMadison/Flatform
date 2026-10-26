@@ -419,6 +419,9 @@ function renderFrame() {
     ['Scenes', 'scene', target ? `#/compose/${target.id}` : '#/library', ['compose']],
     ['Renders', 'film', target ? `#/render/${target.id}` : '#/library', ['render']],
     ['Spin set', 'retry', target ? `#/spin/${target.id}` : '#/spin', ['spin']],
+    ['Finish', 'check', target ? `#/finish/${target.id}` : '#/library', ['finish']],
+    ['Share', 'external', target ? `#/share/${target.id}` : '#/share', ['share']],
+    ['Usage', 'eye', '#/usage', ['usage']],
     ['Settings', 'settings', '#/settings', ['settings']],
   ];
   const html = links.map(([label, ic, href, names]) => {
@@ -439,7 +442,7 @@ function renderFrame() {
 }
 
 // ---- routing ----
-const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings', 'spin', 'preview', 'finish'];
+const SCREENS = ['drop', 'setup', 'generate', 'compose', 'render', 'library', 'model', 'settings', 'spin', 'preview', 'finish', 'share', 'usage'];
 export let route = { name: 'drop', id: null };
 let current = null;
 let navToken = 0;

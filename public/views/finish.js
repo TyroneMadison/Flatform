@@ -7,6 +7,7 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { esc, findModel, focusModel, fileUrl, toast, announce, activeWorkspace } from '../app.js';
 import { checkScene, applyFix } from '../lib/health.js';
+import { mountTools, unmountTools } from './finish-tools.js';
 
 let root, m, tree = null, report = null, fixed = [];
 const tenno = () => activeWorkspace()?.kind === 'warframe';
@@ -19,6 +20,7 @@ export async function mount(el, { id }) {
     <section class="finish"><div class="card glass" id="health" aria-live="polite"></div><div id="finish-more"></div></section>`;
   el.addEventListener('click', onClick);
   draw();
+  if (m) mountTools(el.querySelector('#finish-more'), m, () => tree);
   if (m?.glb) runCheck();
 }
 
@@ -77,5 +79,5 @@ function onClick(e) {
 }
 
 export function update() {}
-export function unmount() { root?.removeEventListener('click', onClick); tree = null; }
+export function unmount() { root?.removeEventListener('click', onClick); unmountTools(); tree = null; }
 

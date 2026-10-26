@@ -1,4 +1,4 @@
-﻿// Share links. Flatform keeps the list (shares.json in the library folder); the page itself is served by the
+// Share links. Flatform keeps the list (shares.json in the library folder); the page itself is served by the
 // Cloudflare Worker in share-worker/ once Tyrone deploys it. Until settings.share.baseUrl is set, links are mock links
 // (mock: true) so the app works end to end without any account. Nothing here uploads or deploys anything.
 import { randomBytes } from 'node:crypto';
@@ -25,7 +25,7 @@ export function createShares({ file, baseUrl = () => null, now = Date.now }) {
   return {
     async list() { return (await load()).map(view); },
     async create({ modelId, title, video, poster = null, expiresInDays = null }) {
-      if (!modelId || !video) throw new Error('Render a video first, then share it');
+      if (!modelId || !(video || poster)) throw new Error('Render a video or a picture first, then share it');
       if (expiresInDays != null && !(Number(expiresInDays) > 0)) throw new Error('Expiry must be a number of days');
       await load();
       const s = { id: shareId(), modelId, title: String(title || 'Flatform render').slice(0, 120), video, poster, createdAt: new Date(now()).toISOString(), expiresAt: expiryFrom(expiresInDays, now()) };
