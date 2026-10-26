@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { resolveColors, deserializeMaterial, DEFAULT_MATERIAL, TINT_SLOTS, packTintMask, packEmissiveMask, textureSet, exportWarnings, meanLuminance, hexRgb } from './tenno.js';
 import { textureUrl, isCustomId } from './textures.js';
+import { glowOf } from './roles.js';
 import { presetFor, stripHighlights, voteRegions, groupFaces, kmeans, clusterStats, labelClusters, mergeInference, REGION_IDS } from './infer.js';
 
 export const pieceKey = (meshIndex, name, group = null) => `${name || 'mesh'}#${meshIndex}${group == null ? '' : `@${group}`}`;
@@ -156,7 +157,8 @@ export function pieceMaterial(piece, original, paint, cached) {
   mat.opacity = m.opacity;
   mat.transparent = m.opacity < 1;
   mat.emissive.set(emissive);
-  mat.emissiveIntensity = glow ? Math.max(m.emissiveIntensity, 2) : m.emissiveIntensity;
+  mat.emissiveIntensity = glow ? glowOf(paint, piece.slot) ?? Math.max(m.emissiveIntensity, 2) : m.emissiveIntensity;
+  mat.userData.energy = piece.slot === 'energy'; // pulses (studio.js) when Part colors has a pulse speed
   mat.normalScale.set(m.normalScale, m.normalScale);
   if (m.texture) {
     mat.map = libraryMap(m.texture, 'color', mat, true);
@@ -206,7 +208,7 @@ export function previewColors(model, paint, cache) {
     const { base, glow, emissive } = pieceColors(rec, paint);
     setBase(mat, base, [].concat(p.mesh.userData.material)[p.group ?? 0]);
     mat.emissive.set(emissive);
-    if (glow) mat.emissiveIntensity = Math.max(deserializeMaterial(rec.material).emissiveIntensity, 2);
+    if (glow) mat.emissiveIntensity = glowOf(paint, rec.slot) ?? Math.max(deserializeMaterial(rec.material).emissiveIntensity, 2);
     changed++;
   }
   return { changed, missing };

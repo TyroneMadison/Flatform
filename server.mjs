@@ -17,8 +17,7 @@ import { runAutoRig } from './autorig.mjs';
 import { PROVIDERS, VIEWS, DEFAULT_PROVIDER, normalize, baseSetup, tripoDirectBody, threeDAIRequest } from './public/lib/engines.js';
 import { estimate } from './public/lib/pricing.js';
 import { cleanStudioPresets, blenderLook, mergeLook, HDRIS } from './public/lib/look.js';
-import { resolveColors, deserializeMaterial, blenderMaterial } from './public/lib/tenno.js';
-import { glbPieces, locatePieces } from './glb-pieces.mjs';
+import { paintSpec } from './glb-pieces.mjs';
 import { trimGlb } from './glb-trim.mjs';
 import { fillGlb } from './glb-fill.mjs';
 import { fillNote } from './public/lib/holes.js';
@@ -1230,19 +1229,16 @@ export async function startServer({
     const fx = cleanExtras({ effect }).effect;
     const effectArg = fx ? ['--effect', JSON.stringify(fx)] : [];
     const materialsFile = path.join(MODELS, m.id, 'blender-materials.json');
-    const specs = paint?.pieces ? Object.fromEntries(Object.entries(paint.pieces).filter(([, p]) => p && (p.material || p.slot || p.colors || p.region || p.hidden))
-      .map(([key, p]) => [key, { ...blenderMaterial(deserializeMaterial(p.material), resolveColors(paint, p), p.slot), slot: p.slot, textured: p.material?.textured !== false && !p.material?.color, ...(p.hidden && { hidden: true }) }])) : {};
-    // Each piece's Blender object and material slot (a mesh with Paint and Accents is two pieces in the app, one object in Blender).
-    let where = [];
-    if (Object.keys(specs).length) { try { where = glbPieces(readFileSync(path.join(MODELS, m.id, v.glb))); } catch { /* no file: keys only */ } }
-    const materials = locatePieces(specs, where);
+    // Each piece's Blender object and material slot (a mesh with Paint and Accents is two pieces in the app, one object
+    // in Blender), Part colors' Glow, Energy and pulse, and the face groups by node.
+    const materialsSpec = paintSpec(paint, () => readFileSync(path.join(MODELS, m.id, v.glb)));
     const extrasArg = extrasOf(m);
     const stampArg = stamp !== false && stampText(m.renders.at) ? ['--stamp', stampText(m.renders.at)] : []; // one stamp for every look and frame
     const stillOut = (look) => path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still, stampFile(m.renders.at)));
     const job = { status: 'running', looks, look: looks[0], frame: 0, frames, error: null };
     jobs.set(m.id, job);
     (async () => {
-      await writeAtomic(materialsFile, { materials, groups: paint?.groups || {} });
+      await writeAtomic(materialsFile, materialsSpec);
       for (const look of looks) {
         job.look = look;
         job.frame = 0;

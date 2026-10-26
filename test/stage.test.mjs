@@ -80,7 +80,7 @@ test('every keyboard shortcut still has its button on screen', () => {
 test('inspector card: clicking a part opens its colour and material on the right', () => {
   assert.match(compose, /<aside class="icard card" id="insp"[^>]*hidden>/);
   assert.match(compose, /inspOpen = true; selectPiece\(key\)/);
-  assert.match(compose, /for \(const id of \['grp-color', 'grp-material'\]\)/);
+  assert.match(compose, /for \(const id of \['grp-role', 'grp-color', 'grp-material'\]\)/); // Part colors' role chips first
   assert.match(compose, /data-act="insp-close" title="/);
 });
 

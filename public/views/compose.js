@@ -24,6 +24,7 @@ import { mountRender, updateRender, resetRenderOptions, pickRender } from './com
 import { initSession, noteEdit, stopSession, markSaved } from './compose-session.js';
 import { resetScene } from '../lib/session.js';
 import { initShelf, renderShelf, onShelfClick, onShelfInput, onShelfDragStart, onShelfDrop, isShelfDrag } from './compose-shelf.js';
+import { initRoles, renderRolesGroup, afterRolesRender, onRolesClick, onRolesInput, onRolesChange, checkRoles, stopRoles, roleCardHtml } from './compose-roles.js';
 import { initPaint, renderPaintGroups, afterRender, onPaintClick, onPaintInput, onPaintChange, selectPiece, selectedPiece, onPaintDragStart, onTextureDrop, onDecalCanvasClick } from './compose-paint.js';
 
 let root;
@@ -64,6 +65,7 @@ export async function mount(el, { id }) {
   if (scene.preset !== 'transparent') scene.preset = roomFor(scene.preset); // an old flat scene opens in its closest room
   initSession({ root: el, model: () => m, scene: () => scene, frame: () => frame });
   initPaint({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
+  initRoles({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector, selected: selectedPiece });
   initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector, swapVersion, reload: async (next, { glb = true } = {}) => { m = upsert(next); if (studio) studio.kind = m.kind; renderModel(); if (glb) await loadModel(); refresh(); } });
   initHandPose({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initTestRig({ model: () => m, scene: () => scene, studio: () => studio, change, draw });
@@ -84,6 +86,7 @@ export async function mount(el, { id }) {
       <div class="hud measure" id="hudMeasure" hidden></div>
       <div class="jp-ov" id="jpOv" aria-hidden="true" hidden></div>
       <div class="hud msg" id="hudMsg" role="status">Loading model…</div>
+      <div class="trimcard rolecard" id="roleCard" role="status" hidden>${roleCardHtml()}</div>
       <div class="rtag" id="renderTag" aria-live="polite" hidden></div>
       <div class="vtool" role="toolbar" aria-label="View tools">
         <button class="vt" type="button" data-tool="move" aria-pressed="false" title="Move the car: drag it around the floor" aria-label="Move the car">${icon('move', 20)}</button>
@@ -175,6 +178,7 @@ export async function mount(el, { id }) {
     $('#hudMsg', el).textContent = s.message;
     setHumanoid(isHumanoid());
     renderInspector(); // the size lock depends on the model's shape
+    await checkRoles(); // Part colors: a changed model gets its parts found again, each keeping its role
   } catch (e) {
     if (studio !== s) return;
     $('#hudMsg', el).textContent = `Could not load the model: ${e.message}`;
@@ -195,6 +199,7 @@ export function unmount() {
   $$('#toasts .toast.undo').forEach((t) => t.remove()); // their Undo belongs to this scene
   stopSession();
   stopTrim();
+  stopRoles();
   hist.clear();
   listeners?.abort();
   gridOn = false;
@@ -487,8 +492,9 @@ function renderInspector() {
     <div class="grp" id="grp-ground"><h3>Ground</h3>
       ${slider('reflection', 'Reflection', 0, 1, 0.01, s.reflection, hasFloor() ? level(s.reflection) : 'None here', !hasFloor(), 'How much the floor shines like a mirror')}
       ${slider('shadow', 'Shadow', 0, 1, 0.01, s.shadow, softness(s.shadow), false, 'How soft the shadow under the model is')}
-    </div>${renderLightingGroup()}${renderToolsGroup()}${renderPathGroup()}${renderMotionGroup()}${renderHandPoseGroup()}${renderTestRigGroup()}${renderPaintGroups()}`;
+    </div>${renderLightingGroup()}${renderToolsGroup()}${renderPathGroup()}${renderMotionGroup()}${renderHandPoseGroup()}${renderTestRigGroup()}${renderRolesGroup()}${renderPaintGroups()}`;
   afterRender();
+  afterRolesRender();
   placeInspector();
   applyTool();
 }
@@ -551,7 +557,7 @@ function placeInspector() {
   if (!open) return;
   const piece = studio.pieces().find((p) => p.key === key);
   $('#inspName', root).textContent = scene.paint?.pieces?.[key]?.name || piece?.name || 'This part';
-  for (const id of ['grp-color', 'grp-material']) { const g = $(`#${id}`, root); if (g) body.append(g); }
+  for (const id of ['grp-role', 'grp-color', 'grp-material']) { const g = $(`#${id}`, root); if (g) body.append(g); }
   const hidden = scene.paint?.pieces?.[key]?.hidden;
   $('#inspActs', root).innerHTML = `<button class="btn sm ghostbtn" type="button" data-act="insp-rename" title="Give this part a name you will recognise">Rename</button>
     <button class="btn sm ghostbtn" type="button" data-act="insp-hide" title="${hidden ? 'Show this part again' : 'Hide this part, in the 3D view and in renders. You can undo it.'}">${hidden ? 'Show' : 'Hide'}</button>
@@ -592,6 +598,7 @@ async function loadModel() {
     $('#hudMsg', root).hidden = !s.message;
     $('#hudMsg', root).textContent = s.message;
     renderInspector();
+    await checkRoles();
   } catch (e) {
     if (studio === s) $('#hudMsg', root).textContent = `Could not load the model: ${e.message}`;
   }
@@ -613,6 +620,7 @@ function bind() {
     if (await onMotionClick(t)) return;
     if (await onHandPoseClick(t)) return;
     if (await onTestRigClick(t)) return;
+    if (await onRolesClick(t)) return;
     if (await onPaintClick(t)) return;
     if (t.dataset.pickTool) return pickDock(t.dataset.pickTool);
     if (t.dataset.idea) return useIdea(t.dataset.idea);
@@ -652,6 +660,7 @@ function bind() {
     if (onShelfInput(e)) return;
     if (onMotionInput(e.target)) return;
     if (onHandPoseInput(e.target)) return;
+    if (onRolesInput(e.target)) return;
     if (onPaintInput(e.target)) return;
     const k = e.target.dataset.key;
     if (!k || e.target.type !== 'range') return;
@@ -666,6 +675,7 @@ function bind() {
     if (await onMotionChange(e.target)) return;
     if (onHandPoseChange(e.target)) return;
     if (onTestRigChange(e.target)) return;
+    if (onRolesChange(e.target)) return;
     if (await onPaintChange(e.target)) return;
     const k = e.target.dataset.key;
     if (k && e.target.type === 'checkbox') change({ [k]: e.target.checked, ...(k === 'sameSize' && e.target.checked && { scale: 1 }), ...(k === 'center' && { snap: e.target.checked }) });

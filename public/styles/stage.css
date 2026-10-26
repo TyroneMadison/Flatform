@@ -396,3 +396,16 @@ body.rm .tip { animation: none; }
 .trimcard .tc-warn { margin: 0; font-size: 12.5px; color: #f2b56b; }
 .trimcard .tc-row { display: flex; gap: 8px; }
 .trimcard .btn { min-height: 44px; }
+/* Part colors (Look): one row per color role, the test-color card, the role chips in the inspector card */
+.roles { display: grid; gap: 6px; }
+.rolerow { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 44px; padding: 6px 10px; border: 1px solid var(--line-3); border-radius: 8px; background: none; color: var(--text); text-align: left; font-size: 13px; cursor: pointer; }
+.rolerow[aria-expanded="true"] { border-color: var(--accent, #d4a63a); }
+.rolerow small { color: var(--muted); font-size: 11.5px; }
+.rolesw { display: inline-block; width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, .25); flex: none; }
+.rolebox { padding: 4px 0 8px; }
+.rolechips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.rolechips .chip { min-height: 44px; gap: 8px; justify-content: flex-start; }
+.rolecard { top: auto; bottom: calc(var(--trail-h) + 24px); left: calc(50% + 130px); max-width: min(360px, calc(100% - 32px)); }
+#toolBody #grp-role { display: none; } /* only in the inspector card, next to the part it is for */
+.rolecard .rolelegend { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12.5px; }
+.rolecard .rolelegend span { display: inline-flex; align-items: center; gap: 6px; }

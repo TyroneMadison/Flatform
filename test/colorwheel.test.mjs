@@ -327,5 +327,6 @@ test('glb-pieces: app piece i is node + material slot in Blender (Body = Paint +
   const py = read('render/blender_turntable.py');
   assert.match(py, /def piece_slots\(meshes, piece\):/);
   assert.match(py, /if piece\.get\("source_material"\) in names:/, 'the slot is found by material name');
-  assert.match(read('server.mjs'), /const materials = locatePieces\(specs, where\);/);
+  assert.match(read('glb-pieces.mjs'), /return \{ materials: locatePieces\(specs, where\), groups: placed \};/);
+  assert.match(read('server.mjs'), /const materialsSpec = paintSpec\(paint, /, 'the server writes what paintSpec makes');
 });
