@@ -230,10 +230,10 @@ function renderingHtml() {
 
 function outputHtml() {
   const s = state.settings;
-  return `<div class="card glass"><h2 class="label">Output folder</h2>
-    <div class="field"><span class="flabel">Default output folder</span>
+  return `<div class="card glass"><h2 class="label">Where finished cars go</h2>
+    <div class="field"><span class="flabel">Send to Dud Rents and renders save here${s.outputRootIsDefault ? ' (the default handoff folder)' : ''}</span>
       <div class="inp mono" title="${esc(s.outputRoot)}">${s.outputRoot ? esc(s.outputRoot) : `<span class="muted">Not set · suggested ${esc(s.suggestedOutputRoot)}</span>`}</div>
-      <button class="btn ghostbtn" type="button" data-act="output">${icon('folder')}<span>Change</span></button></div>
+      <button class="btn ghostbtn" type="button" data-act="output">${icon('folder')}<span>Change folder</span></button></div>
     ${pathForm('outputField', 'outputRoot', 'Output folder', s.outputRoot || s.suggestedOutputRoot, s.suggestedOutputRoot)}
     <p class="fine">Each car gets its own folder inside it: frames, web sprite sheets, stills, model files and HANDOFF.md.</p>
   </div>`;

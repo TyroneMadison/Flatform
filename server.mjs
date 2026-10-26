@@ -146,6 +146,7 @@ export async function startServer({
   onWorkspaceSwitch = null, // called after the active workspace changes; startApp() restarts on the new folder
   onLowBalance, // (service, { balance, threshold }) when GET /api/spend finds a balance under its alert (main.mjs notifies)
   identifyApi, // (tests) the vision call car auto-identify makes when a vision key is set; never a real one here
+  defaultOutputRoot, // the app passes suggestedOutputRoot(): Send to Dud Rents and renders go there until Tyrone picks another folder
   basePath, // (tests, Sadie's branch) the local base path Generate Spin Set prepares with; realism.mjs stubs it
 }) {
   const MODELS = path.join(dataDir, 'models');
@@ -174,6 +175,10 @@ export async function startServer({
     spend: { thresholds: defaultThresholds() }, // low-balance alert per provider, in credits
   };
   const settings = { ...defaults, ...(existsSync(SETTINGS) ? JSON.parse(await readFile(SETTINGS, 'utf8')) : {}) };
+  // No folder picked yet: use the default handoff folder (made if missing). Not saved, so it stays "the default".
+  if (!settings.outputRoot && defaultOutputRoot) {
+    try { await mkdir(defaultOutputRoot, { recursive: true }); settings.outputRoot = path.resolve(defaultOutputRoot); settings.outputRootIsDefault = true; } catch { /* drive missing: the app asks for a folder */ }
+  }
   if (settings.defaultScene === 'gold') settings.defaultScene = 'ring';
   // v0.5: Showroom became the default scene. 'ring' was the old built-in default, so it moves over once.
   if (!settings.scenesV5) Object.assign(settings, { scenesV5: true, ...(settings.defaultScene === 'ring' && { defaultScene: 'showroom' }) });
@@ -798,7 +803,7 @@ export async function startServer({
       } else if (k === 'defaultScene') {
         if (!SCENES.includes(body.defaultScene)) throw new HttpError(400, 'Unknown scene');
         next.defaultScene = body.defaultScene;
-      } else if (k === 'outputRoot') next.outputRoot = body.outputRoot === '' ? '' : await checkOutputRoot(body.outputRoot);
+      } else if (k === 'outputRoot') { next.outputRoot = body.outputRoot === '' ? '' : await checkOutputRoot(body.outputRoot); next.outputRootIsDefault = false; }
       else if (k === 'lighting' || k === 'glass') {
         const v = k === 'lighting' ? cleanLighting(body.lighting, settings.lighting) : cleanGlass(body.glass, settings.glass);
         if (!v) throw new HttpError(400, `Bad ${k}`);

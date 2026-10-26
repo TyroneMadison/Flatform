@@ -279,3 +279,25 @@ test('Generate Spin Set: fake Blender gets the profile, frames and names match, 
     await app.close();
   }
 });
+
+test('Send to Dud Rents folder: defaults to the handoff folder, one POST changes it to any folder, choice persists', async () => {
+  const data = await tempDir();
+  const def = path.join(await tempDir(), 'car-360-pipeline', 'handoff');
+  const other = await tempDir();
+  let app = await startServer({ dataDir: data, defaultOutputRoot: def, keyStore: createKeyStore({ env: {} }) });
+  const get = async () => (await (await fetch(`http://127.0.0.1:${app.port}/api/settings`)).json());
+  try {
+    let s = await get();
+    assert.equal(s.outputRoot, path.resolve(def));
+    assert.equal(s.outputRootIsDefault, true);
+    assert.ok(existsSync(def), 'default folder is made');
+    const r = await fetch(`http://127.0.0.1:${app.port}/api/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outputRoot: other }) });
+    assert.equal(r.status, 200);
+    s = await get();
+    assert.equal(path.resolve(s.outputRoot), path.resolve(other));
+    assert.equal(s.outputRootIsDefault, false);
+  } finally { await app.close(); }
+  app = await startServer({ dataDir: data, defaultOutputRoot: def, keyStore: createKeyStore({ env: {} }) });
+  try { assert.equal(path.resolve((await (await fetch(`http://127.0.0.1:${app.port}/api/settings`)).json()).outputRoot), path.resolve(other), 'choice survives a restart'); }
+  finally { await app.close(); }
+});

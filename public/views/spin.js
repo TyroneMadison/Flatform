@@ -42,7 +42,8 @@ export function mount(el, { id }) {
     <div class="renderbar" id="bar" hidden><div><b id="barTitle"></b><span id="barSub" aria-live="polite"></span></div><div class="pbar big" role="progressbar" id="barBar"><i style="width:0"></i></div><div class="rb-act"><button class="btn ghostbtn" type="button" data-act="cancel">Cancel</button></div></div>
     <div class="rowhead"><h2 class="label">Frames (drag to reorder)</h2><div class="chips sm" id="frameTools"></div></div>
     <div class="strip" id="strip" role="listbox" aria-label="Frames" aria-multiselectable="true"></div>
-    <div class="sendrow"><button class="btn pri" type="button" data-act="send">${icon('upload')}<span>Send to Dud Rents</span></button><span class="muted">Goes to the handoff folder for the website.</span>
+    <div class="sendrow"><button class="btn pri" type="button" data-act="send">${icon('upload')}<span>Send to Dud Rents</span></button><span class="muted">Saves to <code class="mono" data-dest title="Where Send to Dud Rents saves">${esc(state.settings?.outputRoot || 'no folder yet')}</code></span>
+      <button class="btn sec" type="button" data-act="dest">${icon('folder')}<span>Change folder</span></button>
       <button class="btn ghostbtn" type="button" data-act="open" ${native ? '' : 'disabled'}>${icon('folder')}<span>Open folder</span></button></div>
     <details class="adjust" id="adjust"><summary>Adjust (more options)</summary><div id="adjustBody"></div></details>
   </section>
@@ -193,6 +194,7 @@ async function onClick(e) {
   if (act === 'build') await buildFromPhotos();
   if (act === 'generate') await generate();
   if (act === 'send') await sendToDud();
+  if (act === 'dest') await changeDest();
   if (act === 'open') native?.openPath(m.renders.outDir).catch((err) => toast(err.message));
   if (act === 'cancel' && job) { job.cancelled = true; if (m) api(`/api/spin/${m.id}`, { method: 'DELETE' }).catch(() => {}); }
   update();
@@ -285,7 +287,7 @@ async function buildFromPhotos() {
   if (running() || !photos.length) return;
   if (!m) await confirmCar();
   if (!m) return;
-  if (!state.settings?.outputRoot) return toast('Choose an output folder in Settings first');
+  if (!state.settings?.outputRoot) return toast('Pick where to save first: tap Change folder');
   job = { phase: 'Starting', frame: 0, total: 0, done: false };
   update();
   try {
@@ -312,7 +314,7 @@ async function buildFromPhotos() {
 
 async function generate() {
   if (running() || !hasModel()) return;
-  if (!state.settings?.outputRoot) return toast('Choose an output folder in Settings first');
+  if (!state.settings?.outputRoot) return toast('Pick where to save first: tap Change folder');
   job = { phase: 'Max realism · starting Blender', frame: 0, total: 0, done: false };
   update();
   try {
@@ -344,6 +346,16 @@ async function generate() {
     toast(`${m.name}: spin set ready`, 'info');
   } catch (err) { job.done = true; if (!job.cancelled) { job.error = err.message; toast(err.message); } }
   refresh();
+}
+
+// One click: pick any folder on any drive. Saved in settings, change it anytime.
+async function changeDest() {
+  const dir = native ? await native.pickFolder() : prompt('Folder to save to (full path)', state.settings?.outputRoot || '');
+  if (!dir) return;
+  try { state.settings = await send('/api/settings', 'POST', { outputRoot: dir }); } catch (err) { return toast(err.message); }
+  const el = $('[data-dest]', root); if (el) el.textContent = state.settings.outputRoot;
+  announce(`Send to Dud Rents now saves to ${state.settings.outputRoot}`);
+  toast(`Saving to ${state.settings.outputRoot}`, 'info');
 }
 
 async function sendToDud() {

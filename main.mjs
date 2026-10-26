@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startApp } from './server.mjs';
+import { startApp, suggestedOutputRoot } from './server.mjs';
 import { createKeyStore } from './keys.mjs';
 import { updateOptions } from './updates.mjs';
 import { PROVIDERS } from './public/lib/engines.js';
@@ -145,6 +145,7 @@ app.whenReady().then(async () => {
   });
   const { port } = await startApp({
     dataDir: path.join(app.getPath('userData'), 'library'),
+    defaultOutputRoot: suggestedOutputRoot(), // E:\Claude Stuff\car-360-pipeline\handoff on Tyrone's PC
     keyStore,
     // Looks for a newer release on GitHub; Download links open in the browser through the window-open handler below.
     ...updateOptions(process.env),
