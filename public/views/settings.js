@@ -9,7 +9,8 @@ import { PRESETS } from '../lib/studio.js';
 import { EXTRA, EXTRA_HTML, wireExtra } from './settings-extra.js';
 
 const SCENES = Object.entries(PRESETS).map(([k, p]) => [k, k === 'cyclorama' ? 'White Cyc Studio (default)' : k === 'miami' ? 'Miami street at night (your HDRI)' : p.label]);
-const SECTIONS = [['providers', 'Providers'], ['spend', 'Spend'], ['rendering', 'Rendering'], ['output', 'Output folder'], ['appearance', 'Appearance'], ['history', 'History'], ...EXTRA, ['about', 'About']];
+// The tabs, in plain words (v3): Accounts, Look, Rendering, Folders, Version history, Usage, Shortcuts, Backup, Plugins, About.
+const SECTIONS = [['providers', 'Accounts'], ['appearance', 'Look'], ['rendering', 'Rendering'], ['output', 'Folders'], ['history', 'Version history'], ['spend', 'Usage'], ...EXTRA, ['about', 'About and updates']];
 const RELEASES = 'https://github.com/TyroneMadison/Flatform/releases';
 const results = {}; // provider → { ok, text } from the last Test or key change
 let root;
@@ -24,7 +25,7 @@ export function mount(el, { id }) {
   el.innerHTML = `<h1 class="ph">Settings</h1>
   <p class="sub">Providers and keys. Paste a key once; Flatform encrypts it on this computer.</p>
   <div class="set">
-    <nav class="sn" aria-label="Settings sections">${SECTIONS.map(([k, label]) => `<a href="#/settings/${k}"${k === section ? ' class="on" aria-current="page"' : ''}>${label}</a>`).join('')}</nav>
+    <nav class="sn" aria-label="Settings sections">${SECTIONS.map(([k, label]) => `<a href="#/settings/${k}" title="${label}"${k === section ? ' class="on" aria-current="page"' : ''}>${label}</a>`).join('')}</nav>
     <section class="settings" id="settings"></section>
   </div>`;
   el.addEventListener('click', onClick);
@@ -290,7 +291,8 @@ function appearanceHtml() {
     <div class="chips" role="radiogroup" aria-label="Theme">${Object.entries(THEMES).map(([k, p]) => `<button class="chip" type="button" role="radio" aria-checked="${th.preset === k}" data-act="theme" data-value="${k}"><span class="tswatch" style="background:${p.primary}"></span>${esc(p.label)}</button>`).join('')}</div>
     ${['primary', 'secondary', 'accent'].map((k) => `<div class="field"><span class="flabel">${k[0].toUpperCase() + k.slice(1)}</span><input class="inp" type="color" data-theme-color="${k}" value="${c[k]}" aria-label="${k} color"></div>`).join('')}
     <p class="fine">Text contrast ${ratio.toFixed(1)}:1${ratio >= AAA ? ' (meets WCAG AAA)' : ''}</p>
-    <button class="btn ghostbtn" type="button" data-act="theme-reset">Reset to Flatform Dark</button>
+    <button class="btn ghostbtn" type="button" data-act="theme-reset" title="Go back to the standard dark look">Reset to Flatform Dark</button>
+    <label class="tg" title="Stops moving effects and makes every animation instant. Also on when your computer asks for less motion."><span>Reduce motion<small>No pulsing, spinning or sliding</small></span><input class="sw" type="checkbox" role="switch" id="reduceMotion" ${document.body.classList.contains('rm') ? 'checked' : ''}></label>
   </div>`;
 }
 

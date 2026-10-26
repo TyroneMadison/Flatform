@@ -52,7 +52,7 @@ export function installHotkeys(ctx, doc = document) {
   el.className = 'hk'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Keyboard shortcuts'); el.hidden = true;
   doc.body.append(el);
   let ctrlTimer = null, peek = false;
-  const view = (sel) => doc.querySelector(`#view ${sel}`);
+  const view = (sel) => doc.querySelector(`#view ${sel}`) || doc.querySelector(`#top ${sel}`); // Undo and Redo sit in the top bar
   const show = (fromCtrl) => {
     const prefs = loadKeys(); if (fromCtrl && !prefs.show) return;
     peek = fromCtrl;

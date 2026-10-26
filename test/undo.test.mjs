@@ -108,13 +108,14 @@ const paint = readFileSync(new URL('../public/views/compose-paint.js', import.me
 const base = readFileSync(new URL('../public/styles/base.css', import.meta.url), 'utf8');
 const screens = readFileSync(new URL('../public/styles/screens.css', import.meta.url), 'utf8');
 
-test('compose: Undo and Redo sit in the screen header, start disabled, and the raw history list is gone', () => {
-  const header = compose.slice(compose.indexOf('class="comp-top"'), compose.indexOf('<section class="compose">'));
+test('compose: Undo and Redo sit in the top bar (v3), start disabled, and the raw history list is gone', () => {
+  const header = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8').match(/<header class="topbar"[\s\S]*?<\/header>/)[0];
   assert.match(header, /id="undoBtn"[^>]*disabled/);
   assert.match(header, /id="redoBtn"[^>]*disabled/);
+  assert.match(compose, /\$\('#undoBtn'\)\.addEventListener\('click', \(\) => stepHistory\(false\), \{ signal \}\)/, 'wired with the screen signal, so it stops on unmount');
   assert.doesNotMatch(compose, /histlist|hist\.list\(/);
   const keys = readFileSync(new URL('../public/lib/shortcuts.js', import.meta.url), 'utf8');
-  assert.match(keys, /id: 'undo'.*click: '#undoBtn'/, 'Ctrl+Z (one global key handler) presses the header Undo');
+  assert.match(keys, /id: 'undo'.*click: '#undoBtn'/, 'Ctrl+Z (one global key handler) presses the top bar Undo');
   assert.match(keys, /id: 'redo'.*click: '#redoBtn'/);
   assert.doesNotMatch(compose, /document\.addEventListener\('keydown'/, 'no second Ctrl+Z handler, or one press would undo twice');
   assert.match(compose, /signal/, 'listeners are removed on unmount');

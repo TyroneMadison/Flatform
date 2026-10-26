@@ -130,7 +130,7 @@ function side(m) {
   if (!m) return '<p class="muted">Select a model to see what you can do with it.</p>';
   const ready = m.status === 'ready';
   const rendered = isRendered(m) ? `rendered ${renderedTurns(m).join(' and ')}` : 'not rendered yet';
-  const sub = [statusText(m), engineLabel(m), `${m.versions.length} version${m.versions.length > 1 ? 's' : ''}`, ready && rendered].filter(Boolean).join(' Â· ');
+  const sub = [statusText(m), engineLabel(m), `${m.versions.length} version${m.versions.length > 1 ? 's' : ''}`, ready && rendered].filter(Boolean).join(' · ');
   const tripo = providerOf(m) === 'tripo';
   return `
     <div class="ls-th"><div class="stage ${m.renders?.poster ? 's-ring' : 's-clear'}">${m.renders?.poster ? '' : '<div class="checker"></div>'}${thumbOf(m) ? `<img class="thumb${m.renders?.poster ? '' : ' contain'}" src="${thumbOf(m)}" alt="${esc(m.name)}">` : ''}</div></div>

@@ -108,6 +108,13 @@ export function resetRenderOptions() {
   return () => apply(before.opts || freshOpts(), before.lighting, before.glass);
 }
 
+/** A render idea (lib/render-ideas.js) ticks what to render: { still, t360, t180, showroom, studio, transparent }. */
+export function pickRender(patch) {
+  if (!opts) return;
+  Object.assign(opts, patch);
+  if (root?.isConnected) renderLeft();
+}
+
 export function updateRender() {
   if (!root?.isConnected || !m) return;
   m = findModel(m.id) || m;
@@ -211,7 +218,6 @@ function renderRight() {
       <button class="btn pri" type="button" data-act="render" title="${busy ? 'Something is rendering: this waits in the queue and starts next' : 'Start rendering what you picked on the left'}">${icon('film')}<span>${busy ? 'Add to queue' : 'Render to handoff folder'}</span></button>
       <button class="btn ghostbtn" type="button" data-act="open" title="Open the handoff folder on this computer" ${native && (m.renders?.outDir || s.outputRoot) ? '' : 'disabled'}>${icon('folder')}<span>Open folder</span></button>
     </div>
-    ${trayHtml()}
     <details class="ra-more"><summary title="What ends up in the handoff folder">What’s in the folder</summary>
     <div class="tree">
       <div class="tr-l">${icon('folder', 14)}<div><code>web${d}</code><span>360 + 180 sheets · 512 and 256 px · sprite json · posters</span></div></div>
@@ -220,6 +226,7 @@ function renderRight() {
       <div class="tr-l">${icon('cube', 14)}<div><code>HANDOFF.md</code><span>What goes where, for the web team</span></div></div>
     </div>
     <div class="dest"><h3>Where each piece goes</h3>${P.DESTINATIONS.map((x) => `<p><b>${x.label}</b>${esc(x.use)}</p>`).join('')}</div></details>`;
+  drawTray();
   const box = $('#right', root);
   if (box.dataset.html !== html && !box.contains(document.activeElement?.id === 'folderIn' ? document.activeElement : null)) {
     const open = box.querySelector('.ra-more')?.open;
@@ -238,11 +245,30 @@ function trayHtml() {
   return `<div class="tray" aria-label="Queue"><h3>Queue <button class="link" type="button" data-act="clear-tray" title="Clear finished renders from this list">Clear finished</button></h3><ol>${queue.map(row).join('')}</ol></div>`;
 }
 
+// The queue tray, floating bottom right on every screen (index.html #queueTray). It opens by itself when a render
+// starts; ✕ hides it and the top bar's render pill opens it again.
+let trayShownFor = null;
+function drawTray() {
+  const tray = document.getElementById('queueTray');
+  if (!tray) return;
+  const html = queue.length ? `<header class="tc-head"><h2>Render queue</h2><button class="btn icon ghostbtn" type="button" data-act="hide-tray" title="Hide the queue. The render pill in the top bar opens it again." aria-label="Hide the queue">✕</button></header>${trayHtml()}` : '';
+  if (tray.dataset.html !== html) { tray.dataset.html = html; tray.innerHTML = html; }
+  tray.onclick = (e) => (e.target.closest('[data-act="hide-tray"]') ? (tray.hidden = true) : onClick(e));
+  if (!queue.length) tray.hidden = true;
+  else if (running() && trayShownFor !== job) { trayShownFor = job; tray.hidden = false; }
+}
+
 function renderBar() {
   const other = job && job.model.id !== m?.id;
   const light = statusLight(job, waitingCount(queue));
   setRenderLight(light, job?.model.id); // the top bar shows it on every screen
+  drawTray();
   document.getElementById('vp')?.classList.toggle('rendering', running()); // the Compose viewport glows while rendering
+  const tag = document.getElementById('renderTag'); // "Rendering this view · frame 33 of 72"
+  if (tag) {
+    tag.hidden = !(running() && onScreen());
+    if (!tag.hidden) tag.textContent = job.total ? `Rendering this view · frame ${Math.min(job.frame + 1, job.total)} of ${job.total}${job.paused ? ' · paused' : ''}` : 'Rendering this view';
+  }
   const bar = root?.isConnected && $('#rbBar', root);
   if (!bar) return;
   const pct = job?.done && !job.error && !job.cancelled ? 100 : light.pct;
@@ -471,7 +497,7 @@ async function start(task) {
     Object.assign(task, { status: 'done', outDir: started.outDir, file: resultFile({ slug, still: o.still, t360: o.t360, t180: o.t180, looks, yaw: job.yaw }) });
     progress(`Saved to ${started.outDir}`, job.total, job.total);
     announce(`${model.name}: render finished`);
-    toast(`${model.name} is rendered. It's in Library and your handoff folder.`, 'info', [
+    toast(`${model.name} is rendered. It's in Library and your handoff folder.`, 'ok', [
       { label: 'Open', title: 'See the finished render in Library', run: () => go(`#/model/${model.id}`) },
       ...(native ? [{ label: 'Show in folder', title: 'Show the finished file on this computer', run: () => reveal(task) }] : []),
     ]);

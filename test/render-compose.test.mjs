@@ -76,7 +76,8 @@ test('wiring: no Render tab or Renders rail entry, old links land in Compose', a
   const compose = await readFile('public/views/compose.js', 'utf8');
   assert.match(compose, /id="renderArea"/);
   assert.match(compose, /mountRender\(/);
-  assert.equal((compose.match(/data-render=/g) || []).length, 1, 'one Render button in the Compose top bar');
+  assert.equal((compose.match(/data-render=/g) || []).length, 0, 'v3: Render is a dock tool, not a second button');
+  assert.match(await readFile('public/lib/stage.js', 'utf8'), /render: \['renderIdeas', 'renderArea'\]/, 'the Render tool shows the render area');
 });
 
 test('Compose render area keeps every old render option, with a tooltip on each control', async () => {

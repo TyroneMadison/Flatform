@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/styles/screens.css">
 <link rel="stylesheet" href="/styles/sadie.css">
 <link rel="stylesheet" href="/styles/nova.css">
+<link rel="stylesheet" href="/styles/stage.css">
 <script type="importmap">
 { "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/", "three/examples/jsm/": "/vendor/three/examples/jsm/", "three-mesh-bvh": "/vendor/three-mesh-bvh/src/index.js", "three-gpu-pathtracer": "/vendor/three-gpu-pathtracer/src/index.js" } }
 </script>
@@ -16,26 +17,43 @@
 </head>
 <body>
 <div class="win">
-  <header class="titlebar">
-    <div class="tt"><img src="/img/icon-small.svg" alt="" width="18" height="18">Flatform</div>
-    <div class="tr tstat" role="group" aria-label="Status">
-      <button class="tl-light" type="button" id="renderLight" data-light="idle" title="Renders you start in Compose show their progress here"><span class="dot idle"></span><span class="rl-t">Nothing rendering</span></button>
-      <span class="tl-light" id="blenderLight" title="Looking for Blender on this computer"><span class="dot wait"></span>Blender</span>
-      <a class="tl-light" id="accountStatus" href="#/settings/providers" title="Connecting"><span class="dot wait"></span>Tripo</a>
-      <span class="tl-ver" id="appVersion" title="The Flatform version on this computer. Settings, About checks for a newer one."></span>
+  <!-- v3 "Stage": one top bar, the stage below it, a step trail at the bottom and floating cards that only show when needed. -->
+  <header class="topbar" id="top">
+    <a class="tb-logo" href="#/drop" title="Flatform: start something new"><img src="/img/icon-small.svg" alt="" width="22" height="22"><span>Flatform</span></a>
+    <div class="wspill" id="wsPill"></div>
+    <div class="tb-seg" id="modeSeg" role="radiogroup" aria-label="What you are making">
+      <button type="button" role="radio" data-mode="car" aria-checked="true" title="Making cars: the steps and words are about cars">Car</button>
+      <button type="button" role="radio" data-mode="warframe" aria-checked="false" title="Making Warframes: adds templates, poses and the TennoGen check">Warframe</button>
     </div>
+    <div class="tb-group" role="group" aria-label="Undo and redo">
+      <button class="tb-btn" type="button" id="undoBtn" title="Undo the last change (Ctrl+Z)" aria-label="Undo" aria-keyshortcuts="Control+Z" disabled><span class="tb-ic" data-icon="undo"></span><span class="tb-l">Undo</span></button>
+      <button class="tb-btn" type="button" id="redoBtn" title="Bring back what you undid (Ctrl+Y)" aria-label="Redo" aria-keyshortcuts="Control+Shift+Z Control+Y" disabled><span class="tb-ic" data-icon="redo"></span><span class="tb-l">Redo</span></button>
+    </div>
+    <button class="tb-btn plain" type="button" id="savedNote" title="Everything saves by itself. Click to restore your last session." aria-label="Saved. Click to restore your last session"><span class="tb-ic" data-icon="check"></span><span class="tb-l">Saved</span></button>
+    <span class="tb-sp"></span>
+    <button class="tb-pill" type="button" id="renderLight" data-light="idle" title="Renders you start in Scene and render show their progress here"><svg class="ring" viewBox="0 0 36 36" aria-hidden="true"><circle class="t" cx="18" cy="18" r="15"/><circle class="p" cx="18" cy="18" r="15" pathLength="100" stroke-dasharray="0 100"/></svg><span class="rl-t">Nothing rendering</span></button>
+    <div class="tb-conn" role="group" aria-label="Connections">
+      <button class="tb-dot" type="button" id="accountStatus" title="Connecting"><span class="dot wait"></span><span class="tb-l">Tripo</span></button>
+      <button class="tb-dot" type="button" id="blenderLight" title="Looking for Blender on this computer"><span class="dot wait"></span><span class="tb-l">Blender · GPU</span></button>
+    </div>
+    <button class="tb-btn" type="button" id="searchBtn" title="Find any action, setting or world (Ctrl+K)" aria-label="Search, Ctrl+K"><span class="tb-ic" data-icon="search"></span><span class="tb-l">Search</span><kbd class="tb-l">Ctrl K</kbd></button>
+    <a class="tb-btn" id="libraryBtn" href="#/library" title="Everything you have made, and your finished renders"><span class="tb-ic" data-icon="library"></span><span class="tb-l">Library</span></a>
+    <button class="tb-btn" type="button" id="shareBtn" title="Send someone a link to look at your model in 3D"><span class="tb-ic" data-icon="external"></span><span class="tb-l">Share</span></button>
+    <button class="tb-btn" type="button" id="presentBtn" title="Show a client: a clean full screen that turns slowly (Ctrl+Shift+P, Esc to end)"><span class="tb-ic" data-icon="eye"></span><span class="tb-l">Show a client</span></button>
+    <a class="tb-btn" id="settingsBtn" href="#/settings" title="Settings: accounts, look, folders, updates, usage and shortcuts" aria-label="Settings"><span class="tb-ic" data-icon="settings"></span></a>
+    <span class="tb-ver" id="appVersion" title="The Flatform version on this computer. Settings, About checks for a newer one."></span>
   </header>
-  <div><!-- banners share the frame's one banner row -->
+  <div class="banners"><!-- notes that need an answer share one row under the top bar -->
   <section class="update" id="update" aria-labelledby="updateTitle" hidden>
     <p class="ut"><b id="updateTitle"></b><span id="updateNote"></span></p>
-    <a class="btn sm pri" id="updateDownload" href="https://github.com/TyroneMadison/Flatform/releases/latest" target="_blank" rel="noopener">Download</a>
-    <button class="btn sm ghostbtn" type="button" id="updateLater">Later</button>
-    <button class="btn sm ghostbtn" type="button" id="updateSkip">Skip this version</button>
+    <a class="btn sm pri" id="updateDownload" href="https://github.com/TyroneMadison/Flatform/releases/latest" target="_blank" rel="noopener" title="Download the new version">Download</a>
+    <button class="btn sm ghostbtn" type="button" id="updateLater" title="Ask me again later">Later</button>
+    <button class="btn sm ghostbtn" type="button" id="updateSkip" title="Do not ask about this version again">Skip this version</button>
   </section>
   <section class="update" id="lowBalance" aria-labelledby="lowTitle" hidden>
     <p class="ut"><b id="lowTitle"></b><span id="lowNote"></span></p>
-    <button class="btn sm pri" type="button" id="lowTopUp">Top up</button>
-    <button class="btn sm ghostbtn" type="button" id="lowLater">Later</button>
+    <button class="btn sm pri" type="button" id="lowTopUp" title="Open the page where you buy more credits">Top up</button>
+    <button class="btn sm ghostbtn" type="button" id="lowLater" title="Hide this until Flatform starts again">Later</button>
   </section>
   <section class="update" id="restoreBar" aria-labelledby="restoreTitle" hidden>
     <p class="ut"><b id="restoreTitle">Flatform closed unexpectedly</b><span id="restoreNote"></span></p>
@@ -43,25 +61,24 @@
     <button class="btn sm ghostbtn" type="button" id="restoreNo" title="Start fresh. Your library and renders are safe either way.">No thanks</button>
   </section>
   </div>
-  <div class="body">
-    <nav class="rail" aria-label="Main">
-      <img class="lgimg" src="/img/icon.svg" alt="Flatform">
-      <div class="wspill" id="wsPill"></div>
-      <div id="railLinks"></div>
-      <a class="ri acct" id="railAccount" href="#/settings/providers"><span class="dot wait"></span><span class="acctname">Tripo</span></a>
-    </nav>
+  <div class="stagearea" id="stageArea">
     <main class="content" id="view" tabindex="-1"></main>
+    <nav class="dock" id="dock" aria-label="Tools for this step" hidden></nav>
+    <section class="qtray card" id="queueTray" aria-label="Render queue" hidden></section>
+    <button class="sheetclose" type="button" id="sheetClose" title="Close and go back (Esc)" aria-label="Close" hidden><span data-icon="close"></span></button>
+    <nav class="journey" id="journey" aria-label="Steps"></nav>
   </div>
 </div>
 
 <dialog id="keyDialog" aria-labelledby="keyTitle">
   <form id="keyForm" method="dialog">
     <h2 id="keyTitle">Connect your Tripo account</h2>
-    <p class="muted">Paste an API key from <a id="keyLink" href="https://developers.tripo3d.com/en/keys" target="_blank" rel="noopener">developers.tripo3d.com/en/keys</a>. It is stored encrypted on this computer and is only sent to <span id="keyTo">Tripo</span>.</p>
-    <label class="field-label" for="keyInput">API key</label>
-    <input id="keyInput" class="inp mono" type="password" placeholder="tsk_…" autocomplete="off" spellcheck="false" required autofocus>
+    <p class="muted">Paste your Tripo key (a long code that starts with <code>tsk_</code>). It stays on this computer, stored safely, and is only sent to <span id="keyTo">Tripo</span>.</p>
+    <p class="muted"><a id="keyLink" href="https://developers.tripo3d.com/en/keys" target="_blank" rel="noopener" title="Opens the page where you make and copy your key">Where do I find this?</a> Sign in there, press Create, then copy the key and paste it below.</p>
+    <label class="field-label" for="keyInput">Your key</label>
+    <input id="keyInput" class="inp mono" type="password" placeholder="tsk_…" autocomplete="off" spellcheck="false" required autofocus title="Paste your key here">
     <div id="keyError" class="form-error" role="alert"></div>
-    <div class="row"><button class="btn ghostbtn" type="button" id="keyCancel">Cancel</button><button class="btn pri" type="submit">Save key</button></div>
+    <div class="row"><button class="btn ghostbtn" type="button" id="keyCancel" title="Close without saving">Cancel</button><button class="btn pri" type="submit" title="Check the key and save it">Save key</button></div>
   </form>
 </dialog>
 
@@ -69,17 +86,17 @@
   <form method="dialog">
     <h2 id="confirmTitle"></h2>
     <p class="muted" id="confirmText"></p>
-    <div class="row"><button class="btn ghostbtn" value="cancel">Cancel</button><button class="btn dangerbtn" value="ok" id="confirmOk"></button></div>
+    <div class="row"><button class="btn ghostbtn" value="cancel" title="Do nothing">Cancel</button><button class="btn dangerbtn" value="ok" id="confirmOk" title="Yes, do it"></button></div>
   </form>
 </dialog>
 
 <dialog id="palette" class="palette" aria-label="Find anything">
-  <input id="paletteInput" class="inp" type="search" placeholder="Type to find a screen or something you worked on" title="Type a few letters, then press Enter. Esc closes." autocomplete="off" spellcheck="false" role="combobox" aria-controls="paletteList" aria-expanded="true">
+  <input id="paletteInput" class="inp" type="search" placeholder="Type an action, a setting or a world" title="Type a few letters, then press Enter. Esc closes." autocomplete="off" spellcheck="false" role="combobox" aria-controls="paletteList" aria-expanded="true">
   <ul id="paletteList" role="listbox" aria-label="Results"></ul>
   <p class="fine">Up and down to choose · Enter to open · Esc to close</p>
 </dialog>
 
-<div id="toast" role="alert" hidden></div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
 <div id="live" class="sr-only" aria-live="polite"></div>
 <input id="filePicker" type="file" accept="image/png,image/jpeg,image/heic,image/heif,.heic,.heif,.glb,.gltf,.fbx,.obj,.usdz" multiple hidden>
 </body>

@@ -35,7 +35,7 @@ export function mount(el, { id }) {
   const provider = state.settings?.provider || 'tripo';
   try { setup = normalize({ ...(model && p.setup?.engine ? p.setup : savedSetup(provider)), mode: p.mode }); } catch { setup = presetConfig(provider, 'balanced', p.mode); }
   openGroup = null;
-  el.innerHTML = `${stepper('generate', model)}
+  el.innerHTML = `
   <section class="setup">
     <div class="su-left" id="suLeft"></div>
     <aside class="su-panel glass" aria-label="Generation setup">

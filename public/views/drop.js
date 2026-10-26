@@ -1,7 +1,7 @@
 // Drop: the big drop zone, tips with the next setup and the real balance, and recent models.
 // Photos go on to the setup screen, where the provider and quality are chosen before anything is paid for.
 // 3D models (GLB, GLTF, FBX, OBJ, USDZ) skip Generate and open in Compose (app.js addFiles).
-import { $, esc, state, stepper, addFiles, openPicker, pasteFromClipboard, creditsText, savedSetup, setupLabel, activeWorkspace, costOf, thumbOf, statusText, statusClass, recentItems, openRecent } from '../app.js';
+import { $, esc, state, addFiles, openPicker, pasteFromClipboard, creditsText, savedSetup, setupLabel, activeWorkspace, costOf, thumbOf, statusText, statusClass, recentItems, openRecent } from '../app.js';
 import { icon } from '../lib/icons.js';
 import { timeAgo } from '../lib/session.js';
 
@@ -9,17 +9,20 @@ let root;
 
 export function mount(el) {
   root = el;
-  const car = activeWorkspace()?.kind === 'car';
-  el.innerHTML = `${stepper('drop')}
+  // The Car / Warframe switch in the top bar changes the words, and Warframe mode adds From template.
+  const wf = state.mode === 'warframe';
+  el.innerHTML = `
   <section class="dropwrap">
-    <div class="dropzone glass${car ? ' carhome' : ''}" id="dropzone">
+    <div class="dropzone glass breathe" id="dropzone">
       <div class="dz-hit" role="button" tabindex="0" aria-label="Choose photos, or drop them here" aria-describedby="dzLead"></div>
       <div class="dz-orb" aria-hidden="true"><div class="dz-ring"></div><div class="dz-ring r2"></div><div class="ghost" id="ghost"></div></div>
-      ${car ? '<h1>Drag pictures here</h1><p class="dz-or">or</p><button class="btn pri huge" type="button" data-act="add">' + icon('plus') + '<span>Add new picture</span></button>' : '<h1>Drop a photo. Get a 3D car.</h1>'}
-      <p class="lead" id="dzLead">Drop photos here or choose them. Next you pick the provider and quality, then each car becomes a 3D model you can place in any scene. Already have a 3D model? Drop it too.</p>
+      <h1>${wf ? 'Drop a picture. Get a 3D Warframe.' : 'Drop a photo. Get a 3D car.'}</h1>
+      <p class="lead" id="dzLead">One clear subject, keep the whole ${wf ? 'Warframe' : 'car'} in view. Nothing is sent or paid for until you press Generate. Already have a 3D model? Drop it too.</p>
       <div class="dz-actions">
-        <button class="btn pri" type="button" data-act="pick">${icon('upload')}<span>Choose photos or a model</span></button>
-        <button class="btn ghostbtn" type="button" data-act="paste"><span>Paste from clipboard</span></button>
+        <button class="btn pri big" type="button" data-act="pick" title="Pick photos (PNG, JPEG or HEIC) or a 3D model from this computer">${icon('upload')}<span>Choose photos</span></button>
+        <button class="btn ghostbtn big" type="button" data-act="paste" title="Paste a photo you copied (Ctrl+V)"><span>Paste</span><kbd>Ctrl V</kbd></button>
+        <a class="btn ghostbtn big" href="#/library" title="Open something you made before">Open library</a>
+        ${wf ? '<a class="btn ghostbtn big" href="#/warframe" title="Start from a Warframe template">From template</a>' : ''}
       </div>
       <div class="dz-meta"><span>Photos: PNG, JPEG or HEIC, up to 20 MB</span><span>Models: GLB, GLTF, FBX, OBJ, USDZ</span><span>One clear subject</span></div>
       <p class="dz-status" id="dzStatus" aria-live="polite"></p>
@@ -38,7 +41,7 @@ export function mount(el) {
   const hot = (on) => {
     zone.classList.toggle('hot', on);
     $('#dzLead', el).textContent = on ? 'Release to set it up. Nothing is sent until you press Generate.'
-      : 'Drop photos here or choose them. Next you pick the provider and quality, then each car becomes a 3D model you can place in any scene. Already have a 3D model? Drop it too.';
+      : `One clear subject, keep the whole ${wf ? 'Warframe' : 'car'} in view. Nothing is sent or paid for until you press Generate. Already have a 3D model? Drop it too.`;
   };
   zone.addEventListener('dragover', (e) => { e.preventDefault(); hot(true); });
   zone.addEventListener('dragleave', (e) => { if (!zone.contains(e.relatedTarget)) hot(false); });
@@ -46,7 +49,6 @@ export function mount(el) {
   const hit = $('.dz-hit', el);
   hit.addEventListener('click', () => openPicker());
   hit.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPicker(); } });
-  el.querySelector('[data-act=add]')?.addEventListener('click', () => openPicker());
   el.querySelector('[data-act=pick]').addEventListener('click', () => openPicker());
   el.querySelector('[data-act=paste]').addEventListener('click', pasteFromClipboard);
   $('#resume', el).addEventListener('click', (e) => {

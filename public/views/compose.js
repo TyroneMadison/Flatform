@@ -1,10 +1,14 @@
-// Compose: the scene composer, and the model's own panel (versions, approve, regenerate, clean up; this used to be
-// the Review step). One Three.js studio, the scene presets (Showroom first), an inspector and a turntable timeline.
+// Compose ("Scene and render", step 3 of the v3 Stage): the 3D view fills the screen. The dock on the left picks a
+// tool (World, Look, Light, Camera, Pose or Car parts, Tools, Render) and one floating card shows only that tool's
+// groups (lib/stage.js SCENE_GROUPS). Clicking a part of the model opens the inspector card on the right.
 // The scene is saved per model (scene.json next to the model) so a render reproduces it exactly.
 import { createHistory } from '../lib/history.js';
 import { keyOf } from '../lib/shortcuts.js';
 import { dimensions, gridSpec, REFERENCES } from '../lib/grid.js';
-import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy, setupFor, engineLabel, activeWorkspace, confirmDialog } from '../app.js';
+import { $, $$, esc, state, api, send, toast, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy, setupFor, engineLabel, activeWorkspace, confirmDialog, setHumanoid, restoreLastSession, pickDock, go } from '../app.js';
+import { SCENE_GROUPS, shows, dockFor, TOOL_TIPS, changeName } from '../lib/stage.js';
+import { ideasFor, applyIdea } from '../lib/render-ideas.js';
+import { modelInfo } from '../lib/rig.js';
 import { icon } from '../lib/icons.js';
 import { FRAMES, HALF, STEP, pad3, LOOKS, ENVIRONMENTS } from '../lib/pipeline.js';
 import { Studio, PRESETS, CAMERAS, VIEWS, defaultScene, lookOf } from '../lib/studio.js';
@@ -14,10 +18,10 @@ import { initTestRig, renderTestRigGroup, onTestRigClick, stopTestRig } from './
 import { initTools, renderToolsGroup, onToolsClick, onToolsChange, onCanvasClick, onToolsKey } from './compose-tools.js';
 import { initPath, renderPathGroup, onPathClick, onPathChange } from './compose-path.js';
 import { initLighting, renderLightingGroup, onLightingClick } from './compose-lighting.js';
-import { mountRender, updateRender, resetRenderOptions } from './compose-render.js';
+import { mountRender, updateRender, resetRenderOptions, pickRender } from './compose-render.js';
 import { initSession, noteEdit, stopSession, markSaved } from './compose-session.js';
 import { resetScene } from '../lib/session.js';
-import { initPaint, renderPaintGroups, afterRender, onPaintClick, onPaintInput, onPaintChange, selectPiece, onPaintDragStart, onTextureDrop, onDecalCanvasClick } from './compose-paint.js';
+import { initPaint, renderPaintGroups, afterRender, onPaintClick, onPaintInput, onPaintChange, selectPiece, selectedPiece, onPaintDragStart, onTextureDrop, onDecalCanvasClick } from './compose-paint.js';
 
 let root;
 let m;
@@ -33,6 +37,7 @@ let playing = null;
 let observer;
 let saveTimer;
 let raf;
+let inspOpen = false; // the inspector card on the right, open after a click on a part
 
 const fixed = (n, d = 2) => Number(n).toFixed(d);
 const level = (v) => (v <= 0.02 ? 'Off' : v < 0.35 ? 'Soft' : v < 0.7 ? 'Medium' : 'Strong');
@@ -48,7 +53,7 @@ export async function mount(el, { id }) {
   m = findModel(id);
   frame = state.frames[id] ?? 0;
   if (!m || m.status !== 'ready') {
-    el.innerHTML = `${stepper('compose', m)}<p class="muted">${m ? 'This model is not ready yet.' : 'Pick a model from the library first.'} <a class="link" href="${m ? `#/generate/${m.id}` : '#/library'}">${m ? 'Show progress' : 'Open library'}</a></p>`;
+    el.innerHTML = `<p class="muted stagenote">${m ? 'This model is not ready yet.' : 'Pick a model from the library first.'} <a class="link" href="${m ? `#/generate/${m.id}` : '#/library'}">${m ? 'Show progress' : 'Open library'}</a></p>`;
     return;
   }
   scene = { ...baseScene(), ...m.scene };
@@ -61,83 +66,74 @@ export async function mount(el, { id }) {
   initPath({ scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initLighting({ scene: () => scene, studio: () => studio, change, renderInspector, modelUrl: () => (m?.glb ? fileUrl(m, m.glb) : null) });
   el.innerHTML = `
-  <div class="comp-top">${stepper('compose', m)}
-    <div class="ctop-act">
-      <span class="savednote" id="savedNote" role="status" title="Flatform saves your scene by itself as you work and keeps a few backups."></span>
-      <div class="undo-pair" role="group" aria-label="Undo and redo">
-        <button class="btn icon ghostbtn" type="button" data-act="undo" id="undoBtn" title="Undo the last change (${keyOf('undo')})" aria-label="Undo" aria-keyshortcuts="Control+Z" disabled>${icon('undo')}</button>
-        <button class="btn icon ghostbtn" type="button" data-act="redo" id="redoBtn" title="Bring back what you undid (${keyOf('redo')})" aria-label="Redo" aria-keyshortcuts="Control+Shift+Z Control+Y" disabled>${icon('redo')}</button>
+  <section class="compose stagecomp">
+    <div class="viewport" id="vp">
+      <canvas id="cv" tabindex="0" aria-label="3D scene of ${esc(m.name)}. Drag or use the arrow keys to turn the model. Click a part to change it."></canvas>
+      <div class="safe" id="safe" aria-hidden="true"></div>
+      <div class="hud h1" id="hudScene"></div>
+      <div class="hud h2" id="hudCam"></div>
+      <div class="hud h3" id="hudLook"></div>
+      <div class="hud dims" id="hudDims" hidden></div>
+      <div class="hud measure" id="hudMeasure" hidden></div>
+      <div class="hud msg" id="hudMsg" role="status">Loading model…</div>
+      <div class="rtag" id="renderTag" aria-live="polite" hidden></div>
+      <div class="vtool" role="toolbar" aria-label="Viewport tools">
+        <button class="vt" type="button" data-tool="move" aria-pressed="false" title="Move the car" aria-label="Move the car">${icon('move')}</button>
+        <button class="vt" type="button" data-tool="turn" aria-pressed="true" title="Turn the car" aria-label="Turn the car">${icon('orbit')}</button>
+        <button class="vt" type="button" data-pick-tool="camera" title="Camera settings" aria-label="Camera settings">${icon('camera')}</button>
+        <button class="vt" type="button" data-pick-tool="light" title="Light settings" aria-label="Light settings">${icon('light')}</button>
       </div>
-      <button class="btn ghostbtn" type="button" data-act="reset-scene" title="Put the background, lights, colours, materials, camera, pose and render options back to how a new scene starts. Your library and saved renders are not touched, and you can undo it. (${keyOf('reset')})">${icon('retry')}<span>Reset scene</span></button>
-      <button class="btn pri" type="button" data-render="show" title="Jump down to the render options under the scene. S picks a still picture, T a 360° turntable.">${icon('film')}<span>Render</span></button>
     </div>
-  </div>
-  <section class="compose">
-    <aside class="scenes glass" aria-label="Scene">
-      <h2 class="label">Scene</h2>
-      <div class="scnlist" id="scenes"></div>
-      <input type="file" id="backdropFile" accept=".hdr,.exr,.jpg,.jpeg,.png" hidden>
-    </aside>
-    <div class="vp-col">
-      <div class="viewport glass" id="vp">
-        <canvas id="cv" tabindex="0" aria-label="3D scene of ${esc(m.name)}. Drag or use the arrow keys to turn the car."></canvas>
-        <div class="safe" id="safe" aria-hidden="true"></div>
-        <div class="hud h1" id="hudScene"></div>
-        <div class="hud h2" id="hudCam"></div>
-        <div class="hud h3" id="hudLook"></div>
-        <div class="hud dims" id="hudDims" hidden></div>
-        <div class="hud measure" id="hudMeasure" hidden></div>
-        <div class="hud msg" id="hudMsg" role="status">Loading model…</div>
-        <div class="vtool" role="toolbar" aria-label="Viewport tools">
-          <button class="vt" type="button" data-tool="move" aria-pressed="false" title="Move the car" aria-label="Move the car">${icon('move')}</button>
-          <button class="vt" type="button" data-tool="turn" aria-pressed="true" title="Turn the car" aria-label="Turn the car">${icon('orbit')}</button>
-          <button class="vt" type="button" data-jump="grp-camera" title="Camera settings" aria-label="Camera settings">${icon('camera')}</button>
-          <button class="vt" type="button" data-jump="grp-light" title="Light settings" aria-label="Light settings">${icon('light')}</button>
-        </div>
-      </div>
-      <div class="timeline glass">
-        <div class="tl-head">
-          <button class="btn icon" type="button" id="play" aria-label="Play turntable">${icon('play')}</button>
-          <b>Turntable</b>
-          <div class="chips seg sm" role="radiogroup" aria-label="Turntable range">
-            <button class="chip" type="button" role="radio" data-mode="360">360° · ${FRAMES} frames</button>
-            <button class="chip" type="button" role="radio" data-mode="180">180° · ${HALF} frames</button>
+    <aside class="tcard card" id="toolCard" aria-labelledby="toolTitle">
+      <header class="tc-head"><h2 id="toolTitle">World</h2><p class="fine" id="toolTip"></p></header>
+      <div class="tc-body" id="toolBody">
+        <section class="scenes" id="scenes" aria-label="Worlds"><div class="scnlist" id="sceneList"></div></section>
+        <input type="file" id="backdropFile" accept=".hdr,.exr,.jpg,.jpeg,.png" hidden>
+        <div class="grp" id="startover"><h3>Start over</h3>
+          <div class="mg-row">
+            <button class="btn" type="button" data-act="reset-scene" title="Put the world, lights, colours, materials, camera, pose and render options back to how a new scene starts. Your library and saved renders are not touched, and you can undo it. (${keyOf('reset')})">${icon('retry')}<span>Reset scene</span></button>
+            <button class="btn ghostbtn" type="button" data-act="restore-session" title="Bring back the scene from your last auto-save">Restore last session</button>
           </div>
-          <span class="tl-read" id="readout" aria-live="polite"></span><span class="tl-step">${STEP}° per frame</span>
+          <button class="btn ghostbtn" type="button" data-act="versions" title="See older versions of this model and go back to one">Version history</button>
         </div>
-        <div class="ticks" id="ticks" role="slider" tabindex="0" aria-label="Turntable frame" aria-valuemin="0" aria-valuemax="${FRAMES - 1}">${'<i></i>'.repeat(FRAMES)}</div>
-        <div class="tl-lab" aria-hidden="true"><span>0°</span><span>90°</span><span>180°</span><span>270°</span><span>355°</span></div>
+        <div class="timeline" id="turntable">
+          <div class="tl-head">
+            <button class="btn icon" type="button" id="play" aria-label="Play turntable" title="Play or pause the turntable">${icon('play')}</button>
+            <b>Turntable</b>
+            <div class="chips seg sm" role="radiogroup" aria-label="Turntable range">
+              <button class="chip" type="button" role="radio" data-mode="360" title="A full turn">360° · ${FRAMES} frames</button>
+              <button class="chip" type="button" role="radio" data-mode="180" title="Half a turn, front to back">180° · ${HALF} frames</button>
+            </div>
+            <span class="tl-read" id="readout" aria-live="polite"></span><span class="tl-step">${STEP}° per frame</span>
+          </div>
+          <div class="ticks" id="ticks" role="slider" tabindex="0" aria-label="Turntable frame" aria-valuemin="0" aria-valuemax="${FRAMES - 1}">${'<i></i>'.repeat(FRAMES)}</div>
+          <div class="tl-lab" aria-hidden="true"><span>0°</span><span>90°</span><span>180°</span><span>270°</span><span>355°</span></div>
+        </div>
+        <div id="modelGroup"></div>
+        <div id="inspector"></div>
+        <section class="ideasbox" id="renderIdeas" aria-label="Render ideas"></section>
+        <section class="renderarea" id="renderArea" aria-label="Render"></section>
+        <input type="file" id="betterPhoto" accept="image/png,image/jpeg,image/heic,image/heif,.heic,.heif" hidden>
+        <input type="file" id="lookFile" hidden>
       </div>
-    </div>
-    <aside class="insp glass" aria-label="Inspector">
-      <div class="chips tabs" id="tabs">
-        <button class="chip" type="button" data-jump="modelGroup" aria-selected="true">Model</button>
-        <button class="chip" type="button" data-jump="grp-model">Place</button>
-        <button class="chip" type="button" data-jump="grp-tools">Tools</button>
-        <button class="chip" type="button" data-jump="grp-path">Camera move</button>
-        <button class="chip" type="button" data-jump="grp-lighting">Lighting</button>
-        <button class="chip" type="button" data-jump="grp-camera">Camera</button>
-        <button class="chip" type="button" data-jump="grp-light">Light</button>
-        <button class="chip" type="button" data-jump="grp-ground">Ground</button>
-        <button class="chip" type="button" data-jump="grp-parts">Parts</button>
-        <button class="chip" type="button" data-jump="grp-color">Color</button>
-        <button class="chip" type="button" data-jump="grp-material">Material</button>
-        <button class="chip" type="button" data-jump="grp-scene">Scene</button>
-        <button class="chip" type="button" data-jump="grp-export">Export</button>
-      </div>
-      <div id="modelGroup"></div>
-      <div id="inspector"></div>
-      <input type="file" id="betterPhoto" accept="image/png,image/jpeg,image/heic,image/heif,.heic,.heif" hidden>
-      <input type="file" id="lookFile" hidden>
     </aside>
-  </section>
-  <section class="renderarea glass" id="renderArea" aria-label="Render"></section>`;
+    <aside class="icard card" id="insp" aria-labelledby="inspName" hidden>
+      <header class="tc-head"><h2 id="inspName">This part</h2>
+        <button class="btn icon ghostbtn" type="button" data-act="insp-rename" title="Rename this part" aria-label="Rename this part">✎</button>
+        <button class="btn icon ghostbtn" type="button" data-act="insp-close" title="Close (the part stays picked in Look)" aria-label="Close">${icon('close')}</button></header>
+      <p class="fine">Changes here apply to this part only.</p>
+      <div id="inspBody"></div>
+    </aside>
+  </section>`;
 
   renderScenes();
   renderModel();
   renderInspector();
   renderTimeline();
+  renderIdeas();
   bind();
+  setHumanoid(state.mode === 'warframe'); // until the model has loaded and its skeleton is known
+  onDock(state.tool.scene);
   mountRender($('#renderArea', el), m, { onRig: () => { studio?.setRig(state.settings || {}); draw(); } });
   let s;
   try {
@@ -159,6 +155,7 @@ export async function mount(el, { id }) {
     if (studio !== s) return;
     $('#hudMsg', el).hidden = !s.message;
     $('#hudMsg', el).textContent = s.message;
+    setHumanoid(isHumanoid());
     renderInspector(); // the size lock depends on the model's shape
   } catch (e) {
     if (studio !== s) return;
@@ -175,6 +172,9 @@ function onOrbit(orbit, settled) {
 }
 
 export function unmount() {
+  for (const id of ['undoBtn', 'redoBtn']) document.getElementById(id).disabled = true; // they wake up with the next scene
+  inspOpen = false;
+  $$('#toasts .toast.undo').forEach((t) => t.remove()); // their Undo belongs to this scene
   stopSession();
   hist.clear();
   listeners?.abort();
@@ -240,7 +240,9 @@ function save() {
 async function change(next, { inspector = true, fromHistory = false, record = true } = {}) {
   let step = fromHistory; // undo, redo and reset count as big edits for auto-save
   if (!fromHistory && record && Object.keys(next).length) {
-    step = hist.record(scene, Object.keys(next).join(', ')); // one step per drag or burst
+    const name = changeName(Object.keys(next));
+    step = hist.record(scene, name); // one step per drag or burst
+    if (step) undoNote(`Changed ${name}`, 'Undo', false);
   }
   if (Object.keys(next).length) noteEdit(step);
   Object.assign(scene, next);
@@ -258,9 +260,21 @@ async function change(next, { inspector = true, fromHistory = false, record = tr
   if (gridOn) renderGrid();
 }
 
+// "Changed Colours · Undo" after an edit, "Undid Colours · Redo" after an undo. One note at a time.
+let noteAt = 0;
+function undoNote(text, action, redo) {
+  if (Date.now() - noteAt < 1500 && action === 'Undo') return; // a burst of edits: one note
+  noteAt = Date.now();
+  $$('#toasts .toast.undo').forEach((t) => t.remove());
+  toast(text, 'info', [{ label: action, title: action === 'Undo' ? 'Take that change back (Ctrl+Z)' : 'Bring it back (Ctrl+Y)', run: () => stepHistory(redo) }]);
+  $('#toasts').lastElementChild?.classList.add('undo');
+}
 async function stepHistory(redo) {
+  const label = redo ? hist.redoLabel : hist.undoLabel;
   const prev = redo ? hist.redo(scene) : hist.undo(scene);
   if (!prev) return toast(redo ? 'Nothing to redo' : 'Nothing to undo', 'info');
+  noteAt = 0;
+  undoNote(`${redo ? 'Redid' : 'Undid'} ${label || 'the last change'}`, redo ? 'Undo' : 'Redo', !redo);
   for (const k of Object.keys(scene)) if (!(k in prev)) delete scene[k];
   await change(prev, { fromHistory: true });
   renderGrid();
@@ -288,7 +302,7 @@ async function replaceScene(next) {
   renderGrid();
 }
 function renderUndo() {
-  const u = $('#undoBtn', root), r = $('#redoBtn', root);
+  const u = $('#undoBtn'), r = $('#redoBtn');
   if (u) u.disabled = !hist.canUndo;
   if (r) r.disabled = !hist.canRedo;
 }
@@ -366,7 +380,7 @@ function renderScenes() {
       <div class="scn-th">${thumb || (photo ? `<div class="stage">${photo}</div>` : art[key])}${needs ? `<div class="up">${icon('upload', 18)}</div>` : ''}${key === 'cyclorama' ? '<span class="pin">Default</span>' : ''}</div>
       <div class="scn-t"><b>${p.label}</b><span>${esc(note)}</span></div></button>`;
   }).join('');
-  const box = $('#scenes', root);
+  const box = $('#sceneList', root);
   if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
 }
 
@@ -391,7 +405,7 @@ function renderInspector() {
       ${slider('y', 'Y', -1, 1, 0.01, s.y, valueText.y(s.y), s.snap)}
       ${toggle('snap', 'Snap tires to floor', '', s.snap)}
     </div>
-    <div class="grp"><h3>Rotation and scale</h3>
+    <div class="grp" id="grp-place"><h3>Rotation and scale</h3>
       ${slider('turn', 'Turn', 0, 359, 1, s.turn, valueText.turn(s.turn))}
       ${slider('scale', 'Scale', 0.2, 1.5, 0.01, sizeLocked() ? 1 : s.scale, valueText.scale(s.scale), sizeLocked())}
       ${toggle('sameSize', 'Same size for every car', carLike() ? 'Locks length so the fleet matches' : 'Off for this model: it is taller than it is long, so it is not a car', s.sameSize, !carLike())}
@@ -419,6 +433,8 @@ function renderInspector() {
       ${slider('shadow', 'Shadow', 0, 1, 0.01, s.shadow, softness(s.shadow))}
     </div>${renderLightingGroup()}${renderToolsGroup()}${renderPathGroup()}${renderMotionGroup()}${renderHandPoseGroup()}${renderTestRigGroup()}${renderPaintGroups()}`;
   afterRender();
+  placeInspector();
+  applyTool();
 }
 
 // The model itself: versions, approve, regenerate and clean up (what the Review step used to hold).
@@ -441,6 +457,55 @@ function renderModel() {
       ${toggle('center', 'Center and ground on floor', 'Applied here and in every render', scene.center)}
     </div>`;
   if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
+}
+
+// ---- the v3 Stage: the dock tool's card, the inspector card and the Render ideas ----
+const isHumanoid = () => Boolean(studio?.model) && modelInfo(studio, scene.motion?.type || 'auto').type === 'humanoid';
+const ALL_GROUPS = [...new Set(Object.values(SCENE_GROUPS).flat())];
+/** The dock picked a tool (app.js pickDock): show that tool's groups in the card. */
+export function onDock(id) {
+  if (!root?.isConnected || !$('#toolCard', root)) return;
+  const tool = dockFor('scene', { humanoid: state.humanoid }).find(([k]) => k === id) || dockFor('scene', { humanoid: state.humanoid })[0];
+  state.tool.scene = tool[0];
+  $('#toolTitle', root).textContent = tool[2];
+  $('#toolTip', root).textContent = TOOL_TIPS[tool[0]];
+  $('#toolCard', root).dataset.tool = tool[0];
+  applyTool();
+  $('#toolBody', root).scrollTop = 0;
+}
+function applyTool() {
+  const t = state.tool.scene;
+  for (const id of ALL_GROUPS) {
+    const el = root && $(`#${id}`, root);
+    if (el) el.classList.toggle('off', !el.closest('#insp') && !shows(t, id));
+  }
+}
+// The inspector card: the clicked part's Color and Material groups move into it (same buttons, same handlers).
+function placeInspector() {
+  const card = $('#insp', root);
+  const body = $('#inspBody', root);
+  if (!card) return;
+  const key = selectedPiece();
+  const open = inspOpen && key && studio?.model;
+  card.hidden = !open;
+  body.replaceChildren();
+  if (!open) return;
+  const piece = studio.pieces().find((p) => p.key === key);
+  $('#inspName', root).textContent = scene.paint?.pieces?.[key]?.name || piece?.name || 'This part';
+  for (const id of ['grp-color', 'grp-material']) { const g = $(`#${id}`, root); if (g) body.append(g); }
+}
+function renderIdeas() {
+  const box = $('#renderIdeas', root);
+  box.innerHTML = `<h3>${icon('idea', 14)} Render ideas · one click</h3><p class="fine">Click one to set it up, then press the orange Render button. Nothing starts by itself.</p>
+    <div class="ideas">${ideasFor(state.mode).map((i) => `<button class="idea" type="button" data-idea="${i.id}" title="${esc(i.desc)}"><i style="background:${i.art}" aria-hidden="true"></i><b>${esc(i.label)}</b><small>${esc(i.desc)}</small></button>`).join('')}</div>`;
+}
+async function useIdea(id) {
+  const r = applyIdea(id, CAMERAS);
+  if (!r) return;
+  if (r.go === 'finish') { state.tool.finish = 'compare'; return go(`#/finish/${m.id}`); }
+  await change(r.scene);
+  pickRender(r.render);
+  toast(`${r.label} is set up. Press the orange Render button to make it.`, 'info');
 }
 
 export function update() {
@@ -482,7 +547,12 @@ function bind() {
     if (await onHandPoseClick(t)) return;
     if (await onTestRigClick(t)) return;
     if (await onPaintClick(t)) return;
-    if (t.dataset.render) $('#renderArea', el).scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (t.dataset.pickTool) return pickDock(t.dataset.pickTool);
+    if (t.dataset.idea) return useIdea(t.dataset.idea);
+    if (t.dataset.act === 'insp-close') { inspOpen = false; return renderInspector(); }
+    if (t.dataset.act === 'insp-rename') { const key = selectedPiece(); inspOpen = false; pickDock('look'); renderInspector(); return $(`.part[data-piece="${CSS.escape(key)}"] [data-rename]`, el)?.click(); }
+    if (t.dataset.act === 'restore-session') return restoreLastSession();
+    if (t.dataset.act === 'versions') return go(`#/model/${m.id}`);
     if (t.dataset.version) {
       try { m = upsert(await send(`/api/models/${m.id}`, 'PATCH', { activeVersion: Number(t.dataset.version) })); } catch (err) { return toast(err.message); }
       renderModel();
@@ -512,10 +582,6 @@ function bind() {
       tool = t.dataset.tool;
       $$('[data-tool]', el).forEach((b) => b.setAttribute('aria-pressed', String(b === t)));
       $('#cv', el).classList.toggle('moving', tool === 'move');
-    }
-    if (t.dataset.jump) {
-      $(`#${t.dataset.jump}`, el)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      $$('#tabs .chip', el).forEach((b) => b.setAttribute('aria-selected', String(b.dataset.jump === t.dataset.jump)));
     }
     if (t.dataset.camera) {
       const c = CAMERAS[t.dataset.camera];
@@ -592,13 +658,14 @@ function bind() {
   const { signal } = listeners;
   el.addEventListener('pointerdown', () => hist.begin(scene), { capture: true, signal });
   for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, () => hist.end(), { signal });
-  // Grid controls live in the inspector.
+  // Grid controls live in the World card.
   el.addEventListener('click', async (e) => {
     const u = e.target.closest('[data-unit]');
     if (u) { try { state.settings = await send('/api/settings', 'POST', { gridUnit: u.dataset.unit }); } catch (err) { toast(err.message); } renderInspector(); renderGrid(); }
-    const a = e.target.closest('[data-act="undo"], [data-act="redo"]');
-    if (a) stepHistory(a.dataset.act === 'redo');
   });
+  // Undo and Redo sit in the top bar (outside this screen), so they are wired with the same signal as the rest.
+  $('#undoBtn').addEventListener('click', () => stepHistory(false), { signal });
+  $('#redoBtn').addEventListener('click', () => stepHistory(true), { signal });
   el.addEventListener('change', (e) => { if (e.target.dataset.grid) { gridOn = e.target.checked; renderGrid(); } });
 
   el.addEventListener('keydown', onToolsKey); // 1 to 9: saved camera spots
@@ -641,6 +708,7 @@ function bind() {
     if (onDecalCanvasClick(e.clientX - r.left, e.clientY - r.top)) return;
     if (onCanvasClick(e.clientX - r.left, e.clientY - r.top)) return;
     const key = studio.pick(e.clientX - r.left, e.clientY - r.top);
-    if (key) { selectPiece(key); $('#grp-parts', el)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    if (key) { inspOpen = true; selectPiece(key); } // the inspector card slides in with this part's colour and material
+    else if (inspOpen) { inspOpen = false; renderInspector(); }
   });
 }

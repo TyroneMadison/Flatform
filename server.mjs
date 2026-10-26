@@ -1336,7 +1336,7 @@ export async function startServer({
     if (area === 'local' && id === 'download' && method === 'POST') { startDownload(); return send(res, 202, await localView()); }
     // Auto-save: Compose's snapshots, "Restore last session" after a crash, and the recents on the home screen.
     if (area === 'session') {
-      if (!id && method === 'GET') return send(res, 200, { crashed: session.crashed, last: session.crashed ? await session.latest() : null, recents: await session.recents() });
+      if (!id && method === 'GET') return send(res, 200, { crashed: session.crashed, last: session.crashed || url.searchParams.has('latest') ? await session.latest() : null, recents: await session.recents() });
       if (id === 'snapshots' && !sub && method === 'POST') {
         try { return send(res, 201, await session.snapshot(await readJson(req, 2 * 1024 * 1024))); } catch (e) { throw e.status ? e : new HttpError(400, e.message); }
       }

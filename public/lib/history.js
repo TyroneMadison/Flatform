@@ -45,6 +45,8 @@ export function createHistory({ limit = 100, burst = 600, now = Date.now } = {})
     },
     get canUndo() { return past.length > 0; },
     get canRedo() { return future.length > 0; },
+    get undoLabel() { return past.at(-1)?.label; }, // what Undo would take back, for the "Undid X" note
+    get redoLabel() { return future.at(-1)?.label; },
     list: () => past.map((e) => ({ label: e.label, at: e.at })).reverse(),
     clear() { past = []; future = []; gesture = null; last = 0; },
   };

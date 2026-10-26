@@ -18,7 +18,7 @@ export function mount(el, { id }) {
   root = el;
   model = findModel(id);
   shownReady = model?.status === 'ready';
-  el.innerHTML = `${stepper('generate', model)}
+  el.innerHTML = `
   <section class="genwrap">
     <div class="gen-left">
       <figure class="srcphoto glass">
