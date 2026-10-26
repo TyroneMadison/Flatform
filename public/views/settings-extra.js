@@ -2,6 +2,7 @@
 // lists them and asks for their HTML.
 import { esc, api, send, toast, refresh, confirmDialog } from '../app.js';
 import { ACTIONS, loadKeys, saveKeys, validCombo, comboOf, conflicts } from '../lib/hotkeys.js';
+import { SHORTCUTS, TAKEN } from '../lib/shortcuts.js';
 
 export const EXTRA = [['shortcuts', 'Shortcuts'], ['backup', 'Backup'], ['plugins', 'Plugins']];
 let backup = null, plugins = null, code = 'flatform.log("Parts in the scene:", Object.keys(scene).length);\nflatform.setResult({ ok: true });', run = null, busy = false;
@@ -14,7 +15,7 @@ const toggle = (x, on, label, help) => `<label class="toggle big"><input type="c
 export function shortcutsHtml() {
   const k = loadKeys(); const clash = conflicts(k.keys);
   return `<div class="grp"><h3>Shortcuts</h3>
-    ${toggle('hkshow', k.show, 'Show shortcuts on screen', 'Hold ? or hold Ctrl for a moment to see the keys for the screen you are on.')}
+    ${toggle('hkshow', k.show, 'Show the keys when I hold Ctrl', 'Press ? any time to see the keys for the screen you are on. With this on, holding Ctrl for a moment shows them too.')}
     <div class="hk-edit">${Object.entries(ACTIONS).map(([a, d]) => `<div class="field"><label for="hk-${a}">${esc(d.label)}</label>
       <input id="hk-${a}" class="hk-in" data-x="hk" data-action="${a}" value="${esc(k.keys[a])}" readonly aria-describedby="hkHelp"></div>`).join('')}</div>
     <p class="fine" id="hkHelp">Click a box, then press the new keys (Ctrl or Alt plus a letter, number or F-key).</p>
@@ -58,6 +59,8 @@ export function wireExtra(el) {
     e.preventDefault(); e.stopPropagation();
     const c = comboOf(e); if (!c) return;
     if (!validCombo(c)) { toast('Use Ctrl or Alt plus a letter, number or F-key.'); return; }
+    const used = SHORTCUTS.find((s) => !s.editable && [s.keys, ...(s.also || [])].includes(c));
+    if (used || TAKEN.includes(c)) { toast(`${c} is already used${used ? ` for ${used.label}` : ''}. Pick other keys.`); return; }
     const k = loadKeys(); k.keys[t.dataset.action] = c; saveKeys(k); refresh();
   }, true);
   el.addEventListener('input', (e) => { if (e.target.dataset?.x === 'plcode') code = e.target.value; });

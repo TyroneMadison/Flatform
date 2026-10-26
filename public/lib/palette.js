@@ -1,4 +1,5 @@
-// Ctrl+K: a small "find anything" box. Recent work first, then the main screens. Type to narrow, Enter to open.
+// Ctrl+K: a small "find anything" box. Recent work first, then the main screens and every shortcut. Type to narrow,
+// Enter to open.
 
 /** Commands whose label (or hint) has every typed word, in their given order. cmd: { label, hint?, run }. */
 export function filterCommands(cmds, query = '') {
@@ -32,6 +33,5 @@ export function installPalette({ commands }, doc = document) {
   });
   list.addEventListener('click', (e) => { const li = e.target.closest('[data-i]'); if (li) run(Number(li.dataset.i)); });
   dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); }); // a click outside the box closes it
-  doc.addEventListener('keydown', (e) => { if (isPaletteKey(e)) { e.preventDefault(); open(); } });
-  return { open };
+  return { open }; // Ctrl+K itself is wired with the other shortcuts (hotkeys.js)
 }

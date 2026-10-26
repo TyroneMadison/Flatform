@@ -5,7 +5,8 @@ import { applyTheme } from './lib/theme.js';
 import { PROVIDERS, ENGINES, VIEWS, normalize, presetConfig, matchPreset, PRESETS } from './lib/engines.js';
 import { estimate } from './lib/pricing.js';
 import { isModelFile, importModel } from './lib/importer.js';
-import { installHotkeys } from './lib/hotkeys.js';
+import { installHotkeys, loadKeys } from './lib/hotkeys.js';
+import { SHORTCUTS, worksOn, keyOf } from './lib/shortcuts.js';
 import { blenderLight, accountLight } from './lib/render-status.js';
 import { installPalette } from './lib/palette.js';
 import { timeAgo } from './lib/session.js';
@@ -628,7 +629,8 @@ async function loadSession() {
     openRecent({ id: m.id, frame: last.frame });
   };
 }
-// Ctrl+K: recents first, then the main screens.
+// Ctrl+K: recents first, then the main screens, then every shortcut.
+let hotkeys; // { act(id) } once the keys are wired
 function paletteCommands() {
   const m = focusModel();
   const recents = recentItems().map((r) => ({ label: r.model.name, hint: `Edited ${timeAgo(r.at)}`, title: `Open ${r.model.name} in Compose, as you left it`, thumb: thumbOf(r.model), run: () => openRecent(r) }));
@@ -640,9 +642,15 @@ function paletteCommands() {
     ['Usage', 'What you have spent', '#/usage'],
     ['Settings', 'Accounts, folders and shortcuts', '#/settings'],
   ].filter(Boolean).map(([label, hint, href]) => ({ label, hint, run: () => go(href) }));
-  const reset = route.name === 'compose' && $('[data-act="reset-scene"]')
-    ? [{ label: 'Reset scene', hint: 'Back to how a new scene starts. You can undo it.', run: () => $('[data-act="reset-scene"]')?.click() }] : [];
-  return [...recents, ...reset, ...screens];
+  // Every shortcut, with its keys. The Compose ones open Compose first when you are somewhere else.
+  const keys = loadKeys().keys;
+  const shortcuts = SHORTCUTS.filter((s) => s.id !== 'palette').map((s) => {
+    const here = worksOn(s, route.name);
+    const k = keyOf(s.id, keys);
+    return { label: s.label, hint: here ? k : `${k} · in Compose`, title: here ? `${s.label} (${k})` : `Opens Compose. There, press ${k} for this.`,
+      run: () => (here ? hotkeys.act(s.id) : m ? go(`#/compose/${m.id}`) : toast('Pick a model first.', 'info')) };
+  });
+  return [...recents, ...screens, ...shortcuts];
 }
 
 // Not top-level await: the screens import this module, so it has to finish loading before they can.
@@ -655,14 +663,17 @@ function paletteCommands() {
   applyTheme(settings?.theme);
   await loadWorkspaces();
   await loadSession();
-  installPalette({ commands: paletteCommands });
-  installHotkeys({
+  const palette = installPalette({ commands: paletteCommands });
+  hotkeys = installHotkeys({
     screen: () => route.name,
-    run: (action) => {
+    say: (text) => toast(text, 'info'),
+    run: async (id) => {
       if (state.presenting) return;
+      if (id === 'palette') return palette.open();
       const m = (route.id && findModel(route.id)) || focusModel();
-      if (!m) return toast('Pick a model first.');
-      go(`#/${action === 'preview' ? 'preview' : 'finish'}/${m.id}`);
+      if (!m) return toast('Pick a model first.', 'info');
+      if (id === 'still' || id === 'turntable') return (await import('./views/compose-render.js')).showRenderIntent(id);
+      go(`#/${id === 'preview' ? 'preview' : 'finish'}/${m.id}`);
     },
   });
   $('#renderLight').addEventListener('click', (e) => {

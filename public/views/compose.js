@@ -1,7 +1,8 @@
 // Compose: the scene composer, and the model's own panel (versions, approve, regenerate, clean up; this used to be
 // the Review step). One Three.js studio, the scene presets (Showroom first), an inspector and a turntable timeline.
 // The scene is saved per model (scene.json next to the model) so a render reproduces it exactly.
-import { createHistory, isUndo, isRedo } from '../lib/history.js';
+import { createHistory } from '../lib/history.js';
+import { keyOf } from '../lib/shortcuts.js';
 import { dimensions, gridSpec, REFERENCES } from '../lib/grid.js';
 import { $, $$, esc, state, api, send, toast, stepper, findModel, fileUrl, upsert, refresh, statusText, isGenerating, busy, setupFor, engineLabel, activeWorkspace, confirmDialog } from '../app.js';
 import { icon } from '../lib/icons.js';
@@ -63,8 +64,8 @@ export async function mount(el, { id }) {
   <div class="comp-top">${stepper('compose', m)}
     <div class="ctop-act">
       <span class="savednote" id="savedNote" role="status" title="Flatform saves your scene by itself as you work and keeps a few backups."></span>
-      <button class="btn ghostbtn" type="button" data-act="reset-scene" title="Put the background, lights, colours, materials, camera, pose and render options back to how a new scene starts. Your library and saved renders are not touched, and you can undo it.">${icon('retry')}<span>Reset scene</span></button>
-      <button class="btn pri" type="button" data-render="show" title="Jump down to the render options under the scene">${icon('film')}<span>Render</span></button>
+      <button class="btn ghostbtn" type="button" data-act="reset-scene" title="Put the background, lights, colours, materials, camera, pose and render options back to how a new scene starts. Your library and saved renders are not touched, and you can undo it. (${keyOf('reset')})">${icon('retry')}<span>Reset scene</span></button>
+      <button class="btn pri" type="button" data-render="show" title="Jump down to the render options under the scene. S picks a still picture, T a 360° turntable.">${icon('film')}<span>Render</span></button>
     </div>
   </div>
   <section class="compose">
@@ -394,7 +395,7 @@ function renderInspector() {
     </div>
     <div class="grp" id="grp-camera"><h3>${icon('camera', 14)} Camera</h3>
       <div class="viewmode"><div class="chips seg sm" role="radiogroup" aria-label="View mode">${Object.entries(VIEWS).map(([k, label]) => `<button class="chip" type="button" role="radio" data-view="${k}" aria-checked="${(s.view || 'car') === k}">${label}</button>`).join('')}</div>
-      <button class="btn sm ghostbtn" type="button" data-act="frame" title="Fit the whole model in view (F)">Frame all</button></div>
+      <button class="btn sm ghostbtn" type="button" data-act="frame" title="Fit the whole model in view (${keyOf('frame')})">Frame all</button></div>
       ${s.view === 'free' ? `<p class="fine">Drag to orbit · scroll to zoom · right-drag or Shift-drag to pan · F frames the whole model. Car view keeps its own camera.</p>
       ${slider('lens', 'Lens', 18, 135, 1, s.lens, valueText.lens(s.lens))}`
       : PLATES[s.preset] ? '<p class="fine">Set by the photo: eye level, matched to its floor, so the car stands on it. Turn the car with Turn.</p>'
@@ -408,7 +409,7 @@ function renderInspector() {
     <div class="grp" id="grp-grid"><h3>Reference grid</h3>
       <label class="tg"><span>Show grid and scale<small>Person 1.8 m and car 4.5 m for size. Not rendered.</small></span><input class="sw" type="checkbox" role="switch" data-grid="on" ${gridOn ? 'checked' : ''}></label>
       <div class="chips seg sm" role="radiogroup" aria-label="Units">${[['m', 'Meters'], ['ft', 'Feet']].map(([k, l]) => `<button class="chip" type="button" role="radio" data-unit="${k}" aria-checked="${gridUnit() === k}">${l}</button>`).join('')}</div>
-      <div class="mg-row"><button class="btn sm ghostbtn" type="button" data-act="undo" ${hist.canUndo ? '' : 'disabled'} title="Ctrl+Z">Undo</button><button class="btn sm ghostbtn" type="button" data-act="redo" ${hist.canRedo ? '' : 'disabled'} title="Ctrl+Shift+Z">Redo</button></div>
+      <div class="mg-row"><button class="btn sm ghostbtn" type="button" data-act="undo" ${hist.canUndo ? '' : 'disabled'} title="Undo the last change (${keyOf('undo')})">Undo</button><button class="btn sm ghostbtn" type="button" data-act="redo" ${hist.canRedo ? '' : 'disabled'} title="Bring back what you undid (${keyOf('redo')})">Redo</button></div>
       ${hist.canUndo ? `<ol class="histlist fine">${hist.list().slice(0, 8).map((h) => `<li>${esc(h.label)}</li>`).join('')}</ol>` : ''}
     </div>
     <div class="grp" id="grp-ground"><h3>Ground</h3>
@@ -583,11 +584,7 @@ function bind() {
   };
   ticks.addEventListener('keydown', keys);
 
-  // Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y): undo and redo scene edits, except while typing in a text field.
-  el.addEventListener('keydown', (e) => {
-    if (e.target.closest('input[type=text], input[type=search], textarea')) return;
-    if (isUndo(e)) { e.preventDefault(); stepHistory(false); } else if (isRedo(e)) { e.preventDefault(); stepHistory(true); }
-  });
+  // Ctrl+Z, F and the other Compose keys are in lib/shortcuts.js; they press the buttons here.
   // Grid controls live in the inspector.
   el.addEventListener('click', async (e) => {
     const u = e.target.closest('[data-unit]');
@@ -597,11 +594,7 @@ function bind() {
   });
   el.addEventListener('change', (e) => { if (e.target.dataset.grid) { gridOn = e.target.checked; renderGrid(); } });
 
-  // F frames the whole model, anywhere on the screen but in a text field.
-  el.addEventListener('keydown', (e) => {
-    if (onToolsKey(e)) return;
-    if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest('input, textarea, select')) { e.preventDefault(); frameAll(); }
-  });
+  el.addEventListener('keydown', onToolsKey); // 1 to 9: saved camera spots
 
   // Viewport: drag to turn the car through the turntable frames, or to move it with the move tool.
   // In free roam the drag belongs to the orbit camera (OrbitControls on the same canvas).

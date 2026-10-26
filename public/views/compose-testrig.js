@@ -2,6 +2,7 @@
 // move. It runs on its own canvas over Compose with a copy of the model, so the Compose scene is never touched:
 // leaving just removes the overlay. Movement and poses live in lib/testrig.js, the bone work in lib/testrig-rig.js.
 import * as THREE from 'three';
+import { keyOf } from '../lib/shortcuts.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { esc, toast } from '../app.js';
 import { mapBones } from '../lib/motion.js';
@@ -26,7 +27,7 @@ function available() {
 export function renderTestRigGroup() {
   if (!available()) return '';
   return `<div class="grp" id="grp-testrig"><h3>Test rig</h3><p class="fine">Run, jump and climb with this character in a small play area, to see how the rig moves.</p>
-    <button class="btn pri" type="button" data-tr="start" title="Play this character in a small arena. Press Esc to come back here">Test rig</button></div>`;
+    <button class="btn pri" type="button" data-tr="start" title="Play this character in a small arena (${keyOf('testrig')}). Press Esc to come back here">Test rig</button></div>`;
 }
 export async function onTestRigClick(t) {
   if (t.dataset.tr !== 'start') return false;

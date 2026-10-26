@@ -2,6 +2,7 @@
 // the head, neck and back, mirror, feet on the floor, start over, save as a pose, and simple keyframes. Every drag
 // ends in one scene change (scene.motion.pose), so Ctrl+Z undoes one drag and renders get the same pose.
 import * as THREE from 'three';
+import { keyOf } from '../lib/shortcuts.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { $, esc, send, toast } from '../app.js';
 import { mapBones } from '../lib/motion.js';
@@ -54,9 +55,9 @@ export function renderHandPoseGroup() {
         <button class="btn sm sec" type="button" data-hp="play" ${keys.length < 2 ? 'disabled' : ''} ${tip(keys.length < 2 ? 'Add at least two keys to play' : 'Play the keys as a loop')}>${playing ? 'Stop' : 'Play loop'}</button></div>
       ${keys.length ? `<div class="chips" role="group" aria-label="Keys">${keys.map((k, i) => `<span class="chipset"><button class="chip" type="button" data-hp-go="${i}" ${tip('Show and edit this key')}>${k.t.toFixed(1)} s</button><button class="chip sm" type="button" data-hp-del="${i}" ${tip('Remove this key')} aria-label="Remove key at ${k.t.toFixed(1)} s">✕</button></span>`).join('')}</div>`
         : '<p class="fine">Pose, pick a moment, Add key. Two or more keys play as a loop.</p>'}
-      <button class="btn sm pri" type="button" data-hp="toggle" aria-pressed="true" ${tip('Hide the dots and go back to turning the model')}>Done</button>`
+      <button class="btn sm pri" type="button" data-hp="toggle" aria-pressed="true" ${tip(`Hide the dots and go back to turning the model (${keyOf('pose')})`)}>Done</button>`
     : '<p class="fine">Move the arms, legs, head and body yourself, right on the model.</p>';
-  return `<div class="grp" id="grp-handpose"><h3>Pose by hand</h3>${on ? '' : `<button class="btn pri" type="button" data-hp="toggle" aria-pressed="false" ${tip('Show grab dots on the joints so you can drag them')}>Pose by hand</button>`}${body}</div>`;
+  return `<div class="grp" id="grp-handpose"><h3>Pose by hand</h3>${on ? '' : `<button class="btn pri" type="button" data-hp="toggle" aria-pressed="false" ${tip(`Show grab dots on the joints so you can drag them (${keyOf('pose')})`)}>Pose by hand</button>`}${body}</div>`;
 }
 
 // --- the 3D side ---

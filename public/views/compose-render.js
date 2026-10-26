@@ -38,8 +38,7 @@ export function mountRender(el, model, h = {}) {
   const intent = state.renderIntent;
   state.renderIntent = null;
   opts ||= freshOpts();
-  if (intent === 'still') Object.assign(opts, { still: true, t360: false, t180: false });
-  if (intent === 'turntable') Object.assign(opts, { t360: true, t180: true });
+  pickIntent(intent);
   if (!running()) opts.renderer = state.settings?.renderer === 'blender' && blenderReady() ? 'blender' : 'three';
   el.innerHTML = `<div class="rowhead ra-head"><h2 class="ph2">${icon('film', 18)} Render</h2><span class="sub">Pick what you want below, then press the orange button. Finished renders go to your handoff folder and show up in Library.</span></div>
   <div class="export">
@@ -75,6 +74,20 @@ export function mountRender(el, model, h = {}) {
   resetPreview();
   mountExport(el, m, { track });
   if (intent) requestAnimationFrame(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+}
+
+// 'still' or 'turntable' (the S and T keys, Library's Render): tick that in What to render.
+function pickIntent(intent) {
+  if (intent === 'still') Object.assign(opts, { still: true, t360: false, t180: false });
+  if (intent === 'turntable') Object.assign(opts, { t360: true, t180: true });
+}
+/** The S and T keys in Compose: pick a still or a turntable and bring the Render button into view. */
+export function showRenderIntent(intent) {
+  if (!root?.isConnected || !opts) return;
+  pickIntent(intent);
+  renderLeft();
+  root.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  toast(`${intent === 'still' ? 'Still picture' : '360° turntable'} picked. Press the orange Render button to start.`, 'info');
 }
 
 function freshOpts() {

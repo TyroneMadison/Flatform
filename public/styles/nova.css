@@ -21,6 +21,8 @@ html.presenting #view { position: fixed; inset: 0; padding: 0; margin: 0; z-inde
 .hk dd { margin: 0; color: var(--text); }
 .hk kbd { font: 600 12px ui-monospace, monospace; padding: 2px 6px; border: 1px solid var(--line); border-radius: 5px; color: var(--text); }
 .hk p { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+.hk { max-height: calc(100vh - 48px); overflow: auto; }
+.hk button { margin-top: 10px; }
 
 .finish { display: grid; gap: 16px; max-width: 900px; }
 .hc-status { font: 600 20px var(--display); margin: 6px 0 2px; color: var(--text); }

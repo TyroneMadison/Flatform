@@ -3,6 +3,7 @@
 // HDRI, light presets, AO, tone mapping, reflections, quality, studio presets) and Export (GLB + TennoGen set).
 // compose.js owns the scene object and the studio; this module gets them through ctx and calls ctx.change().
 import { $, $$, esc, state, api, send, toast, fileUrl, native, activeWorkspace } from '../app.js';
+import { keyOf } from '../lib/shortcuts.js';
 import { icon } from '../lib/icons.js';
 import {
   SLOTS, SECTIONS, PARTS, MATERIAL_PRESETS, MATERIAL_KEYS, defaultPaint, upsertPiece, resolveColors, colorSources, setColor, recentColor,
@@ -272,7 +273,7 @@ export function renderPaintGroups() {
       <div class="mg-row">${sel('act', 'export-part', PARTS.map((p) => [p, p]), exportPart, 'Part')}${tg('act', 'alt-helmet', 'Alt helmet', '2048 × 1024 maps', altHelmet)}</div>
       <div class="mg-row">
         <button class="btn sm sec" type="button" data-act="export-tenno" ${studio?.model && outDir && !busyText ? '' : 'disabled'}>${icon('image', 14)}<span>TennoGen texture set</span></button>
-        <button class="btn sm sec" type="button" data-act="export-glb" ${studio?.model && outDir && !busyText ? '' : 'disabled'}>${icon('cube', 14)}<span>GLB with named materials</span></button>
+        <button class="btn sm sec" type="button" data-act="export-glb" title="Save the model with its materials named, as a GLB file in the handoff folder (${keyOf('export')})" ${studio?.model && outDir && !busyText ? '' : 'disabled'}>${icon('cube', 14)}<span>GLB with named materials</span></button>
       </div>
       <p class="fine">${outDir ? `${esc(exportPart)}_d/_e/_n/_r/_s/_t.png (2048², tint and emissive 1024²) go to <code>${esc(outDir)}${state.settings.platform === 'win32' ? '\\' : '/'}tennogen</code>; the GLB to <code>models</code>.` : 'Choose a handoff folder in the render area below first.'}</p>
       ${lastCompare ? `<div class="checklist" role="group" aria-label="TennoGen compare"><p class="fine"><b>${lastCompare.pass ? 'Ready to submit' : 'Fix before submitting'}</b> · checked against the TennoGen template set</p><ul>${lastCompare.checks.map((c) => `<li class="${c.pass ? 'ok' : 'bad'}">${c.pass ? 'Pass' : 'Fail'}: ${esc(c.label)}${!c.pass && c.got != null ? ` (got ${esc(String(c.got))})` : ''}</li>`).join('')}</ul></div>` : ''}
