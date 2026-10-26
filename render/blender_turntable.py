@@ -2,7 +2,7 @@
 
     blender -b -P blender_turntable.py -- --glb car.glb --out frames/studio --slug audi-r8 --look studio \
         --frames 72 --step 5 --res 2048x1536 [--scene scene.json] [--rig '{"lighting": {...}, "glass": {...}}']
-        [--still 30 --still-out stills/x.png]
+        [--still 30 --still-out stills/x.png] [--pose '{"bones": {"LeftArm": [0, 0, -45]}, "retarget": {...}}']
 
 Builds the Escalade ring studio, the showroom or the transparent look in code, normalises and frames the car
 exactly like the in-app renderer (public/lib/studio.js), applies the Render step's light rig and glass, then turns
@@ -86,6 +86,8 @@ def parse_args():
     p.add_argument("--scenelook")
     # Painted pieces (public/lib/tenno.js blenderMaterial per piece key) and face groups, written by the server.
     p.add_argument("--materials")
+    # A humanoid pose: Euler degrees per standard bone (motion.js poseBones) and motion.js RETARGET for other names.
+    p.add_argument("--pose")
     return p.parse_args(argv)
 
 
@@ -353,6 +355,38 @@ def import_car(path, s):
     lo, hi = bounds()  # the bounding sphere and box corners in scene space, for "Frame all"
     corners = [Vector((x, y, z)) for x in (lo.x, hi.x) for y in (lo.y, hi.y) for z in (lo.z, hi.z)]
     return pivot, meshes, hi - lo, ((lo + hi) / 2, (hi - lo).length / 2, corners)
+
+
+def bone_standard(name, retarget):
+    """motion.js retargetName: strip mixamorig: and friends, then match a standard name."""
+    n = re.sub(r"^mixamorig\d*[:_]?", "", name, flags=re.I)
+    n = re.sub(r"^(bip01|b|def|org)[ _.-]", "", n, flags=re.I)
+    n = re.sub(r"[.](l|r)$", lambda m: "_" + m.group(1), n, flags=re.I)
+    n = re.sub(r"[ .-]", "_", n).lower()
+    compact = n.replace("_", "")
+    return retarget.get(n) or retarget.get(compact) or next((b for b in set(retarget.values()) if b.lower() == compact), None)
+
+
+def apply_pose(pose):
+    """rig.js applyMotion: each mapped bone turns by Euler degrees on top of its rest pose. three.js's XYZ Euler order
+    is Blender's ZYX; the glTF importer keeps each joint's axes, so the numbers mean the same in both."""
+    if not pose or not pose.get("bones"):
+        return 0
+    from mathutils import Euler
+    done = 0
+    for arm in (o for o in bpy.context.scene.objects if o.type == "ARMATURE"):
+        seen = set()
+        for pb in arm.pose.bones:
+            std = bone_standard(pb.name, pose.get("retarget", {}))
+            deg = pose["bones"].get(std) if std and std not in seen else None
+            if deg is None:
+                continue
+            seen.add(std)
+            pb.rotation_mode = "QUATERNION"
+            pb.rotation_quaternion = Euler([math.radians(d) for d in deg], "ZYX").to_quaternion()
+            done += 1
+    bpy.context.view_layer.update()
+    return done
 
 
 def hex_linear(h):
@@ -724,6 +758,8 @@ def main():
         build_ring_studio(float(s["reflection"]))
     apply_rig(lighting)
     pivot, meshes, size, sphere = import_car(args.glb, s)
+    if args.pose:  # after normalising, like studio.js applyModel, so the model is placed exactly as in the app
+        print(f"FLATFORM_POSE {apply_pose(json.loads(args.pose))}", flush=True)
     apply_glass(meshes, glass)
     if args.materials and os.path.exists(args.materials):
         with open(args.materials, encoding="utf-8") as f:

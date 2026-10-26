@@ -1,12 +1,18 @@
 // Stands in for the Blender program in tests: reads Flatform's arguments, writes tiny PNG frames and reports progress
 // the way render/blender_turntable.py does. Never needs Blender.
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
 
 const args = process.argv.slice(process.argv.indexOf('--') + 1);
 const opt = (name) => (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : undefined);
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==', 'base64');
 const out = opt('out');
+if (/\.glb$/i.test(out || '')) { // render/blender_autorig.py: "rig" by copying the model and saying so
+  copyFileSync(opt('glb'), out);
+  writeFileSync(`${out}.args.json`, JSON.stringify(process.argv.slice(2)));
+  console.log('FLATFORM_RIG 22 0');
+  process.exit(0);
+}
 const frames = Number(opt('frames'));
 mkdirSync(out, { recursive: true });
 writeFileSync(path.join(out, 'fake-blender-args.json'), JSON.stringify(process.argv.slice(2)));

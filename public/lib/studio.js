@@ -785,7 +785,8 @@ export class Studio {
     this.applyYaw();
     this.carHeight = size.y;
     this.carSize = size.clone();
-    if (s.motion) applyMotion(this, s.motion, this.clipTime ?? null); // motion.js: stance, pose, clip frame
+    // motion.js: stance, pose, clip frame. The model's kind (humanoid or car, set by the page) wins over the scene's.
+    if (s.motion) applyMotion(this, { ...s.motion, type: this.kind || s.motion.type }, this.clipTime ?? null);
     this.applyMirror();
   }
 

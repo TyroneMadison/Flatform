@@ -45,7 +45,7 @@ export async function mount(el, { id }) {
   }
   scene = { ...defaultScene(state.settings), ...(activeWorkspace()?.camera === 'free' && { view: 'free' }), ...m.scene }; // Warframe workspaces start in free roam
   initPaint({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
-  initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector });
+  initMotion({ root: el, model: () => m, scene: () => scene, studio: () => studio, change, draw, renderInspector, reload: async (next, { glb = true } = {}) => { m = upsert(next); if (studio) studio.kind = m.kind; renderModel(); if (glb) await loadModel(); refresh(); } });
   initTools({ root: el, scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initPath({ scene: () => scene, studio: () => studio, change, draw, renderInspector });
   initLighting({ scene: () => scene, studio: () => studio, change, renderInspector, modelUrl: () => (m?.glb ? fileUrl(m, m.glb) : null) });
@@ -124,6 +124,7 @@ export async function mount(el, { id }) {
   let s;
   try {
     s = studio = new Studio($('#cv', el));
+    s.kind = m.kind; // humanoid or car; unset on models from before v3, then motion.js detects it
     s.setRig(state.settings || {}); // the light rig and glass set on the Render step
     s.enableOrbit(onOrbit); // free roam: drag orbits, wheel zooms, right or Shift drag pans
   } catch {

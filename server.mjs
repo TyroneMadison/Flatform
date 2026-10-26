@@ -34,6 +34,7 @@ import { decalKind, DECAL_FILE } from './public/lib/decals.js';
 import { normalizeTemplate } from './public/lib/templates.js';
 import { localEngine as createLocalEngine, downloadWeights, weightsReady, checkCuda, UPSCALER_FILES } from './local.mjs';
 import { loadPoses } from './public/lib/poses.js';
+import { RETARGET, deserializePose, poseBones } from './public/lib/motion.js';
 const PRESET_KINDS = ['camera-paths', 'skies', 'materials'];
 import { ENHANCE, enhanceBlock } from './enhance.mjs';
 import { createShares } from './share.mjs';
@@ -151,6 +152,7 @@ export async function startServer({
   threeDAIBase = THREE_D_AI_BASE,
   rateWindowMs, // default: a minute plus slack, see providers.mjs
   blenderScript = path.join(ROOT, 'render', 'blender_turntable.py'), // the packaged app ships it as a resource file
+  rigScript = path.join(path.dirname(blenderScript), 'blender_autorig.py'), // ships beside it
   // three.js addons (loaders, controls, decoders). electron-builder drops every dependency's examples/ folder,
   // so the packaged app ships this one as a resource file too.
   threeAddons = path.join(THREE, 'examples', 'jsm'),
@@ -376,9 +378,13 @@ export async function startServer({
       const file = form.get(view);
       if (file && typeof file === 'object') views[view] = await toImage(Buffer.from(await file.arrayBuffer()), file.type);
     }
-    return { setup, views, name: form.get('name'), workspace: workspaceOf(form.get('workspace')) };
+    return { setup, views, name: form.get('name'), workspace: workspaceOf(form.get('workspace')), kind: form.get('kind') };
   }
   const workspaceOf = (w) => (w === 'warframe' ? 'warframe' : 'car');
+  // What a model is, humanoid or car: picked on creation (the form's kind, else the workspace: Warframe makes
+  // humanoids), switchable later. Without one, the page falls back to motion.js detectModelType.
+  const KINDS = ['humanoid', 'car'];
+  const kindOf = (kind, workspace) => (KINDS.includes(kind) ? kind : workspace === 'warframe' ? 'humanoid' : 'car');
 
   // Checks a setup has the photos it needs. views: { front, left, back, right } of { image, type }.
   function checkViews(setup, views) {
@@ -473,6 +479,7 @@ export async function startServer({
     const id = randomUUID();
     const now = new Date().toISOString();
     const m = { id, name: cleanName(form.get('name') || originalName.replace(/\.[^.]+$/, '')), created_at: now, activeVersion: 1, versions: [], workspace: workspaceOf(form.get('workspace')) };
+    m.kind = kindOf(form.get('kind'), m.workspace);
     m.slug = uniqueSlug(m.name, slugsExcept(m));
     await mkdir(path.join(MODELS, m.id), { recursive: true });
     await writeFile(path.join(MODELS, m.id, 'model.glb'), glb);
@@ -493,12 +500,13 @@ export async function startServer({
   }
 
   async function createModel(req, queryName) {
-    const { setup, views, name, workspace } = await readInput(req);
+    const { setup, views, name, workspace, kind } = await readInput(req);
     if (!setup) throw new HttpError(400, 'Add a photo');
     checkViews(setup, views);
     const id = randomUUID();
     const task_id = await submit(setup, views, id);
     const m = { id, name: cleanName(name ?? queryName), created_at: new Date().toISOString(), activeVersion: 1, versions: [], workspace: workspace || 'car' };
+    m.kind = kindOf(kind, m.workspace);
     m.slug = uniqueSlug(m.name, slugsExcept(m));
     await mkdir(path.join(MODELS, m.id), { recursive: true });
     m.versions.push(newVersion(1, setup, task_id, await saveViews(m, 1, views)));
@@ -825,7 +833,7 @@ export async function startServer({
   }
 
   async function patchModel(m, body) {
-    const allowed = ['name', 'activeVersion', 'scene', 'approved', 'workspace', 'tennogen', 'car'];
+    const allowed = ['name', 'activeVersion', 'scene', 'approved', 'workspace', 'tennogen', 'car', 'kind'];
     if ('car' in body) {
       // Car auto-identify's answer, confirmed or edited: { make, model, yearRange, bodyStyle, color }.
       const c = body.car;
@@ -856,6 +864,10 @@ export async function startServer({
     if ('workspace' in body) {
       if (!['car', 'warframe'].includes(body.workspace)) throw new HttpError(400, 'workspace must be car or warframe');
       m.workspace = body.workspace;
+    }
+    if ('kind' in body) {
+      if (!KINDS.includes(body.kind)) throw new HttpError(400, 'kind must be humanoid or car');
+      m.kind = body.kind;
     }
     if ('tennogen' in body) { // the model's TennoGen texture folder and content type, or null
       if (body.tennogen === null) delete m.tennogen;
@@ -1167,6 +1179,7 @@ export async function startServer({
     const materialsFile = path.join(MODELS, m.id, 'blender-materials.json');
     const materials = paint?.pieces ? Object.fromEntries(Object.entries(paint.pieces).filter(([, p]) => p.material || p.slot || p.colors || p.region)
       .map(([key, p]) => [key, { ...blenderMaterial(deserializeMaterial(p.material), resolveColors(paint, p)), slot: p.slot, textured: p.material?.textured !== false && !p.material?.color }])) : {};
+    const poseArg = poseOf(m);
     const job = { status: 'running', looks, look: looks[0], frame: 0, frames, error: null };
     jobs.set(m.id, job);
     (async () => {
@@ -1181,7 +1194,7 @@ export async function startServer({
           '--look', look, '--frames', String(frames), '--step', String(STEP), '--res', `${width}x${height}`,
           ...(existsSync(sceneFile) ? ['--scene', sceneFile] : []),
           '--rig', JSON.stringify({ lighting: settings.lighting, glass: settings.glass }),
-          ...lookArg, '--materials', materialsFile,
+          ...lookArg, '--materials', materialsFile, ...poseArg,
           ...plateArg(look),
           ...(still !== undefined ? ['--still', String(still), '--still-out', path.join(m.renders.outDir, 'stills', stillName(m.slug, look, still))] : []),
         ]);
@@ -1192,6 +1205,46 @@ export async function startServer({
       job.error = e.message;
     });
     return jobView(job);
+  }
+
+  // A humanoid's pose for Blender: Euler degrees per standard bone (motion.js), the same numbers rig.js applies in the
+  // app, plus the bone name table. Cars never get one.
+  function poseOf(m) {
+    const motion = m.scene?.motion;
+    const kind = m.kind || (motion?.type === 'humanoid' ? 'humanoid' : 'car');
+    if (kind !== 'humanoid' || !motion?.pose) return [];
+    const p = deserializePose(motion.pose);
+    return ['--pose', JSON.stringify({ bones: poseBones(p.preset, p.bones), retarget: RETARGET })];
+  }
+
+  // ---- Free auto-rig (render/blender_autorig.py): a Mixamo-named skeleton, bound with automatic weights, saved
+  // as a new version (rigged.glb). Humanoids only; Blender runs on this computer, nothing is paid for.
+  const rigJobs = new Map(); // model id → { status, error, version }
+  const rigView = (job) => job && { status: job.status, error: job.error, version: job.version };
+  function startRig(m) {
+    if ((m.kind || 'car') !== 'humanoid') throw new HttpError(409, 'Only humanoids are rigged. Set this model to Humanoid first; cars are never rigged.');
+    const v = active(m);
+    if (v.status !== 'ready' || !v.glb) throw new HttpError(409, 'The model is not ready yet');
+    const bin = findBlender();
+    if (!bin) throw new HttpError(409, 'Auto-rig runs in Blender, which was not found. Install Blender 4.x or locate it in Settings.');
+    if (rigJobs.get(m.id)?.status === 'running') throw new HttpError(409, 'Already rigging this model');
+    const n = Math.max(...m.versions.map((x) => x.n)) + 1;
+    const out = n > 1 ? `rigged-v${n}.glb` : 'rigged.glb';
+    const job = { status: 'running', error: null, version: null };
+    rigJobs.set(m.id, job);
+    runBlender(job, bin, ['-b', '-P', rigScript, '--', '--glb', path.join(MODELS, m.id, v.glb), '--out', path.join(MODELS, m.id, out)])
+      .then(async () => {
+        if (!existsSync(path.join(MODELS, m.id, out))) throw new Error('Blender finished without writing the rigged model');
+        const now = new Date().toISOString();
+        m.versions.push({ n, created_at: now, provider: 'rig', status: 'ready', progress: 100, glb: out, thumb: v.thumb, source: v.source,
+          exports: {}, credits: 0, generation: null, rigged: true, note: `Auto-rigged from version ${v.n} in Blender` });
+        m.activeVersion = n;
+        mirror(m);
+        await save();
+        Object.assign(job, { status: 'done', version: n });
+      })
+      .catch((e) => Object.assign(job, { status: 'failed', error: e.message.replace(/^.*FLATFORM_ERROR /, '') }));
+    return rigView(job);
   }
 
   // ---- Spin sets for Dud Rents (spin.mjs): photo imports, Generate Spin Set, Send to Dud Rents ----
@@ -1560,6 +1613,8 @@ export async function startServer({
         return send(res, 200, { ok: true });
       }
       if (sub === 'retry' && method === 'POST') return send(res, 200, await retry(m));
+      if (sub === 'rig' && method === 'POST') return send(res, 202, startRig(m));
+      if (sub === 'rig' && method === 'GET') return send(res, 200, rigView(rigJobs.get(id)) ?? null);
       if (sub === 'versions' && method === 'POST') return send(res, 201, await addVersion(req, m));
       if (sub === 'enhance' && method === 'POST') return send(res, 202, await startEnhance(m, (await readJson(req)).kind));
       if (sub === 'enhance' && method === 'GET') { await once(`${id}:enhance`, () => refreshEnhance(m)); return send(res, 200, active(m).enhance ?? null); }

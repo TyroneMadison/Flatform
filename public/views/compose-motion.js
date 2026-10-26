@@ -1,6 +1,6 @@
 // Compose, the Pose and motion group: model type (auto or set), car stance or humanoid pose, part tags for wheels,
 // doors, hood and trunk, and the animation preview (play, pause, speed, loop, scrub). Saved in scene.motion.
-import { $, esc } from '../app.js';
+import { $, esc, api, send, toast } from '../app.js';
 import { MODEL_TYPES, STANCES, STANCE_DEFAULT, STANCE_LIMITS, applyStance, availableStances, POSES, BONES, clipsFor, TAGS, deserializePose } from '../lib/motion.js';
 import { tagsFor, modelInfo } from '../lib/rig.js';
 import { listPieces } from '../lib/paint.js';
@@ -47,8 +47,10 @@ export function renderMotionGroup() {
   const studio = ctx.studio();
   if (!studio?.model) return '';
   const mo = motionOf();
-  const info = modelInfo(studio, mo.type || 'auto');
-  const typeSel = `<label class="row-sel"><span>Model type</span><select class="inp" data-mo-type>${Object.entries(MODEL_TYPES).map(([k, l]) => `<option value="${k}" ${k === (mo.type || 'auto') ? 'selected' : ''}>${l}${k === 'auto' ? ` (${info.type === 'car' ? 'Car' : 'Humanoid'})` : ''}</option>`).join('')}</select></label>`;
+  const kind = ctx.model()?.kind;
+  const info = modelInfo(studio, kind || mo.type || 'auto');
+  // The model's kind (saved on the model): Auto shows only while it was never set, with what detection found.
+  const typeSel = `<label class="row-sel"><span>Model type</span><select class="inp" data-mo-kind>${Object.entries(MODEL_TYPES).filter(([k]) => k !== 'auto' || !kind).map(([k, l]) => `<option value="${k}" ${k === (kind || 'auto') ? 'selected' : ''}>${l}${k === 'auto' ? ` (${info.type === 'car' ? 'Car' : 'Humanoid'})` : ''}</option>`).join('')}</select></label>`;
   const clips = clipsFor(info.type);
   const preview = `<div class="mg-row"><select class="inp" data-mo-clip aria-label="Animation"><option value="">No animation</option>${clips.map((c) => `<option value="${c.id}" ${mo.clip === c.id ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}</select>
       <button class="btn sm sec" type="button" data-mo-act="play" ${mo.clip ? '' : 'disabled'}>${playing ? 'Pause' : 'Play'}</button>
@@ -67,15 +69,35 @@ export function renderMotionGroup() {
       ${num('mo-rd', 'Rear drop m', ...STANCE_LIMITS.rearDrop, 0.01, s.rearDrop, 'stance.rearDrop')}
       ${['doors', 'hood', 'trunk'].filter((k) => Object.values(tags).some((v) => v.tag === (k === 'doors' ? 'door' : k))).map((k) => num(`mo-${k}`, `${k[0].toUpperCase() + k.slice(1)} open`, 0, 80, 1, s[k], `stance.${k}`)).join('')}
       <details><summary>Part tags (${Object.keys(tags).length})</summary>${whole.slice(0, 200).map((p) => `<label class="row-sel"><span>${esc(p.name)}</span><select class="inp" data-mo-tag="${esc(p.key)}"><option value="">None</option>${Object.entries(TAGS).map(([k, l]) => `<option value="${k}" ${tags[p.key]?.tag === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`).join('') || '<p class="fine">No separate meshes to tag.</p>'}</details></details>`;
+  } else if (!hasSkeleton(studio.model)) {
+    body = rigPanel();
   } else {
     const pose = deserializePose(mo.pose || { preset: 'tpose' });
     const v = pose.bones[boneSel] || [0, 0, 0];
     body = `${presetChips('humanoid', studio.model, mo.presetId)}<details><summary>Fine tune</summary><div class="chips" role="group" aria-label="Pose">${Object.entries(POSES).map(([k, p]) => `<button class="chip" type="button" data-mo-pose="${k}" aria-pressed="${pose.preset === k}">${esc(p.label)}</button>`).join('')}</div>
       <label class="row-sel"><span>Bone</span><select class="inp" data-mo-bone>${BONES.map((b) => `<option ${b === boneSel ? 'selected' : ''}>${b}</option>`).join('')}</select></label>
-      ${['X', 'Y', 'Z'].map((a, i) => num(`mo-b${a}`, `Rotate ${a}`, -180, 180, 1, v[i], `bone.${i}`)).join('')}
-      ${studio.model && !hasSkeleton(studio.model) ? '<p class="fine">This model has no skeleton yet, so poses show after rigging. Auto-rig needs chin, wrists, elbows, knees and groin markers.</p>' : ''}</details>`;
+      ${['X', 'Y', 'Z'].map((a, i) => num(`mo-b${a}`, `Rotate ${a}`, -180, 180, 1, v[i], `bone.${i}`)).join('')}</details>`;
   }
   return `<div class="grp" id="grp-motion"><h3>Pose and motion</h3>${typeSel}${body}<h4 class="fine">Animation preview</h4>${preview}</div>`;
+}
+// A humanoid with no bones: poses would do nothing, so say so and offer the free Blender rig instead.
+let rigging = null; // model id being rigged
+function rigPanel() {
+  const busy = rigging === ctx.model()?.id;
+  return `<div class="warnbox" role="alert"><b>No skeleton</b><p>This model has no bones, so poses and humanoid animations can't move it. Rig it first.</p></div>
+    <button class="btn pri" type="button" data-mo-act="rig" ${busy ? 'disabled' : ''}>${busy ? 'Rigging in Blender…' : 'Auto-rig (free, in Blender)'}</button>
+    <p class="fine">Builds a skeleton with Mixamo bone names, binds it with automatic weights and saves it as a new version. Works best on a model standing upright, facing the camera, arms out or down.</p>`;
+}
+async function rig() {
+  const m = ctx.model();
+  try { await send(`/api/models/${m.id}/rig`, 'POST', {}); } catch (e) { toast(e.message); return; }
+  rigging = m.id; ctx.renderInspector();
+  let job;
+  do { await new Promise((ok) => setTimeout(ok, 1000)); job = await api(`/api/models/${m.id}/rig`).catch(() => null); } while (job?.status === 'running');
+  rigging = null;
+  if (job?.status !== 'done') { toast(`Auto-rig failed: ${job?.error || 'no answer from Flatform'}`); ctx.renderInspector(); return; }
+  toast(`Rigged · version ${job.version}`, 'info');
+  if (ctx.model()?.id === m.id) await ctx.reload(await api(`/api/models/${m.id}`));
 }
 const hasSkeleton = (m) => { let b = false; m.traverse((o) => { if (o.isBone) b = true; }); return b; };
 
@@ -90,6 +112,7 @@ export async function onMotionClick(t) {
   }
   if (t.dataset.moStance) { stop(); await setMotion({ stance: applyStance(motionOf().stance, t.dataset.moStance) }); return true; }
   if (t.dataset.moPose) { const p = deserializePose(motionOf().pose || {}); await setMotion({ pose: { preset: t.dataset.moPose, bones: t.dataset.moPose === p.preset ? p.bones : {} } }); return true; }
+  if (t.dataset.moAct === 'rig') { await rig(); return true; }
   if (t.dataset.moAct === 'play') {
     if (playing) { stop(); ctx.renderInspector(); return true; }
     playing = true; t0 = performance.now() - clipT * 1000; raf = requestAnimationFrame(tick); ctx.renderInspector(); return true;
@@ -113,7 +136,13 @@ export function onMotionInput(t) {
   return true;
 }
 export async function onMotionChange(t) {
-  if (t.dataset.moType !== undefined) { stop(); await setMotion({ type: t.value }); return true; }
+  if (t.dataset.moKind !== undefined) {
+    stop();
+    if (t.value === 'auto') return true;
+    try { await ctx.reload(await send(`/api/models/${ctx.model().id}`, 'PATCH', { kind: t.value }), { glb: false }); } catch (e) { toast(e.message); return true; }
+    await setMotion({ type: t.value });
+    return true;
+  }
   if (t.dataset.moClip !== undefined) { stop(); clipT = 0; ctx.studio()?.setClipTime(t.value ? 0 : null); await setMotion({ clip: t.value || null }); return true; }
   if (t.dataset.moLoop !== undefined) { await setMotion({ loop: t.checked }, { inspector: false }); return true; }
   if (t.dataset.moBone !== undefined) { boneSel = t.value; ctx.renderInspector(); return true; }
