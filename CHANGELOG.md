@@ -2,6 +2,11 @@
 
 Newest first. Numbering: [VERSIONING.md](VERSIONING.md).
 
+## 1.5 (1.5.0)
+
+- **Mac builds ship again.** A test that looks for Blender failed on macOS and stopped the Mac build. It is fixed,
+  so this release has a Mac app as well as a Windows one. Nothing else changed since 1.4.
+
 ## 1.4 (1.4.0)
 
 - **Several photos make ONE model.** Drop in a few photos of the same thing and Flatform builds one model from all
