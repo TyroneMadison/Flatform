@@ -410,6 +410,8 @@ test('the Render step light rig and glass are saved in settings and validated', 
 
 test('Blender is found on PATH, in a portable folder in the home folder, and in Program Files', async () => {
   const { blenderCandidates } = await import('./server.mjs');
+  assert.ok(blenderCandidates('linux', { PATH: '/opt/b' }).includes('/opt/b/blender'));
+  if (process.platform !== 'win32') return; // the rest reads real folders through Windows paths
   const home = await tempDir();
   const env = { PATH: path.join(home, 'bin'), USERPROFILE: home, ProgramFiles: path.join(home, 'PF') };
   await mkdir(path.join(home, 'Blender', 'blender-4.2.1-windows-x64'), { recursive: true });
@@ -420,7 +422,6 @@ test('Blender is found on PATH, in a portable folder in the home folder, and in 
   assert.ok(list.includes(path.join(home, 'PF', 'Blender Foundation', 'Blender 4.5', 'blender.exe')));
   const portable = list.filter((p) => p.startsWith(path.join(home, 'Blender', 'blender-')));
   assert.deepEqual(portable.map((p) => path.basename(path.dirname(p))), ['blender-5.2.2-windows-x64', 'blender-4.2.1-windows-x64']); // newest first
-  assert.ok(blenderCandidates('linux', { PATH: '/opt/b' }).includes('/opt/b/blender'));
 });
 
 test('keys: saved, replaced and removed per provider, never sent back to the page', async () => {
