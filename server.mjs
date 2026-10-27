@@ -1278,10 +1278,10 @@ export async function startServer({
           ...(still !== undefined ? ['--still', String(still), '--still-out', stillOut(look)] : []),
         ]);
       }
-      job.status = 'done';
       const first = still !== undefined ? stillOut(looks[0])
         : path.join(m.renders.outDir, 'frames', looks[0], `${m.slug}_000.png`);
       if (existsSync(first)) await noteVersion(m, first, still !== undefined ? 'Picture' : 'Spin video');
+      job.status = 'done'; // after History has the version, so a client that sees done finds it there
     })().catch((e) => {
       if (job.status === 'running') job.status = 'failed';
       job.error = e.message;
