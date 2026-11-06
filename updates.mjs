@@ -52,6 +52,14 @@ export function releaseUrl(url) {
   return null;
 }
 
+// The file name of an installer this app may download and run itself: an .exe or .dmg attached to one of this
+// repository's releases (https://github.com/TyroneMadison/Flatform/releases/download/<tag>/<name>). Anything else → null.
+export function installerFile(url) {
+  const href = releaseUrl(url);
+  const m = href && /^\/TyroneMadison\/Flatform\/releases\/download\/[^/]+\/([\w.-]+\.(?:exe|dmg))$/i.exec(new URL(href).pathname);
+  return m && !new URL(href).search ? m[1] : null;
+}
+
 // One line of release notes as plain text, or '' when nothing in it is worth reading.
 function plain(line) {
   const text = line

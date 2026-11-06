@@ -184,6 +184,8 @@ dialog h2 { font: 600 20px var(--display); letter-spacing: -.02em; margin-bottom
 dialog p { font-size: 13px; }
 dialog a { color: var(--accent-hi); }
 dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+dialog.updatedlg .row { flex-wrap: wrap; }
+dialog.updatedlg progress { width: 100%; margin-top: 12px; accent-color: var(--accent-hi); }
 #toast { color: var(--text); position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 50; max-width: min(640px, 90vw); padding: 10px 16px; border-radius: 6px; font-size: 13px; background: var(--surface-pop); border: 1px solid var(--bad); }
 #toast.info { background: var(--surface-pop); border-color: var(--accent); }
 

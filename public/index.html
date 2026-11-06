@@ -88,6 +88,15 @@
   </form>
 </dialog>
 
+<dialog id="updateDialog" class="updatedlg" aria-labelledby="updateTitle" aria-describedby="updateText">
+  <h2 id="updateTitle"></h2>
+  <p class="fine" id="updateVersions"></p>
+  <p class="muted" id="updateText"></p>
+  <progress id="updateProgress" max="1" hidden title="Downloading the new version"></progress>
+  <div class="form-error" id="updateError" role="alert"></div>
+  <div class="row" id="updateActions"></div>
+</dialog>
+
 <dialog id="palette" class="palette" aria-label="Find anything">
   <input id="paletteInput" class="inp" type="search" placeholder="Type an action, a setting or a world" title="Type a few letters, then press Enter. Esc closes." autocomplete="off" spellcheck="false" role="combobox" aria-controls="paletteList" aria-expanded="true">
   <ul id="paletteList" role="listbox" aria-label="Results"></ul>

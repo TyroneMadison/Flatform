@@ -1,12 +1,14 @@
 // Electron shell: runs the app server inside the app and shows it in a window.
 import { app, BrowserWindow, safeStorage, shell, ipcMain, dialog, Notification, powerSaveBlocker } from 'electron';
-import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { createWriteStream, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
+import { readFile, rename } from 'node:fs/promises';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startApp, suggestedOutputRoot } from './server.mjs';
 import { createKeyStore } from './keys.mjs';
-import { updateOptions } from './updates.mjs';
+import { installerFile, updateOptions } from './updates.mjs';
 import { PROVIDERS } from './public/lib/engines.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -99,6 +101,37 @@ ipcMain.handle('open-path', async (e, p) => {
   if (!fromApp(e) || !existingPath(p) || !statSync(p).isDirectory()) throw new Error('Not allowed');
   const error = await shell.openPath(p);
   if (error) throw new Error(error);
+});
+
+// Download and install (the update popup). Main fetches the installer itself, only from this repository's releases
+// (installerFile), sends 'update-progress' (0..1) while it comes in, then on install-update runs it and quits so it
+// can replace the app. The page names a URL to check, never a file to run.
+let installer = null;
+ipcMain.handle('download-update', async (e, url) => {
+  const name = installerFile(url);
+  if (!fromApp(e) || !name) throw new Error('Not allowed');
+  const res = await fetch(url, { signal: AbortSignal.timeout(15 * 60000) });
+  if (!res.ok || !res.body) throw new Error(`The download did not start (HTTP ${res.status}). Try Download in your browser.`);
+  const total = Number(res.headers.get('content-length')) || 0;
+  const file = path.join(app.getPath('temp'), name);
+  let got = 0;
+  let told = 0;
+  await pipeline(Readable.fromWeb(res.body), async function* (src) {
+    for await (const chunk of src) {
+      got += chunk.length;
+      if (total && got / total - told >= 0.01) e.sender.send('update-progress', (told = got / total));
+      yield chunk;
+    }
+  }, createWriteStream(`${file}.part`));
+  if (total && got !== total) throw new Error('The download was cut short. Try again.');
+  await rename(`${file}.part`, file); // never run a half-downloaded installer
+  installer = file;
+});
+ipcMain.handle('install-update', async (e) => {
+  if (!fromApp(e) || !installer || !existsSync(installer)) throw new Error('Not allowed');
+  const error = await shell.openPath(installer); // Windows: the Setup wizard; Mac: the .dmg opens to drag Flatform in
+  if (error) throw new Error(error);
+  app.quit();
 });
 
 function createWindow(port) {

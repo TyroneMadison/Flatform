@@ -8,9 +8,10 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { compareVersions, pickAsset, releaseUrl, shortNotes, getLatest, updateOptions, createUpdater, LATEST_URL, RELEASES_PAGE } from '../updates.mjs';
+import { compareVersions, pickAsset, releaseUrl, installerFile, shortNotes, getLatest, updateOptions, createUpdater, LATEST_URL, RELEASES_PAGE } from '../updates.mjs';
 import { startServer } from '../server.mjs';
 import { createKeyStore } from '../keys.mjs';
+import { updateActions } from '../public/lib/notices.js';
 
 const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 const PAGE = (tag) => `https://github.com/TyroneMadison/Flatform/releases/tag/${tag}`;
@@ -68,6 +69,26 @@ test('only https links to this repository on github.com are ever opened', () => 
     'https://github.com/TyroneMadison/Flatform/../../evil/x', 'https://github.com/TyroneMadison/Flatform/%2e%2e/%2e%2e/evil/x', 'https://api.github.com/repos/TyroneMadison/Flatform/releases',
     'https://objects.githubusercontent.com/TyroneMadison/Flatform/x.exe', 'javascript:alert(1)', 'file:///C:/Flatform-Setup.exe', '', undefined, 42,
   ]) assert.equal(releaseUrl(bad), null, String(bad));
+});
+
+test("Download and install: only an .exe or .dmg on one of this repository's releases, by its file name", () => {
+  assert.equal(installerFile(`${DL}Flatform-Setup-0.5.0.exe`), 'Flatform-Setup-0.5.0.exe');
+  assert.equal(installerFile(`${DL}Flatform-0.5.0-arm64.dmg`), 'Flatform-0.5.0-arm64.dmg');
+  for (const bad of [`${DL}latest.yml`, `${DL}Flatform-Setup-0.5.0.exe.blockmap`, `${DL}x.exe?y=1`, PAGE('v0.5.0'),
+    'https://github.com/Someone/Flatform/releases/download/v1/Flatform-Setup-1.0.0.exe', 'http://github.com/TyroneMadison/Flatform/releases/download/v1/a.exe',
+    'https://github.com/TyroneMadison/Flatform/releases/download/v1/../../../evil.exe', null, 42]) assert.equal(installerFile(bad), null, String(bad));
+});
+
+test('update popup: Download and install in the desktop app with an installer, else Download; then What is new, Later, Skip', () => {
+  const u = { newer: true, latest: '0.5.0', downloadUrl: `${DL}Flatform-Setup-0.5.0.exe`, pageUrl: PAGE('v0.5.0') };
+  const ids = (...a) => updateActions(...a).map((x) => x.id);
+  assert.deepEqual(ids(u, true), ['install', 'notes', 'later', 'skip']);
+  assert.deepEqual(ids(u, false), ['download', 'notes', 'later', 'skip']); // npm run web: the browser downloads it
+  assert.deepEqual(ids({ ...u, downloadUrl: PAGE('v0.5.0') }, true), ['download', 'notes', 'later', 'skip']); // no installer for this computer
+  assert.match(updateActions({ ...u, downloadUrl: PAGE('v0.5.0') })[0].title, /download page/);
+  assert.deepEqual(ids({ ...u, newer: false }, true), []);
+  assert.deepEqual(ids({ ...u, skipped: true }, true), []);
+  assert.deepEqual(ids(null), []);
 });
 
 test("the banner's note: the first paragraph as plain text, at most 140 characters", () => {
