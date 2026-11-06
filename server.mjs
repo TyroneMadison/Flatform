@@ -63,7 +63,8 @@ const THREE = path.join(ROOT, 'node_modules', 'three');
 // Path tracer modules served to the page like three's addons (their src/ ships inside the app).
 // The drawing kit's marker and QR readers (classic scripts, public/views/drawing.js loads them) are served the same way.
 const VENDOR = { 'three-mesh-bvh': path.join(ROOT, 'node_modules', 'three-mesh-bvh', 'src'), 'three-gpu-pathtracer': path.join(ROOT, 'node_modules', 'three-gpu-pathtracer', 'src'),
-  'js-aruco2': path.join(ROOT, 'node_modules', 'js-aruco2', 'src'), jsqr: path.join(ROOT, 'node_modules', 'jsqr', 'dist') };
+  'js-aruco2': path.join(ROOT, 'node_modules', 'js-aruco2', 'src'), jsqr: path.join(ROOT, 'node_modules', 'jsqr', 'dist'),
+  'pdfjs-dist': path.join(ROOT, 'node_modules', 'pdfjs-dist', 'build') }; // the kit reads template PDFs with pdf.js
 // The printable drawing template and its box positions (Download template, and the parser's layout).
 const TEMPLATE = path.join(ROOT, 'assets', 'template');
 const MAX_INFER = 4 * 1024 * 1024; // a 256 px PNG of the photo plus its cluster statistics
@@ -100,7 +101,7 @@ const RESULTS_KEPT = 24 * 60 * 60 * 1000; // 3D AI Studio deletes results after 
 const EXPIRED = '3D AI Studio keeps results for 24 hours and this job is older, so its model is gone. Retry to generate it again.';
 const KEY_FORMAT = /^[\x21-\x7e]{10,300}$/; // printable, no spaces; it goes into an Authorization header
 const MIME = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.md': 'text/markdown; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
   '.svg': 'image/svg+xml', '.ttf': 'font/ttf', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.usdz': 'model/vnd.usdz+zip',

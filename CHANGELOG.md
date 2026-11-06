@@ -2,6 +2,13 @@
 
 Newest first. Numbering: [VERSIONING.md](VERSIONING.md).
 
+## Unreleased
+
+- **Drop the drawing template PDF.** Drew on the template PDF on a tablet, or scanned your pages into one PDF? Drop
+  it in (or pick it in the Drawing kit). Each page is read like a photo: the corner squares and code find the page,
+  pages group by sheet, and the views, colors and color map make one Warframe model. Works from Car mode too: a PDF
+  switches to Warframe mode. PDF pages and photos of the same sheet mix; the last read of a page wins.
+
 ## 1.5 (1.5.0)
 
 - **Mac builds ship again.** A test that looks for Blender failed on macOS and stopped the Mac build. It is fixed,
