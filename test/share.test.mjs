@@ -35,7 +35,8 @@ test('share page address: https only (http for this computer), no trailing slash
 
 test('set up: a link uploads its picture, the page shows it, expiry and turning off reach the Worker', async () => {
   const w = fakeWorker();
-  let t = Date.parse('2026-10-26T00:00:00Z');
+  const t0 = Date.now(); // the Worker checks expiry against the real clock
+  let t = t0;
   const sh = createShares({ file: path.join(await tmp(), 'shares.json'), remote: () => ({ url: 'https://share.test', token: 'a-long-share-token-123' }),
     files: async () => ({ poster: Buffer.from('PICTURE') }), fetch: w.fetch, now: () => t });
   assert.equal(sh.ready(), true);
@@ -51,7 +52,7 @@ test('set up: a link uploads its picture, the page shows it, expiry and turning 
 
   await sh.setExpiry(s.id, 1);
   t += 2 * 864e5;
-  assert.equal(JSON.parse(w.store.get(`${s.id}/meta.json`)).expiresAt, new Date(Date.parse('2026-10-26T00:00:00Z') + 864e5).toISOString());
+  assert.equal(JSON.parse(w.store.get(`${s.id}/meta.json`)).expiresAt, new Date(t0 + 864e5).toISOString());
   assert.equal((await sh.list())[0].expired, true);
   assert.equal(await sh.remove(s.id), true);
   assert.equal(w.store.size, 0, 'everything is gone from the bucket');

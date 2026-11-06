@@ -4,10 +4,20 @@ Newest first. Numbering: [VERSIONING.md](VERSIONING.md).
 
 ## Unreleased
 
+## 1.6 (1.6.0)
+
 - **Drop the drawing template PDF.** Drew on the template PDF on a tablet, or scanned your pages into one PDF? Drop
   it in (or pick it in the Drawing kit). Each page is read like a photo: the corner squares and code find the page,
   pages group by sheet, and the views, colors and color map make one Warframe model. Works from Car mode too: a PDF
   switches to Warframe mode. PDF pages and photos of the same sheet mix; the last read of a page wins.
+- **Updates you can install from the app.** When a newer Flatform is out, a popup says so (once per version; the
+  top-bar pill opens it again) instead of a message that vanished after 15 seconds. In the desktop app, Download and
+  install fetches the installer, shows progress, then Install and restart runs it. What is new, Later and Skip this
+  version are still there.
+- **Settings and the version are easy to find.** The top-bar button is a gear with the word "Settings" on it, at
+  every window size. The version is always shown and opens Settings > About; the Settings header shows it too.
+- **Fixed: a stuck "Next: Max quality · 150 credits" card.** On the Drop screen the tip cards floated over the page
+  and that card stayed stuck on top. They sit in place again.
 
 ## 1.5 (1.5.0)
 
