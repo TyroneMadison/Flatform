@@ -8,6 +8,7 @@ import { PROVIDERS, ENGINES, normalize, presetConfig, matchPreset, PRESETS } fro
 import { estimate } from './lib/pricing.js';
 import { guessPhotos, planJobs } from './lib/photo-set.js';
 import { isModelFile, importModel } from './lib/importer.js';
+import { isPdf } from './lib/pdf-pages.js';
 import { installHotkeys, loadKeys } from './lib/hotkeys.js';
 import { SHORTCUTS, worksOn, keyOf } from './lib/shortcuts.js';
 import { blenderLight, accountLight } from './lib/render-status.js';
@@ -191,6 +192,13 @@ export function addFiles(files, { quick = false } = {}) {
   const list = [...files];
   const models = list.filter(isModelFile);
   if (models.length) importModels(models);
+  // A PDF can only be the drawing template (filled in or scanned): the drawing kit reads it, with any photos dropped
+  // alongside, in Warframe mode.
+  if (list.some(isPdf)) {
+    setMode('warframe');
+    import('./views/drawing.js').then((kit) => kit.openDrawing(kit.pickedFiles(list.filter((f) => !isModelFile(f)))));
+    return;
+  }
   const photos = takePhotos(list.filter((f) => !isModelFile(f)));
   if (!photos.length) return;
   // Warframe mode: photos of the drawing template open the drawing kit card instead of the setup screen.

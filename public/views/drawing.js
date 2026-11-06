@@ -2,17 +2,18 @@
 // with lib/drawing-kit.js, then a quick check before any credits are spent: the views found, the sheet, the colors
 // and anything to fix. Make my 3D model sends the FRONT plus up to 3 more views as one job; the cover's colors and
 // the color map go with the model (scene.drawing) for Part colors. Opened from the Drop screen (Drawing kit) and by
-// app.js addFiles when dropped photos are template pages.
+// app.js addFiles when dropped photos are template pages, or any PDF is dropped (each PDF page is read as a photo).
 import { $, esc, state, go, enqueue, savedSetup, costOf, setupLabel, takePhotos, refresh } from '../app.js';
 import { icon } from '../lib/icons.js';
 import { normalize } from '../lib/engines.js';
 import { ROLES } from '../lib/roles.js';
 import * as K from '../lib/drawing-kit.js';
 import { TEMPLATE_URL, foundOf } from '../lib/drawing-tips.js';
+import { isPdf, pdfPages } from '../lib/pdf-pages.js';
 
 export { TEMPLATE_URL };
 const VIEW_LABEL = { front: 'Front', back: 'Back', left: 'Left side', right: 'Right side' };
-let libs = null, layout = null;
+let libs = null, layout = null, pdfjs = null;
 let scans = []; // [{ name, qr?, error?, content?, url? }]
 let reading = null; // 'Reading page 2 of 5' while photos are read
 let dialog = null;
@@ -30,6 +31,13 @@ async function load() {
     libs = { AR: window.AR, jsQR: window.jsQR };
   }
   layout ||= await (await fetch('/template/layout.json')).json();
+}
+async function loadPdf() {
+  if (!pdfjs) {
+    pdfjs = await import('/vendor/pdfjs-dist/src/pdf.mjs');
+    pdfjs.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs-dist/src/pdf.worker.mjs';
+  }
+  return pdfjs;
 }
 // A photo's pixels, at most maxSide on its long side.
 async function pixels(file, maxSide = 4000) {
@@ -57,45 +65,62 @@ export async function hasDrawingPage(photos) {
   return false;
 }
 
-/** Opens the card, reading `photos` ([{ file, name, type }] from takePhotos) first. No photos: the how-to. */
+/** Opens the card, reading `photos` ([{ file, name, type }] from takePhotos, or PDFs as { file, name, pdf: true }) first. No photos: the how-to. */
 export async function openDrawing(photos = []) {
   if (!dialog) {
     dialog = document.createElement('dialog');
     dialog.id = 'drawDialog';
     dialog.className = 'drawdlg';
     dialog.setAttribute('aria-labelledby', 'drawTitle');
-    dialog.innerHTML = `<input type="file" id="drawPick" accept="image/png,image/jpeg" multiple hidden><div id="drawBody"></div>`;
+    dialog.innerHTML = `<input type="file" id="drawPick" accept="image/png,image/jpeg,application/pdf,.pdf" multiple hidden><div id="drawBody"></div>`;
     document.body.append(dialog);
     dialog.addEventListener('click', onClick);
-    $('#drawPick', dialog).addEventListener('change', (e) => { const list = takePhotos(e.target.files); e.target.value = ''; if (list.length) addPhotos(list); });
+    $('#drawPick', dialog).addEventListener('change', (e) => { const list = pickedFiles(e.target.files); e.target.value = ''; if (list.length) addPhotos(list); });
   }
   if (!dialog.open) dialog.showModal();
   render();
   if (photos.length) await addPhotos(photos);
 }
 
+/** Photos and PDFs among picked or dropped files, for openDrawing. */
+export function pickedFiles(files) {
+  const list = [...files];
+  return [...list.filter(isPdf).map((file) => ({ file, name: file.name.replace(/\.[^.]+$/, '') || 'Drawing', pdf: true })), ...takePhotos(list.filter((f) => !isPdf(f)))];
+}
+const step = async (text) => { reading = text; render(); await new Promise((r) => setTimeout(r, 30)); }; // let the card show the step
+// One page's pixels read into a scan: { name, qr?, error?, content?, blob?, url? }. A new read of a page replaces the old.
+async function readScan(name, img) {
+  const scan = { name };
+  const r = K.readPage(img, layout, libs);
+  if (r.error) return { ...scan, error: r.error };
+  scan.qr = r.qr;
+  scan.content = K.readContent(r.page, r.qr, layout);
+  if (scan.content.image) { scan.blob = await toBlob(scan.content.image); scan.url = URL.createObjectURL(scan.blob); delete scan.content.image; }
+  if (scan.content.crops) for (const [k, c] of Object.entries(scan.content.crops)) scan.content.crops[k] = c ? await toBlob(c) : null; // kept for colors
+  for (const old of scans.filter((s) => s.qr && s.qr.sheet === r.qr.sheet && s.qr.page === r.qr.page)) { if (old.url) URL.revokeObjectURL(old.url); scans.splice(scans.indexOf(old), 1); }
+  return scan;
+}
+
 async function addPhotos(photos) {
   scans = scans.filter((s) => !s.error); // a new try: old errors go
   try { await load(); } catch (e) { reading = null; scans.push({ name: 'The page reader', error: e.message }); return render(); }
   for (const [i, p] of photos.entries()) {
-    reading = photos.length > 1 ? `Reading photo ${i + 1} of ${photos.length}…` : 'Reading your photo…';
-    render();
-    await new Promise((r) => setTimeout(r, 30)); // let the card show the step
-    const scan = { name: p.name };
+    const of = photos.length > 1 ? ` (file ${i + 1} of ${photos.length})` : '';
+    if (p.pdf) {
+      try {
+        await step(`Opening ${p.name}.pdf…`);
+        for await (const { n, total, image } of pdfPages(new Uint8Array(await p.file.arrayBuffer()), await loadPdf(), (w, h) => new OffscreenCanvas(w, h))) {
+          await step(`Reading page ${n} of ${total}${of}…`);
+          scans.push(await readScan(`${p.name} page ${n}`, image));
+        }
+      } catch (e) { scans.push({ name: `${p.name}.pdf`, error: `we could not open this PDF (${e.message}).` }); }
+      continue;
+    }
+    await step(photos.length > 1 ? `Reading photo ${i + 1} of ${photos.length}…` : 'Reading your photo…');
     try {
       if (p.type === 'image/heic') throw new Error('we can not open this photo type here. Save it as JPEG and add it again.');
-      const r = K.readPage(await pixels(p.file), layout, libs);
-      if (r.error) scan.error = r.error;
-      else {
-        scan.qr = r.qr;
-        scan.content = K.readContent(r.page, r.qr, layout);
-        if (scan.content.image) { scan.blob = await toBlob(scan.content.image); scan.url = URL.createObjectURL(scan.blob); delete scan.content.image; }
-        if (scan.content.crops) for (const [k, c] of Object.entries(scan.content.crops)) scan.content.crops[k] = c ? await toBlob(c) : null; // kept for colors
-        // A new photo of a page replaces the old one.
-        for (const old of scans.filter((s) => s.qr && s.qr.sheet === r.qr.sheet && s.qr.page === r.qr.page)) { if (old.url) URL.revokeObjectURL(old.url); scans.splice(scans.indexOf(old), 1); }
-      }
-    } catch (e) { scan.error = e.message; }
-    scans.push(scan);
+      scans.push(await readScan(p.name, await pixels(p.file)));
+    } catch (e) { scans.push({ name: p.name, error: e.message }); }
   }
   reading = null;
   // The Drop screen's tips card shows Template detected with the sheet and views; See check opens this card again.
@@ -160,9 +185,9 @@ function render() {
       <ol class="dk-steps">
         <li><b>Print the template</b><span>7 pages on US Letter, at 100%.</span></li>
         <li><b>Draw your character</b><span>Only the FRONT page is a must. Back and sides help a lot.</span></li>
-        <li><b>Take a photo of each page</b><span>Flat, in good light, with the 4 corner squares in view.</span></li>
+        <li><b>Take a photo of each page</b><span>Flat, in good light, with the 4 corner squares in view. Drew on the PDF or scanned it? Add the PDF.</span></li>
       </ol>
-      <div class="dk-foot"><button class="btn pri" type="button" data-dk="pick" title="Pick photos of your drawing pages from this computer">${icon('upload', 16)}<span>Add page photos</span></button>${download}</div>`;
+      <div class="dk-foot"><button class="btn pri" type="button" data-dk="pick" title="Pick photos of your drawing pages, or the filled-in template PDF, from this computer">${icon('upload', 16)}<span>Add photos or PDF</span></button>${download}</div>`;
   } else {
     const r = K.precheck(scans);
     const setup = recipe(r.views);
