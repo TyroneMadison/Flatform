@@ -146,6 +146,12 @@ test('top bar: every v3 control is there, with a tooltip', () => {
   for (const id of ['wsPill', 'modeSeg', 'undoBtn', 'redoBtn', 'savedNote', 'renderLight', 'accountStatus', 'blenderLight', 'searchBtn', 'libraryBtn', 'shareBtn', 'presentBtn', 'settingsBtn', 'appVersion']) assert.match(bar, new RegExp(`id="${id}"`), id);
   for (const label of ['Car', 'Warframe', 'Undo', 'Redo', 'Saved', 'Nothing rendering', 'Tripo', 'Blender · GPU', 'Search', 'Library', 'Share', 'Show a client']) assert.ok(bar.includes(`>${label}<`), label);
   for (const tag of html.match(/<(button|a)\b[^>]*>/g)) assert.match(tag, /title="/, tag);
+  // Settings is easy to find: a labelled gear, and the version is a link to About at every window width.
+  assert.match(bar, /id="settingsBtn"[^>]*><span class="tb-ic" data-icon="settings"><\/span><span class="tb-l">Settings<\/span>/);
+  assert.match(bar, /<a class="tb-ver" id="appVersion" href="#\/settings\/about"/);
+  assert.doesNotMatch(css, /\.tb-ver[^{}]*\{ display: none/, 'the version never hides');
+  assert.doesNotMatch(css, /#settingsBtn \.tb-l/, 'the Settings label never hides');
+  assert.match(read('views/settings.js'), /Flatform \$\{esc\(displayVersion\(state\.settings\.version\)\)\}/);
   assert.match(html, /Where do I find this\?/, 'the key dialog explains where the key comes from');
   assert.doesNotMatch(html, /API key/, 'no jargon in the shell');
   for (const id of ['dock', 'journey', 'queueTray', 'toasts', 'sheetClose']) assert.match(html, new RegExp(`id="${id}"`), id);
