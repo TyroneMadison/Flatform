@@ -25,7 +25,7 @@ export function mount(el, { id }) {
   section = SECTIONS.some(([k]) => k === id) ? id : 'providers';
   replacing = null;
   el.innerHTML = `<h1 class="ph">Settings</h1>
-  <p class="sub">Your accounts, look and folders. Keys stay locked on this computer.</p>
+  <p class="sub">Your accounts, look and folders. Keys stay locked on this computer.${state.settings?.version ? ` · <a href="#/settings/about" title="About and updates">Flatform ${esc(displayVersion(state.settings.version))}</a>` : ''}</p>
   <div class="set">
     <nav class="sn" aria-label="Settings sections">${SECTIONS.map(([k, label]) => `<a href="#/settings/${k}" title="${label}"${k === section ? ' class="on" aria-current="page"' : ''}>${label}</a>`).join('')}</nav>
     <section class="settings" id="settings"></section>
