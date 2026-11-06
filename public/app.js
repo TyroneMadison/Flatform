@@ -15,7 +15,7 @@ import { installPalette } from './lib/palette.js';
 import { timeAgo } from './lib/session.js';
 import { displayVersion } from './lib/version.js';
 import { journey, dockFor, stepOf, isSheet, SHEETS, DEFAULT_TOOL, ringDash } from './lib/stage.js';
-import { updateNotice, lowNotice } from './lib/notices.js';
+import { updateNotice, updateActions, lowNotice } from './lib/notices.js';
 import { toastPlan } from './lib/toasts.js';
 
 export const $ = (s, root = document) => root.querySelector(s);
@@ -384,7 +384,7 @@ export async function refreshAccount(provider = state.settings?.provider || 'tri
 }
 
 // ---- updates: the server asks GitHub (a few seconds after it starts, then every 6 hours); the page shows the result ----
-let toldUpdate; // the version whose toast already showed this session; "Update ready" in the top bar stays until skipped
+let toldUpdate; // the version whose popup already showed this session; "Update ready" in the top bar stays until skipped
 // check: ask GitHub now (Settings → Check for updates) instead of reading the server's last answer.
 export async function refreshUpdate(check = false) {
   try {
@@ -395,23 +395,73 @@ export async function refreshUpdate(check = false) {
   showUpdate();
   refresh();
 }
-// A newer Flatform: a toast once (Download, Later, Skip this version) and an "Update" pill in the top bar that shows
-// the toast again. Skip this version hides both.
+// A newer Flatform: a popup once per version (Download and install in the desktop app, else Download; What is new,
+// Later, Skip this version) and an "Update" pill in the top bar that opens it again. Skip this version hides both.
+// While another dialog is open the popup waits behind a toast with Open, so it never steals a half-typed key.
 function showUpdate(force = false) {
   const n = updateNotice(state.update, displayVersion);
   $('#updatePill').hidden = !n;
-  if (!n) return;
+  if (!n) { if ($('#updateDialog').open) $('#updateDialog').close(); return; }
   $('#updatePill .tb-l').textContent = n.pill;
-  $('#updatePill').title = `${n.title}. Click to see what is new.`;
+  $('#updatePill').title = `${n.title}. Click to see what is new and update.`;
   if (toldUpdate === n.version && !force) return;
   toldUpdate = n.version;
   announce(`${n.title} to download`);
-  toast(`${n.title}. ${n.note}`, 'info', [
-    { label: 'Download', title: 'Open the download page for the new version', run: () => window.open(state.update.downloadUrl, '_blank', 'noopener') },
-    { label: 'Later', title: 'Hide this for now. The Update button stays in the top bar.', run: () => {} },
-    { label: 'Skip this version', title: 'Do not ask about this version again', run: skipUpdate },
-  ]);
+  if (!force && $('dialog[open]')) {
+    toast(`${n.title}. ${n.note}`, 'info', [{ label: 'Open', title: 'See what is new and update', run: () => showUpdate(true) }]);
+    return;
+  }
+  $('#updateTitle').textContent = n.title;
+  $('#updateVersions').textContent = `You have ${displayVersion(state.update.current)}. The new version is ${displayVersion(state.update.latest)}.`;
+  $('#updateText').textContent = n.note;
+  $('#updateError').textContent = '';
+  updateButtons();
+  if (!$('#updateDialog').open) $('#updateDialog').showModal();
 }
+// Download and install (desktop): null, then 'downloading' (main fetches the installer, the bar fills), then 'ready'.
+let updateStep = null;
+let installFailed = false; // after a failed download the popup offers Download (the browser) instead
+const RESTART = { id: 'restart', label: 'Install and restart', title: 'Close Flatform and run the installer for the new version' };
+function updateButtons() {
+  const ready = updateStep === 'ready';
+  const acts = ready ? [RESTART, ...updateActions(state.update).filter((a) => a.id === 'later')] : updateActions(state.update, Boolean(native?.downloadUpdate) && !installFailed);
+  $('#updateProgress').hidden = updateStep !== 'downloading';
+  $('#updateActions').replaceChildren(...acts.map((a, i) => {
+    const b = Object.assign(document.createElement('button'), { type: 'button', className: `btn ${i ? 'ghostbtn' : 'pri'}`, textContent: a.label, title: a.title });
+    if (a.id === 'install' && updateStep === 'downloading') Object.assign(b, { disabled: true, textContent: 'Downloading…' });
+    b.addEventListener('click', () => updateAction(a.id));
+    return b;
+  }).reverse()); // primary on the right, like every other dialog
+}
+const ipcError = (e) => String(e?.message || e).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+function updateAction(id) {
+  const d = $('#updateDialog');
+  const u = state.update;
+  if (id === 'download') { window.open(u.downloadUrl, '_blank', 'noopener'); d.close(); }
+  if (id === 'notes') window.open(u.pageUrl, '_blank', 'noopener');
+  if (id === 'later') d.close();
+  if (id === 'skip') { d.close(); skipUpdate(); }
+  if (id === 'install') downloadUpdate();
+  if (id === 'restart') native.installUpdate().catch((e) => { $('#updateError').textContent = ipcError(e); });
+}
+async function downloadUpdate() {
+  updateStep = 'downloading';
+  $('#updateProgress').removeAttribute('value'); // moving stripes until main knows the size
+  $('#updateError').textContent = '';
+  updateButtons();
+  try {
+    await native.downloadUpdate(state.update.downloadUrl);
+    updateStep = 'ready';
+    announce('The new version is downloaded. Install and restart when you are ready.');
+    if (!$('#updateDialog').open) toast('The Flatform update is downloaded.', 'ok', [{ ...RESTART, run: () => updateAction('restart') }]);
+  } catch (e) {
+    updateStep = null;
+    installFailed = true;
+    $('#updateError').textContent = `${ipcError(e)} Download opens it in your browser instead.`;
+  }
+  updateButtons();
+}
+native?.onUpdateProgress?.((f) => { $('#updateProgress').value = f; });
 async function skipUpdate() {
   try { state.update = await send('/api/update/skip', 'POST', { version: state.update.latest }); } catch (e) { toast(e.message); }
   showUpdate();

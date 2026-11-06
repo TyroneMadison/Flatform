@@ -8,6 +8,24 @@ export function updateNotice(u, display = String) {
   return { version: u.latest, title: `Flatform ${version} is ready`, note: u.notes || 'A newer version is ready to download.', pill: `Update ${version}` };
 }
 
+/**
+ * The update popup's buttons, primary first: [{ id, label, title }]. canInstall: the desktop app can download and run
+ * the installer itself (preload's downloadUpdate). Without it, or without an installer for this computer, Download
+ * opens the link in the browser. ids: install, download, notes, later, skip.
+ */
+export function updateActions(u, canInstall = false) {
+  if (!u?.newer || u.skipped) return [];
+  const installer = /\/releases\/download\/[^?#]+\.(exe|dmg)$/i.test(u.downloadUrl || '');
+  return [
+    canInstall && installer
+      ? { id: 'install', label: 'Download and install', title: 'Download the new version here, then install it. Flatform restarts.' }
+      : { id: 'download', label: 'Download', title: installer ? 'Download the installer in your browser' : 'Open the download page in your browser' },
+    u.pageUrl && { id: 'notes', label: 'What is new', title: 'Open the release notes in your browser' },
+    { id: 'later', label: 'Later', title: 'Close this. The Update button stays in the top bar.' },
+    { id: 'skip', label: 'Skip this version', title: 'Do not ask about this version again' },
+  ].filter(Boolean);
+}
+
 /** The first service under its alert: { service, title, note, dot } or null. providers: { id: { name } }. */
 export function lowNotice(spend, providers, fmt = String) {
   const low = Object.entries(spend?.services || {}).filter(([, s]) => s.low);

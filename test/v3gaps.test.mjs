@@ -134,7 +134,7 @@ test('Low balance and updates are toasts plus a top-bar marker, not banners', ()
   assert.match(html, /id="updatePill" hidden title="/);
   const app = read('public/app.js');
   assert.match(app, /label: 'Top up'/);
-  assert.match(app, /label: 'Skip this version'/);
+  assert.match(read('public/lib/notices.js'), /label: 'Skip this version'/);
   assert.match(app, /dot \$\{low \? 'low'/);
   assert.equal(updateNotice({ newer: false }), null);
   assert.equal(updateNotice({ newer: true, skipped: true, latest: '1.2.0' }), null);
