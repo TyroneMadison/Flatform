@@ -65,3 +65,11 @@ test('the wiring: Drop shows it in Warframe mode, the kit sets and clears the fo
     assert.doesNotMatch(read(f), new RegExp(String.fromCharCode(0x2014)), `${f}: no em dashes`);
   }
 });
+
+test('Drop tip cards do not reuse the hover tooltip class (.tip is position:fixed, so the Next/credits card got stuck over the page)', () => {
+  const drop = read('public/views/drop.js');
+  assert.doesNotMatch(drop, /class="tip[ "]/);
+  assert.match(drop, /class="dz-tip glass"><b id="modelTip">/);
+  assert.match(read('public/styles/stage.css'), /^\.tip \{ position: fixed;/m);
+  assert.doesNotMatch(read('public/styles/screens.css'), /^\.tip[ {]/m);
+});

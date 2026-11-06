@@ -35,9 +35,9 @@ export function mount(el) {
     ${wf ? '<div id="tipsSlot"></div>' : ''}
     </div>
     <div class="tips">
-      <div class="tip glass"><b>Shoot from a front corner</b><span>One photo then shows the side and the wheels too. Or add photos from more sides: they make one model.</span></div>
-      <div class="tip glass"><b>Keep the whole car in frame</b><span>Parts cut off in the photo come out missing.</span></div>
-      <div class="tip glass"><b id="modelTip"></b><span id="creditTip"></span></div>
+      <div class="dz-tip glass"><b>Shoot from a front corner</b><span>One photo then shows the side and the wheels too. Or add photos from more sides: they make one model.</span></div>
+      <div class="dz-tip glass"><b>Keep the whole car in frame</b><span>Parts cut off in the photo come out missing.</span></div>
+      <div class="dz-tip glass"><b id="modelTip"></b><span id="creditTip"></span></div>
     </div>
     <div id="resume"></div>
     <div class="rowhead"><h2 class="label">Recent models</h2><a class="link" href="#/library">Open library</a></div>
